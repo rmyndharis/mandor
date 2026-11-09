@@ -1,0 +1,39 @@
+#!/bin/sh
+# Follow symlinks by hand, to a limit: realpath is not on every system this runs on.
+self=$0
+case $self in */*) ;; *) self=./$self ;; esac
+n=0
+while [ -L "$self" ] && [ "$n" -lt 32 ]; do
+  link=$(readlink "$self")
+  case $link in /*) self=$link ;; *) self=${self%/*}/$link ;; esac
+  n=$((n + 1))
+done
+# The physical directory first, then its parent by name: a .. after a symlinked directory is read before the link is followed.
+bin=$(cd -P "${self%/*}" && pwd -P)
+root=${bin%/*}
+# Hooks must never break a session: with no usable node, do nothing and succeed. Nothing is written, as without node there
+# is no telling which directories have a goal. Whoever already has mandor state is told at each session start why the hooks
+# are off, and anyone else hears nothing. The home is the one node resolves: an absolute MANDOR_HOME, else ~/.mandor.
+quiet() {
+  if [ "$2" = session-start ]; then
+    home=${MANDOR_HOME:-${HOME:+$HOME/.mandor}}
+    case $home in
+      /*) for ledger in "$home"/projects/*/ledger.jsonl; do
+            if [ -e "$ledger" ]; then
+              echo "mandor hooks are off: $1"
+              break
+            fi
+          done ;;
+    esac
+  fi
+  exit 0
+}
+if [ "$1" = hook ]; then
+  v=$(node --version 2>/dev/null) || quiet "node is not on their PATH" "$2"
+  v=${v#v}
+  major=${v%%.*}
+  minor=${v#*.}
+  minor=${minor%%.*}
+  [ "$major" -gt 22 ] 2>/dev/null || { [ "$major" -eq 22 ] && [ "$minor" -ge 18 ]; } 2>/dev/null || quiet "node $v is not 22.18 or newer" "$2"
+fi
+exec node --disable-warning=ExperimentalWarning "$root/src/cli.ts" "$@"

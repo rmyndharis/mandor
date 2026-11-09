@@ -1,0 +1,20 @@
+[
+  { "template": "You{RSQUO}ve hit your usage limit for {}. Switch to another model now,{}", "expected": "model-limit" },
+  { "template": "You{RSQUO}ve hit your usage limit. {},{}", "expected": "quota" },
+  { "template": "You{RSQUO}ve hit your usage limit. Upgrade to Plus to continue using Codex (https://chatgpt.com/explore/plus),{}", "expected": "quota" },
+  { "template": "You{RSQUO}ve hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits{}", "expected": "quota" },
+  { "template": "You{RSQUO}ve hit your usage limit.{}", "expected": "quota" },
+  { "template": "You{RSQUO}ve hit your usage limit. To get more access now, send a request to your admin{}", "expected": "quota" },
+  { "template": "You{RSQUO}ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/settings/usage to purchase more credits{}", "expected": "quota" },
+  { "template": "Your workspace is out of credits. Add credits to continue.", "expected": "quota" },
+  { "template": "Your workspace is out of credits. Ask your workspace owner to refill in order to continue.", "expected": "quota" },
+  { "template": "You hit your spend cap set in your workspace. Increase your spend cap to continue.", "expected": "quota" },
+  { "template": "You hit your spend cap set by the owner of your workspace. Ask an owner to increase your spend cap to continue.", "expected": "quota" },
+  { "template": "Quota exceeded. Check your plan and billing details.", "expected": "quota" },
+  { "template": "To use Codex with your ChatGPT plan, upgrade to Plus: https://chatgpt.com/explore/plus.", "expected": "quota" },
+  { "template": "You're out of credits. Your workspace is out of credits. Add credits to continue using Codex.", "expected": "quota" },
+  { "template": "Usage limit reached. You've reached your usage limit. Increase your limits to continue using codex.", "expected": "quota" },
+  { "template": "You've reached your workspace credit limit", "expected": "quota" },
+  { "template": "Your workspace is out of credits. Ask your workspace owner to add more. Notify owner?", "expected": "quota" },
+  { "template": "Usage limit reached", "expected": "quota" }
+]

@@ -1,0 +1,5 @@
+{
+  "name": "mandor",
+  "version": "0.1.0",
+  "description": "Lead Codex workers from a Claude Code session: dispatch, track and review their jobs."
+}

@@ -1,0 +1,6 @@
+_docs/
+node_modules/
+.claude/
+CLAUDE.md
+AGENTS.md
+.DS_Store
