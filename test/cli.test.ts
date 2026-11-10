@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { test } from "node:test";
+import { TOOL_COMMANDS } from "../src/toolname.ts";
 import { temp } from "./helpers.ts";
 
 const root = join(import.meta.dirname, "..");
@@ -12,6 +13,19 @@ test("--version prints 0.1.0", () => {
   const r = spawnSync(launcher, ["--version"], { encoding: "utf8" });
   assert.equal(r.stdout, "0.1.0\n");
   assert.equal(r.status, 0);
+});
+
+test("--help and a bare call print every command a person or the lead runs, and an unknown command points at it", () => {
+  const help = spawnSync(launcher, ["--help"], { encoding: "utf8" });
+  assert.deepEqual([help.status, help.stderr], [0, ""]);
+  // The two the tool runs itself stay out: the detached runner and the hooks.
+  const shown = TOOL_COMMANDS.filter((c) => c !== "_run" && c !== "hook");
+  for (const c of shown) assert.match(help.stdout, new RegExp(`^  ${c}(?: |$)`, "m"), c);
+  for (const c of ["_run", "hook"]) assert.doesNotMatch(help.stdout, new RegExp(`^  ${c}(?: |$)`, "m"), c);
+  const bare = spawnSync(launcher, [], { encoding: "utf8" });
+  assert.deepEqual([bare.status, bare.stdout, bare.stderr], [0, help.stdout, ""]);
+  const unknown = spawnSync(launcher, ["frobnicate"], { encoding: "utf8", cwd: temp("mandor-help-") });
+  assert.deepEqual([unknown.status, unknown.stdout, unknown.stderr], [2, "", "mandor: unknown command: frobnicate; see mandor --help\n"]);
 });
 
 test("launcher works through a symlink", () => {

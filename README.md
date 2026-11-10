@@ -146,6 +146,7 @@ The lead's commands print JSON; `status`, `show` and `logs` print plain text.
 | `mandor status [--json]` | Goals, tasks, jobs, and the time each exhausted tool resets |
 | `mandor show <slug>` | The outcome detail of a task, and each of its jobs with the tokens that run used |
 | `mandor logs <slug>` | The paths of a task's job logs |
+| `mandor --help` | List every command with its options |
 
 | The lead runs | Purpose |
 | --- | --- |

@@ -138,8 +138,39 @@ async function leadCommand(argv: string[]): Promise<unknown> {
   if (cmd === "ready" && sub !== undefined && rest.length === 0) return (await tasks()).ready(sub as ToolName);
   if (cmd === "cancel" && sub !== undefined && rest.length === 0) return (await tasks()).cancel(cwd, sub);
   if (cmd === "review" && sub !== undefined && rest.length === 0) return (await import("./review.ts")).reviewPack(cwd, sub);
-  throw new UsageError(`unknown command: ${argv.join(" ")}`);
+  throw new UsageError(`unknown command: ${argv.join(" ")}; see mandor --help`);
 }
+
+// One line per command, in the two groups the README lists them in. The runner and the hooks are the tool's own.
+const USAGE = `mandor <command>
+
+You run:
+  init                          create the home and its config, read the model list, print warnings
+  models [--refresh] [--json]   list the models codex offers
+  project setup [--clone <path>]... [--setup <command>] [--shared <glob>]... [--deny <glob>]...
+                [--generator <clone path>=<glob>]... [--worker-network] [--worker-add-dir <dir>]...
+  status [--json]               goals, tasks, jobs and exhausted tools of this repository
+  show <slug>                   a task's outcome, its jobs with the usage of each run, and its round files
+  logs <slug>                   the paths of a task's job logs
+  --version
+  --help
+
+The lead runs:
+  scratch [name]                print the directory for briefs, plans, notes and evidence files
+  goal start <branch> [--from <ref>]
+  plan set --goal <branch> --file <plan file> --description <one line>
+  dispatch --goal <branch> --task <slug> --tier <${TIER_ORDER.join("|")}> --brief <file>
+           [--scope <glob>]... [--use <tool:model@effort>] [--after <slug>]
+  wait --since <cursor> [--timeout <seconds>]
+  review <slug>
+  verdict <slug> accept --evidence-file <file> --message-file <file>
+  verdict <slug> fix --notes <file>
+  verdict <slug> takeover [--approved]
+  confirm <slug> --evidence-file <file>
+  drop <slug> --notes <file>
+  reassign <slug>
+  ready <tool>
+  cancel <slug>`;
 
 export async function main(argv: string[]): Promise<number> {
   // Every Claude Code session runs this, in every directory, so nothing that goes wrong here may reach the session.
@@ -176,6 +207,10 @@ export async function main(argv: string[]): Promise<number> {
       console.error(`mandor: ${(e as Error).message}`);
       return 1;
     }
+  }
+  if (argv.length === 0 || argv[0] === "--help") {
+    console.log(USAGE);
+    return 0;
   }
   if (argv[0] === "models" || argv[0] === "init") {
     // Imported on use, so other commands, the hooks above all, never load the vendor adapter.
