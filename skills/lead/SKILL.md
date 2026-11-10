@@ -77,7 +77,7 @@ Run `mandor reassign <slug>` and read `task.status` in its output.
 - `stalled` with `all-exhausted`: the next `wait` reports `offer-takeover`, so follow section 10.
 - `stalled` with `failed`: the next `wait` reports `inspect`, so follow section 9.
 
-After the user switches the worker account, run `mandor ready <tool>`. Take the tool from the wait item's `candidate`, the part before the colon; a `candidate` of null means `codex`. If it prints `failed`, those projects were not reached: run it again.
+A `zcode` detail that names the sign-in means the user must run `mandor login zcode` first: its sign-in runs out on its own. After the user switches the worker account or signs in again, run `mandor ready <tool>`. Take the tool from the wait item's `candidate`, the part before the colon; a `candidate` of null means `codex`. If it prints `failed`, those projects were not reached: run it again.
 
 The user may instead wait: `mandor status` prints the time each exhausted tool resets. Once that time has passed, run `mandor ready <tool>`, which resumes the stalled tasks in their old sessions; `reassign` after the reset instead starts a fresh-session handoff.
 

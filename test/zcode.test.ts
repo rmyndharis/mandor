@@ -109,10 +109,20 @@ test("a failed turn is a quota stop for the provider's limit codes and a plain f
   assert.equal(zcode().classify(raw(failed({}), { exitCode: 1 })).detail, "turn failed");
 });
 
+const SIGN_IN = "the zcode worker's sign-in is no longer valid: run mandor login zcode, then mandor ready zcode";
+
+test("a sign-in that stopped working sets the tool aside as a spent quota does, so its tasks can move to another tool", () => {
+  // What the CLI reports about an hour after a sign-in: the turn fails while it prepares the request.
+  const expired = zcode().classify(raw(failed({ type: "unknown_error", code: "model_request_failed", message: "project_token_login_failed", attribution: { errorPhase: "prepare" } }), { exitCode: 1 }));
+  assert.deepEqual([expired.status, expired.detail, expired.sessionId], ["quota", SIGN_IN, SESSION]);
+  // Another failure of the same phase is no sign-in problem.
+  assert.equal(zcode().classify(raw(failed({ code: "model_request_failed", message: "socket hang up" }), { exitCode: 1 })).status, "failed");
+});
+
 test("a run that printed no event says only what fixed phrases on stderr mean, and never copies stderr", () => {
   const SECRET = "SECRET_TOKEN_123";
   const signedOut = zcode().classify(raw("", { exitCode: 1, stderr: `Error: Select a model before sending a message (traceId: x)\n${SECRET}\n` }));
-  assert.deepEqual([signedOut.status, signedOut.detail, signedOut.sessionId], ["failed", "zcode worker is not signed in, or its plan lacks the model", null]);
+  assert.deepEqual([signedOut.status, signedOut.detail, signedOut.sessionId], ["quota", SIGN_IN, null]);
   const other = zcode().classify(raw("", { exitCode: 1, stderr: `${SECRET}\n` }));
   assert.deepEqual([other.status, other.detail], ["failed", "exit 1; see stderr.log"]);
   const killed = zcode().classify(raw("", { exitCode: null, signal: "SIGKILL" }));

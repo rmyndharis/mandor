@@ -112,6 +112,11 @@ function failedStatus(code: unknown): JobStatus {
   return QUOTA_CODES.has(String(code)) ? "quota" : "failed";
 }
 
+// A sign-in stops working on its own, about an hour after it was made in one trial, and only the user can renew it.
+// Until then every run of the tool fails the same way, so it counts as a spent quota: the tool is set aside, its tasks
+// can move on, and `ready` brings it back.
+const SIGN_IN_GONE = "the zcode worker's sign-in is no longer valid: run mandor login zcode, then mandor ready zcode";
+
 export function createZcodeAdapter(cfg: Config): Adapter {
   const bin = () => resolveBin("zcode", cfg);
   return {
@@ -194,6 +199,7 @@ export function createZcodeAdapter(cfg: Config): Adapter {
       if (failure !== undefined) {
         const message = get(failure, "payload.error.message");
         const code = get(failure, "payload.error.attribution.providerErrorCode");
+        if (message === "project_token_login_failed") return result("quota", SIGN_IN_GONE);
         const text = typeof message === "string" && message !== "" ? message.replace(IDS, "<id>") : "turn failed";
         return result(failedStatus(code), code === undefined ? text : `provider code ${code}: ${text}`);
       }
@@ -210,7 +216,7 @@ export function createZcodeAdapter(cfg: Config): Adapter {
       }
       if (raw.exitCode === 0) return result("failed", "stream ended early");
       // Never copy stderr into a detail: only this fixed phrase is recognized.
-      if (raw.stderr.includes("Select a model before sending a message")) return result("failed", "zcode worker is not signed in, or its plan lacks the model");
+      if (raw.stderr.includes("Select a model before sending a message")) return result("quota", SIGN_IN_GONE);
       return result("failed", `exit ${exit}; see stderr.log`);
     },
 
