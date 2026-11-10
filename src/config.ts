@@ -136,6 +136,19 @@ function onPath(name: string): string | null {
   return null;
 }
 
+// The tools a worker can run on: the ones with an adapter.
+export const WORKER_TOOLS: readonly ToolName[] = ["codex", "zcode"];
+
+const ZCODE_APP_BIN = "/Applications/ZCode.app/Contents/MacOS/ZCode";
+
+// The binary a job of the tool starts, always absolute. zcode ships inside its app, so a bare name means the app's
+// own executable and a path names another one.
+export function resolveBin(tool: ToolName, cfg: Config): string {
+  if (tool === "codex") return resolveCodexBin(cfg);
+  if (tool === "zcode") return cfg.tools.zcode.bin.includes("/") ? resolve(cfg.tools.zcode.bin) : ZCODE_APP_BIN;
+  throw new Error(`no worker binary for ${tool}`);
+}
+
 // The env override is not checked for existence: tests point it at a fake that may not be written yet.
 // A name with a slash is a path, never searched on PATH, as in a shell; the result is always absolute.
 export function resolveCodexBin(cfg: Config): string {

@@ -1,35 +1,59 @@
 import { appendFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "../config.ts";
+import { WORKER_TOOLS } from "../config.ts";
 import type { Adapter, ModelInfo, ToolName } from "../contracts.ts";
 import { mandorHome } from "../home.ts";
 import { clampDetail, ensureDir, readJson, writeJsonAtomic } from "../store.ts";
 import { codexWarnings, createCodexAdapter } from "./codex.ts";
+import { createZcodeAdapter, zcodeWarnings } from "./zcode.ts";
 
 export const MODELS_MAX_AGE_MS = 5 * 60 * 1000;
 
-export interface ModelCache { fetchedAt: string; codexVersion: string; models: ModelInfo[] }
+// problems: why a tool's models are the ones of an earlier refresh, or none.
+export interface ModelCache { fetchedAt: string; codexVersion: string; versions: Partial<Record<ToolName, string>>; problems: Partial<Record<ToolName, string>>; models: ModelInfo[] }
 
 const cacheFile = () => join(mandorHome(), "models.json");
 
 export function getAdapter(tool: ToolName, cfg: Config): Adapter {
   if (tool === "codex") return createCodexAdapter(cfg);
+  if (tool === "zcode") return createZcodeAdapter(cfg);
   throw new Error(`adapter for ${tool} is not available`);
 }
 
-// Throws when codex fails, before anything is written, so the last good list stays in place.
+// Asks every enabled tool for its models. A tool that cannot list them keeps the ones it listed last, as a task may
+// hold one, and the reason goes on record. When no tool could, this throws before anything is written, so the last
+// good file stays in place.
 export function refreshModels(cfg: Config): ModelInfo[] {
-  const codex = getAdapter("codex", cfg);
-  const codexVersion = codex.version();
-  const models = codex.detectModels();
-  writeJsonAtomic(cacheFile(), { fetchedAt: new Date().toISOString(), codexVersion, models });
+  const last = readModelCache();
+  const versions: ModelCache["versions"] = {};
+  const problems: ModelCache["problems"] = {};
+  const models: ModelInfo[] = [];
+  let failure: unknown;
+  let listed = 0;
+  for (const tool of WORKER_TOOLS.filter((t) => cfg.tools[t].enabled)) {
+    try {
+      const adapter = getAdapter(tool, cfg);
+      versions[tool] = adapter.version();
+      models.push(...adapter.detectModels());
+      listed++;
+    } catch (e) {
+      failure ??= e;
+      problems[tool] = clampDetail((e as Error).message);
+      if (versions[tool] === undefined && last?.versions[tool] !== undefined) versions[tool] = last.versions[tool];
+      models.push(...(last?.models ?? []).filter((m) => m.tool === tool));
+    }
+  }
+  if (listed === 0 && failure !== undefined) throw failure;
+  writeJsonAtomic(cacheFile(), { fetchedAt: new Date().toISOString(), codexVersion: versions.codex ?? "", versions, problems, models });
   return models;
 }
 
+// A file from before a field existed reads as one without it.
 export function readModelCache(): ModelCache | null {
   try {
     const c = readJson<ModelCache>(cacheFile());
-    return Array.isArray(c?.models) && typeof c.fetchedAt === "string" ? c : null;
+    return Array.isArray(c?.models) && typeof c.fetchedAt === "string" ? { ...c, versions: c.versions ?? { codex: c.codexVersion }, problems: c.problems ?? {} } : null;
   } catch {
     return null;
   }
@@ -56,6 +80,9 @@ export function loadModels(maxAgeMs: number, cfg: Config): ModelInfo[] {
 export function modelsReport(cfg: Config, refresh: boolean): { codexVersion: string | null; fetchedAt: string | null; models: ModelInfo[]; warnings: string[] } {
   const models = refresh ? refreshModels(cfg) : loadModels(MODELS_MAX_AGE_MS, cfg);
   const cache = readModelCache();
-  const codexVersion = cache?.codexVersion ?? null;
-  return { codexVersion, fetchedAt: cache?.fetchedAt ?? null, models, warnings: codexWarnings(codexVersion) };
+  const codexVersion = cache?.codexVersion || null;
+  const problems = Object.entries(cache?.problems ?? {}).map(([tool, why]) => `${tool}: ${why}`);
+  // A tool with a problem of its own has that to say, not a word about its version.
+  const zcode = cfg.tools.zcode.enabled && cache?.problems.zcode === undefined ? zcodeWarnings(cache?.versions.zcode ?? null) : [];
+  return { codexVersion, fetchedAt: cache?.fetchedAt ?? null, models, warnings: [...codexWarnings(codexVersion), ...zcode, ...problems] };
 }

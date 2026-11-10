@@ -2,7 +2,7 @@
 
 <p align="center"><strong>The foreman for your coding agents.</strong></p>
 
-<p align="center">A Claude Code plugin that lets your session lead Codex CLI workers: it plans the goal, dispatches tasks to sandboxed workers, reviews every result, and lands each one as a guarded local commit. It never pushes.</p>
+<p align="center">A Claude Code plugin that lets your session lead Codex and ZCode workers: it plans the goal, dispatches tasks to sandboxed workers, reviews every result, and lands each one as a guarded local commit. It never pushes.</p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/version-v0.1.0-blue" alt="v0.1.0">
@@ -26,7 +26,7 @@ cd ~/your-project
 claude --plugin-dir ~/mandor      # then ask Claude to lead the work
 ```
 
-*Mandor* is Indonesian for foreman. The session you talk to is the foreman: it plans the goal, hands the coding to Codex workers that run in parallel, each in its own git worktree under a kernel sandbox, reads what comes back, and accepts it as one local commit on a goal branch. You push when you are satisfied.
+*Mandor* is Indonesian for foreman. The session you talk to is the foreman: it plans the goal, hands the coding to Codex and ZCode workers that run in parallel, each in its own git worktree under a kernel sandbox, reads what comes back, and accepts it as one local commit on a goal branch. You push when you are satisfied.
 
 ## The problem
 
@@ -36,7 +36,7 @@ mandor turns the chores into a loop the lead follows, and enforces the parts tha
 
 ## How it works
 
-The Claude Code session you are in is the **lead**. It plans the goal and decides every outcome. **Workers** are Codex CLI processes, one per task, each in its own git worktree under a kernel sandbox, writing code and running the proof commands the lead gave them. The **mandor** CLI sits between them: it keeps the state on disk, launches the workers, builds the review pack and enforces the guards. Independent tasks run in parallel, up to `maxParallel` workers per tool (two by default).
+The Claude Code session you are in is the **lead**. It plans the goal and decides every outcome. **Workers** are Codex or ZCode CLI processes, one per task, each in its own git worktree under a kernel sandbox, writing code and running the proof commands the lead gave them. The **mandor** CLI sits between them: it keeps the state on disk, launches the workers, builds the review pack and enforces the guards. Independent tasks run in parallel, up to `maxParallel` workers per tool (two by default).
 
 ```mermaid
 flowchart TD
@@ -102,6 +102,7 @@ mandor registers two Claude Code hooks. Both do nothing outside a repository tha
 - **macOS.** Workers and every write to a worktree run under `sandbox-exec`, which exists only there.
 - **Node 22.18 or newer.** The CLI is TypeScript run directly through Node's type stripping: no build step and no runtime dependency.
 - **Codex CLI** (`codex`) on your `PATH`, logged in. Tested with 0.166.0; `mandor init` warns about any other version.
+- **ZCode** (optional): the ZCode app in `/Applications`. Tested with its CLI 0.17.1. Its workers sign in on their own: see [ZCode workers](#zcode-workers).
 - **Claude Code** with plugin support. The plugin loads and its skills run on 2.1.319.
 
 ### Load the plugin
@@ -141,7 +142,8 @@ The lead's commands print JSON; `status`, `show` and `logs` print plain text.
 | You run | Purpose |
 | --- | --- |
 | `mandor init` | Create `~/.mandor`, read the Codex model list, print warnings |
-| `mandor models [--refresh] [--json]` | List the models Codex offers, with their efforts |
+| `mandor models [--refresh] [--json]` | List the models the enabled tools offer, with their efforts |
+| `mandor login zcode` | Sign the ZCode worker in, in a browser, under a home of its own |
 | `mandor project setup [flags]` | Record what workers need in this repository |
 | `mandor status [--json]` | Goals, tasks, jobs, and the time each exhausted tool resets |
 | `mandor show <slug>` | The outcome detail of a task, and each of its jobs with the tokens that run used |
@@ -170,7 +172,7 @@ The lead's commands print JSON; `status`, `show` and `logs` print plain text.
 - **Turn off Claude Code's Bash sandbox for the session that leads.** `sandbox-exec` cannot run inside another sandbox, so `goal start` and `dispatch` refuse while the session's sandbox is on, and `init` warns. The workers stay confined by mandor's own sandbox.
 - **Workers run on your Codex login.** They inherit your Codex instructions, rules, hooks, skills and plugins: `--ignore-user-config` skips only `config.toml`.
 - **A worker can read what you can read.** Codex's `workspace-write` sandbox confines a worker's writes to its worktree and the temporary directories, not its reads, and the worker runs with your home directory. With the network closed, which is the default, what it reads can go nowhere but into its own worktree, where the review sees it, or into a temporary directory. With `--worker-network` it can send a file such as a key or a credential out, so turn that on only for a repository whose tasks you trust.
-- **Workers have no network** unless you pass `--worker-network` to `project setup`.
+- **Workers have no network** unless you pass `--worker-network` to `project setup`. ZCode workers only run in a project that has it: see [ZCode workers](#zcode-workers).
 - **Your repository gets branches and worktree registrations.** The goal branch, the `wip/` task branches and the worktree registrations stay until you remove them (see [State and uninstall](#state-and-uninstall)).
 
 ## Configuration
@@ -203,9 +205,22 @@ Each tier lists its candidates as `tool:model@effort`, in order of preference; `
 | `MANDOR_CODEX_BIN` | The Codex binary. Overrides `tools.codex.bin` and the `PATH` lookup |
 | `MANDOR_JOB` | Set by mandor in a worker's environment to the job id. You do not set it |
 
+## ZCode workers
+
+ZCode is off until you switch it on. Set `tools.zcode.enabled` to `true` in `~/.mandor/config.json`, then run `mandor login zcode` once and approve the sign-in in your browser. `mandor models` then lists the models of your plan, and the `zcode:` candidates of each tier start to run.
+
+A ZCode worker differs from a Codex worker in four ways:
+
+- **A home of its own.** The worker runs with `~/.mandor/zcode/home` as its `HOME` and signs in there, so the sign-in of your ZCode app is never touched. The ZCode CLI reads your MCP servers, plugins, hooks, skills and instructions from `HOME`: a worker on your own home would load all of them into every turn.
+- **mandor's own sandbox.** ZCode has no sandbox of its own, so the worker runs under a `sandbox-exec` profile: it writes only to its worktree, its own home and the temporary directories.
+- **The network is always open.** The profile cannot close the network for the worker's commands and leave it open for the CLI that runs them. A ZCode job therefore refuses to start in a project without `--worker-network`. To make up for it, the profile keeps the worker from reading what your credential directories hold (`~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gh`, the homes of the other tools and the like) and the rest of `~/.mandor`. Any other file your account can read is still readable.
+- **The report is checked, not enforced.** ZCode has no output schema, so the prompt states the report's format and mandor takes the last JSON object of the answer. A run that ends on another model than the task asked for is failed: ZCode falls back to your plan's default model without saying so.
+
+A bare `tools.zcode.bin` means the app's own executable in `/Applications`; give a path for an app kept elsewhere.
+
 ## State and uninstall
 
-Everything lives under `~/.mandor`, or `MANDOR_HOME` when it is set: `config.json`, the model catalog, one directory per project with its event ledger, tasks, rounds and scratch files, the task and integration worktrees, the job logs, and `logs/runner.log` and `logs/hooks.log`. A repository itself gets only the worktree registrations, the goal branch, the `wip/` task branches and the commits the lead accepted.
+Everything lives under `~/.mandor`, or `MANDOR_HOME` when it is set: `config.json`, the model catalog, the ZCode worker's home with its sign-in, one directory per project with its event ledger, tasks, rounds and scratch files, the task and integration worktrees, the job logs, and `logs/runner.log` and `logs/hooks.log`. A repository itself gets only the worktree registrations, the goal branch, the `wip/` task branches and the commits the lead accepted.
 
 A job's directory, its logs included, is removed 30 days after the job ended, unless it is the newest job of a task that is still open.
 
@@ -213,7 +228,7 @@ To stop using mandor, stop passing `--plugin-dir`. To remove its state, delete `
 
 ## Known limits
 
-- One worker tool, Codex, in this version. The configuration names `zcode` and `agy`, but no adapter runs them.
+- Two worker tools, Codex and ZCode, in this version. The configuration also names `agy`, but no adapter runs it.
 - You switch worker accounts yourself. mandor keeps the record of the work and resumes it with `mandor ready <tool>`.
 - No dashboard: `mandor status`, the lead's reports in chat and the log files are the interface.
 - A repository whose git directory is kept outside its work tree, made with `git init --separate-git-dir`, works from its main checkout. A linked worktree of it is a project of its own, because git does not say where the main checkout is.

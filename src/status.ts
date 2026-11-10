@@ -71,16 +71,16 @@ function roundFiles(projectId: string, slug: string): string[] {
 }
 
 // One line per job of the task, with what its run used. Codex reports a session's usage summed over its runs, so a run's
-// own usage is what it added to the count the session's run before it left. A job with no result on disk (not ended yet,
+// own usage is what it added to the count the session's run before it left; a tool that reports each run's own says so. A job with no result on disk (not ended yet,
 // ended without one, or its directory cleared out) has none to show.
 function jobLines(jobs: ProjectState["jobs"][string][]): string[] {
   const counted = new Map<string, Record<string, number>>();
   return jobs.map((j) => {
     let used = "no usage recorded";
     try {
-      const { sessionId, usageCumulative: total } = readJson<JobResult>(join(jobDir(j.id), "result.json"));
+      const { sessionId, usageCumulative: total, usagePerRun } = readJson<JobResult>(join(jobDir(j.id), "result.json"));
       if (total !== null) {
-        const before = (sessionId !== null && counted.get(sessionId)) || {};
+        const before = (!usagePerRun && sessionId !== null && counted.get(sessionId)) || {};
         used = Object.entries(total).map(([k, n]) => `${k} ${n - (before[k] ?? 0)}`).join(", ");
         if (sessionId !== null) counted.set(sessionId, total);
       }

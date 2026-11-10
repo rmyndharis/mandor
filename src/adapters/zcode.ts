@@ -1,0 +1,228 @@
+import { spawnSync } from "node:child_process";
+import { copyFileSync, existsSync, readFileSync, realpathSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+import { parseReport, REPORT_SCHEMA } from "../brief.ts";
+import type { Config } from "../config.ts";
+import { resolveBin } from "../config.ts";
+import type { Adapter, JobResult, JobStatus, ModelInfo, RawRun, WorkerReport } from "../contracts.ts";
+import { mandorHome, workerEnv } from "../home.ts";
+import { clampDetail, ensureDir, readJson, writeJsonAtomic } from "../store.ts";
+
+export const TESTED_ZCODE_VERSION = "0.17.1";
+
+// The worker's own HOME. The CLI reads the user's MCP servers, plugins, hooks, skills and instructions from HOME and
+// nothing moves them, so a worker on the user's HOME loads all of it into every turn. A sign-in also only works under
+// the HOME it was made with, so the worker signs in and runs with this one.
+export const zcodeHome = (): string => join(mandorHome(), "zcode", "home");
+
+const SESSION = /^sess_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const IDS = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|(?<![A-Za-z0-9])(?:(?:org|user)-[A-Za-z0-9]{20,}|req_[A-Za-z0-9]{16,})/gi;
+// The provider's codes for a limit of the account: the 5 hour and weekly windows, an expired or restricted plan, no balance.
+const QUOTA_CODES = new Set(["1113", "1308", "1309", "1310", "1313", "1316", "1317", "1318", "1319", "1320", "1321"]);
+// Tools that would wait for a person, and the one that loads skills.
+const DISALLOWED_TOOLS = "AskUserQuestion EnterPlanMode ExitPlanMode Skill";
+// The CLI enforces no output schema, so every prompt ends with the report's own: without it a worker ends with a JSON
+// object of keys it made up.
+export const REPORT_FORMAT = `\n\nThe report: your final message must be one JSON object and nothing else, with every key of this JSON schema and no other key:\n${JSON.stringify(REPORT_SCHEMA)}\n`;
+// An argument, as the CLI takes the prompt no other way; the system's limit on arguments is about a megabyte.
+const MAX_PROMPT_BYTES = 200_000;
+// Where credentials of other tools and of the user live, relative to the user's home. The worker's commands share the
+// network the CLI needs, so what they must not send out is kept from being read.
+const PRIVATE_HOME_PATHS = [".ssh", ".aws", ".gnupg", ".netrc", ".docker", ".kube", ".npmrc", ".config/gh", ".codex", ".gemini", ".zcode", ".claude", ".claude.json",
+  "Library/Keychains", "Library/Application Support/ZCode", "Library/Application Support/zcode"];
+
+const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+const get = (v: unknown, path: string): unknown => path.split(".").reduce<unknown>((o, k) => (isObject(o) ? o[k] : undefined), v);
+
+// How the binary is started and where its catalog is. The app keeps its CLI as a script the app's own executable runs
+// as Node; any other binary is the CLI itself, with the catalog where the CLI looks for it first.
+function layout(bin: string): { start: string[]; catalog: string; electron: boolean } {
+  const app = /^(.*\.app\/Contents)\/MacOS\/[^/]+$/.exec(bin);
+  if (app === null) return { start: [bin], catalog: join(dirname(bin), "provider", "zcode-builtin.json"), electron: false };
+  return { start: [bin, join(app[1], "Resources", "glm", "zcode.cjs")], catalog: join(app[1], "Resources", "config", "provider", "zcode-builtin.json"), electron: true };
+}
+
+// What the CLI needs wherever it runs: the worker's HOME and the catalog, copied into that HOME because the CLI writes
+// lock files next to it.
+export function zcodeEnv(bin: string, base: Record<string, string>): Record<string, string> {
+  const home = zcodeHome();
+  ensureDir(home);
+  const { catalog, electron } = layout(bin);
+  const copy = join(home, "zcode-builtin.json");
+  copyFileSync(catalog, copy);
+  return { ...base, HOME: home, ZCODE_BUILTIN_PROVIDER_CONFIG_FILE: copy, ...(electron ? { ELECTRON_RUN_AS_NODE: "1" } : {}) };
+}
+
+export const zcodeStart = (bin: string): string[] => layout(bin).start;
+
+// The plan the worker signed in with, which the sign-in writes as its default provider.
+function signedInProvider(): string {
+  let provider: unknown;
+  try {
+    provider = get(readJson(join(zcodeHome(), ".zcode", "v2", "provider_config.json")), "config.defaultModelSelection.providerId");
+  } catch {}
+  if (typeof provider !== "string" || provider === "") throw new Error("zcode worker is not signed in: run mandor login zcode");
+  return provider;
+}
+
+// Signs the worker in, in a browser, under its own HOME: a sign-in made under the user's would only work there, and
+// would replace the one their app holds. The CLI prints its sign-in address on stderr, which passes through; what it
+// prints on stdout stays out, as it describes the account.
+export function zcodeLogin(cfg: Config, provider: string): { tool: "zcode"; home: string; provider: string } {
+  const bin = resolveBin("zcode", cfg);
+  if (!existsSync(bin)) throw new Error(`zcode not found at ${bin}`);
+  const [command, ...args] = zcodeStart(bin);
+  const r = spawnSync(command, [...args, "login", provider], { env: zcodeEnv(bin, workerEnv(null)), stdio: ["inherit", "ignore", "inherit"] });
+  if (r.status !== 0) throw new Error(`zcode login failed (exit ${r.status ?? r.signal})`);
+  return { tool: "zcode", home: zcodeHome(), provider: signedInProvider() };
+}
+
+// The last object in text that parses as JSON, or null. A worker ends with its report, which a model may wrap in prose
+// or a code fence. Each "{" is tried from the last one back, up to the last "}", so an inner object never wins over
+// the one that holds it.
+export function lastJsonObject(text: string): unknown {
+  const end = text.lastIndexOf("}");
+  for (let start = text.lastIndexOf("{", end); start >= 0; start = start === 0 ? -1 : text.lastIndexOf("{", start - 1)) {
+    try {
+      const v: unknown = JSON.parse(text.slice(start, end + 1));
+      if (isObject(v)) return v;
+    } catch {}
+  }
+  return null;
+}
+
+// Writes only to the worktree, the worker's home and the temporary directories. What the user's credential directories
+// and the state directory hold cannot be read, but for the worktree, the worker's home and the job's own directory,
+// which holds the provider file; a path's metadata stays readable, as the CLI's database open resolves every
+// directory above its file. The paths are parameters.
+function sandbox(worktree: string, jobFiles: string, addDirs: string[]): string[] {
+  const user = homedir();
+  const params: [string, string][] = [["WT", realpathSync.native(worktree)], ["WH", zcodeHome()], ["JOB", jobFiles], ["STATE", mandorHome()],
+    ...addDirs.map((d, i): [string, string] => [`ADD${i}`, d]), ...PRIVATE_HOME_PATHS.map((p, i): [string, string] => [`PRIV${i}`, join(user, p)])];
+  const sub = (names: string[]) => names.map((n) => `(subpath (param "${n}"))`).join(" ");
+  const writable = ["WT", "WH", ...addDirs.map((_, i) => `ADD${i}`)];
+  const profile = `(version 1)(allow default)(deny file-write*)(allow file-write-data (literal "/dev/null") (literal "/dev/tty") (literal "/dev/dtracehelper"))`
+    + `(allow file-write* ${sub(writable)} (subpath "/private/tmp") (subpath "/private/var/folders"))`
+    + `(deny file-read-data ${sub(["STATE", ...PRIVATE_HOME_PATHS.map((_, i) => `PRIV${i}`)])})(allow file-read-data ${sub(["WT", "WH", "JOB"])})`;
+  return [...params.flatMap(([k, v]) => ["-D", `${k}=${v}`]), "-p", profile];
+}
+
+function failedStatus(code: unknown): JobStatus {
+  return QUOTA_CODES.has(String(code)) ? "quota" : "failed";
+}
+
+export function createZcodeAdapter(cfg: Config): Adapter {
+  const bin = () => resolveBin("zcode", cfg);
+  return {
+    tool: "zcode",
+
+    version() {
+      const b = bin();
+      const r = spawnSync(zcodeStart(b)[0], [...zcodeStart(b).slice(1), "--version"], { env: zcodeEnv(b, { PATH: process.env.PATH ?? "" }), encoding: "utf8", timeout: 30_000, killSignal: "SIGKILL", stdio: ["ignore", "pipe", "ignore"] });
+      if (r.status !== 0) throw new Error(`zcode --version failed (exit ${r.status ?? r.signal})`);
+      const v = /\d+\.\d+\.\d+\S*/.exec(r.stdout)?.[0];
+      if (v === undefined) throw new Error("zcode --version printed no version number");
+      return v;
+    },
+
+    // Read from the catalog the app ships: no run, and no account. A model's levels come from the last rule that
+    // matches its name, as a later rule in that list is the more specific one.
+    detectModels() {
+      const provider = signedInProvider();
+      const rules = get(readJson(layout(bin()).catalog), "config.modelConfigRules");
+      const listed = (name: string): unknown[] => {
+        const v = get(rules, name);
+        return Array.isArray(v) ? v : [];
+      };
+      const models = listed("builtinProviderModelRules")
+        .filter((r) => get(r, "providerId") === provider && get(r, "config.enabled") === true && typeof get(r, "modelId") === "string")
+        .map((r): ModelInfo => {
+          const model = get(r, "modelId") as string;
+          const levels = listed("modelRules").findLast((m) => {
+            const match = get(m, "modelMatch");
+            return typeof match === "string" && Array.isArray(get(m, "config.optionSpecs.reasoningLevel.values")) && new RegExp(`^${match}$`, "i").test(model);
+          });
+          const efforts = ((get(levels, "config.optionSpecs.reasoningLevel.values") as unknown[] | undefined) ?? []).filter((e): e is string => typeof e === "string");
+          return { tool: "zcode", model, label: model, efforts, defaultEffort: null, hidden: false };
+        });
+      if (models.length === 0) throw new Error(`the zcode catalog lists no model for ${provider}`);
+      return models;
+    },
+
+    prepare(job, files, project) {
+      const { model, effort } = job.candidate;
+      if (effort === "") throw new Error("zcode candidate needs an effort");
+      // The sandbox cannot close the network for the worker's commands and leave it open for the CLI that runs them.
+      if (!project.network) throw new Error("zcode workers need the network, which their commands share: allow it with mandor project setup --worker-network");
+      const prompt = readFileSync(job.promptPath, "utf8") + REPORT_FORMAT;
+      const bytes = Buffer.byteLength(prompt);
+      if (bytes > MAX_PROMPT_BYTES) throw new Error(`prompt of ${bytes} bytes is too long for zcode`);
+      const resume = job.kind === "resume" ? job.sessionId ?? "" : null;
+      if (resume !== null && !SESSION.test(resume)) throw new Error("zcode resume needs a session id");
+      // The CLI has no model option: a session starts on the default of the personal provider file it is given.
+      const personal = join(dirname(files.schemaPath), "zcode-provider.json");
+      writeJsonAtomic(personal, {
+        schemaVersion: 1,
+        config: {
+          providerConfigRules: { providerRules: [] }, modelConfigRules: { providerModelRules: [], manualProviderModelRules: [] },
+          defaultModelSelection: { providerId: signedInProvider(), modelId: model, options: { reasoningLevel: effort } },
+        },
+      });
+      // No working directory option: the runner starts the worker in the worktree's root, which it has verified.
+      const args = [...sandbox(job.worktree, dirname(personal), project.addDirs), ...zcodeStart(job.bin), ...(resume === null ? [] : ["--resume", resume]),
+        "-p", prompt, "--output-format", "stream-json", "--mode", "yolo", "--disallowed-tools", DISALLOWED_TOOLS];
+      return { command: "/usr/bin/sandbox-exec", args, env: { ...zcodeEnv(job.bin, job.env), ZCODE_PERSONAL_PROVIDER_CONFIG_FILE: personal } };
+    },
+
+    classify(raw: RawRun): JobResult {
+      const events: unknown[] = [];
+      for (const line of raw.stdout.split("\n")) {
+        try {
+          events.push(JSON.parse(line));
+        } catch {}
+      }
+      const session = events.map((e) => get(e, "sessionId")).find((s) => typeof s === "string" && SESSION.test(s));
+      const sessionId = typeof session === "string" ? session : null;
+      const ran = get(events.findLast((e) => get(e, "type") === "session.updated" && typeof get(e, "payload.modelId") === "string"), "payload.modelId");
+      const result = (status: JobStatus, detail: string): JobResult => ({
+        status, sessionId, report: null, usageCumulative: null, detail: clampDetail(detail), resetsAt: null, exitCode: raw.exitCode, creditFunded: false,
+        model: typeof ran === "string" ? ran : null, usagePerRun: true,
+      });
+      const exit = raw.exitCode ?? raw.signal;
+      const failure = events.findLast((e) => get(e, "type") === "turn.failed");
+      if (failure !== undefined) {
+        const message = get(failure, "payload.error.message");
+        const code = get(failure, "payload.error.attribution.providerErrorCode");
+        const text = typeof message === "string" && message !== "" ? message.replace(IDS, "<id>") : "turn failed";
+        return result(failedStatus(code), code === undefined ? text : `provider code ${code}: ${text}`);
+      }
+      const end = events.findLast((e) => get(e, "type") === "result");
+      const response = get(end, "response");
+      if (typeof response === "string") {
+        if (raw.exitCode !== 0) return result("failed", `exit ${exit} after the run finished; see stderr.log`);
+        const found = lastJsonObject(response);
+        const report: WorkerReport | null = found === null ? null : parseReport(JSON.stringify(found));
+        if (report === null) return result("failed", "report not valid JSON");
+        const usage = get(end, "usage");
+        const usageCumulative = isObject(usage) ? Object.fromEntries(Object.entries(usage).filter((kv): kv is [string, number] => typeof kv[1] === "number")) : null;
+        return { ...result("done", ""), report, usageCumulative };
+      }
+      if (raw.exitCode === 0) return result("failed", "stream ended early");
+      // Never copy stderr into a detail: only this fixed phrase is recognized.
+      if (raw.stderr.includes("Select a model before sending a message")) return result("failed", "zcode worker is not signed in, or its plan lacks the model");
+      return result("failed", `exit ${exit}; see stderr.log`);
+    },
+
+    // A model or a level the plan lacks does not fail: the CLI runs the sign-in's default model and says nothing, so a
+    // light task would spend the heavy model's quota unseen.
+    refine(result, job) {
+      if (result.status !== "done" || result.model === job.candidate.model) return result;
+      return { ...result, status: "failed", report: null, detail: `ran on ${result.model ?? "an unnamed model"}, not on ${job.candidate.model}` };
+    },
+  };
+}
+
+export function zcodeWarnings(version: string | null): string[] {
+  return version === TESTED_ZCODE_VERSION ? [] : [`zcode ${version ?? "(version unknown)"} is not the tested version ${TESTED_ZCODE_VERSION}`];
+}

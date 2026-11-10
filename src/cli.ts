@@ -146,7 +146,8 @@ const USAGE = `mandor <command>
 
 You run:
   init                          create the home and its config, read the model list, print warnings
-  models [--refresh] [--json]   list the models codex offers
+  models [--refresh] [--json]   list the models the enabled tools offer
+  login zcode [zai|bigmodel]    sign the zcode worker in, in a browser, under a home of its own
   project setup [--clone <path>]... [--setup <command>] [--shared <glob>]... [--deny <glob>]...
                 [--generator <clone path>=<glob>]... [--worker-network] [--worker-add-dir <dir>]...
   status [--json]               goals, tasks, jobs and exhausted tools of this repository
@@ -236,6 +237,21 @@ export async function main(argv: string[]): Promise<number> {
         for (const m of r.models) console.log(`${m.model} ${m.efforts.join(",")} default ${m.defaultEffort ?? "none"}${m.hidden ? " hidden" : ""}`);
         for (const w of r.warnings) console.log(`warning: ${w}`);
       }
+      return 0;
+    } catch (e) {
+      console.error(`mandor: ${(e as Error).message}`);
+      return 1;
+    }
+  }
+  if (argv[0] === "login") {
+    const [, tool, provider = "zai", extra] = argv;
+    if (tool !== "zcode" || extra !== undefined || (provider !== "zai" && provider !== "bigmodel")) {
+      console.error("mandor: usage: login zcode [zai|bigmodel]");
+      return 2;
+    }
+    try {
+      const [{ loadConfig }, { zcodeLogin }] = await Promise.all([import("./config.ts"), import("./adapters/zcode.ts")]);
+      console.log(JSON.stringify(zcodeLogin(loadConfig(), provider), null, 2));
       return 0;
     } catch (e) {
       console.error(`mandor: ${(e as Error).message}`);

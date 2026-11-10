@@ -1,6 +1,6 @@
 ---
 name: lead
-description: Use when leading coding work through mandor workers. Plans a goal, dispatches tasks to Codex CLI workers, reviews their work strictly, accepts it as a guarded local commit, and recovers from quota stalls and account switches.
+description: Use when leading coding work through mandor workers. Plans a goal, dispatches tasks to Codex and ZCode workers, reviews their work strictly, accepts it as a guarded local commit, and recovers from quota stalls and account switches.
 ---
 
 # Leading work through mandor
@@ -18,6 +18,7 @@ Write every brief, plan, notes, evidence, and commit-message file under the dire
 - Use one target branch per goal, and one per unrelated fix. Branch names follow the repo convention and contain no vendor tokens. Task slugs contain none either.
 - Give each task scope globs (`--scope`, repeatable), a tier (`ringan`, `sedang`, `berat`), and proof-of-done commands with expected results. Give a directory as `src/**`; a bare `src` or `src/` is read the same way, while `README.md` names that one file.
 - Use `berat` for complex debugging and architecture. For heavy work that is not the hardest, pass `--use codex:gpt-6.1-sol@max` to `dispatch`.
+- A `zcode:` candidate only runs in a project whose workers may use the network. If a task on one stalls with `failed` and its log names the network, tell the user that ZCode workers need `mandor project setup --worker-network`, and stop until they decide.
 - Write the plan file under scratch. Run `mandor goal start <branch>`, then `mandor plan set --goal <branch> --file <plan file> --description "<one line>"`. `goal start` branches from the HEAD of the checkout you run it in; pass `--from <ref>` to branch from another commit or branch. It prints JSON; `goal.integrationWorktree` is the integration worktree path, which you need in section 7.
 - If `goal start` or `dispatch` refuses because the git config defines a filter or merge driver, tell the user what the error names and stop. Do not edit the config or work around it.
 

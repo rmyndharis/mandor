@@ -3,7 +3,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, w
 import { createRequire } from "node:module";
 import { dirname, join, posix, sep } from "node:path";
 import { loadRounds, renderBrief, renderConflictMessage, renderFixMessage, renderHandoff, saveRoundFile } from "./brief.ts";
-import { loadConfig, resolveCodexBin, type Config } from "./config.ts";
+import { loadConfig, resolveBin, WORKER_TOOLS, type Config } from "./config.ts";
 import type { Candidate, FileRef, GoalRecord, JobKind, JobRecord, LedgerEvent, ModelInfo, Pending, ProjectState, StallReason, TaskRecord, TaskStatus, Tier, ToolName, ToolState } from "./contracts.ts";
 import {
   addWorktree, apply3way, applyCheck, applyToIndex, assertCommitIdentity, assertHeadIdentity, branchExists, changedPaths, commitRunning, commitStaged, configuredDrivers,
@@ -62,9 +62,8 @@ export function startJobLocked(projectId: string, task: TaskRecord, kind: JobKin
   // A job started now would only be stopped.
   if (cancelStandsLocked(projectId, task.id)) return null;
   const cfg = loadConfig();
-  // Before anything is written, so a missing binary leaves no job behind. Only codex has an adapter;
-  // resolve the binary per tool when another lands.
-  const bin = resolveCodexBin(cfg);
+  // Before anything is written, so a missing binary leaves no job behind.
+  const bin = resolveBin(candidate.tool, cfg);
   const id = newJobId();
   const seq = task.seq + 1;
   const promptPath = join(jobDir(id), "prompt.md");
@@ -410,11 +409,13 @@ export function dispatch(cwd: string, o: { goal: string; slug: string; tier: Tie
   assertOutsideRepos(o.briefFile, projectRoot);
   const { slug } = o;
   refuseNames([...(SLUG.test(slug) ? [] : [`invalid task slug "${slug}": use lowercase letters, digits and -`]), ...checkName(slug).map((v) => v.detail)]);
-  // Every start needs the binary, so nothing is recorded without it, and it comes first because its absence also empties
-  // the catalog. Resolving searches PATH but takes a configured path on trust.
+  // Every start needs its tool's binary, so nothing is recorded while an enabled tool lacks one, and it comes first
+  // because its absence also empties the catalog. Resolving searches PATH but takes a configured path on trust.
   const config = loadConfig();
-  const bin = resolveCodexBin(config);
-  if (!existsSync(bin)) throw new Error(`codex not found at ${bin}`);
+  for (const tool of WORKER_TOOLS.filter((t) => config.tools[t].enabled)) {
+    const bin = resolveBin(tool, config);
+    if (!existsSync(bin)) throw new Error(`${tool} not found at ${bin}`);
+  }
   if (!hasUsableModel(models)) throw new Error("no model catalog; run mandor models --refresh");
   const use = o.use === null ? null : checkUse(o.use, o.tier, models);
   // A use never reads the tier's list, so only a routed task needs a candidate there.

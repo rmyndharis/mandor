@@ -47,6 +47,8 @@ export interface JobResult {        // full result in jobs/<id>/result.json
   usageCumulative: Record<string, number> | null; detail: string;
   resetsAt: number | null;          // epoch seconds
   exitCode: number | null; creditFunded: boolean;
+  model?: string | null;            // the model the run itself named, for a tool that names one
+  usagePerRun?: boolean;            // usageCumulative holds this run's own usage, not the session's sum
 }
 export interface JobOutcome { status: JobStatus; sessionId: string | null; detail: string; resetsAt: number | null; exitCode: number | null }
 export interface RawRun { stdout: string; stderr: string; exitCode: number | null; signal: string | null; lastMessage: string | null }

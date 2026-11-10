@@ -6,7 +6,7 @@ const NAME = ["man", "dor"].join("");
 export const TOOL_VARS: readonly string[] = ["HOME", "CODEX_BIN", "JOB"].map((v) => `${NAME.toUpperCase()}_${v}`);
 // The top-level commands src/cli.ts and src/status.ts dispatch on.
 export const TOOL_COMMANDS: readonly string[] = ["_run", "--help", "--version", "cancel", "confirm", "dispatch", "drop", "goal", "hook", "init",
-  "logs", "models", "plan", "project", "ready", "reassign", "review", "scratch", "show", "status", "verdict", "wait"];
+  "login", "logs", "models", "plan", "project", "ready", "reassign", "review", "scratch", "show", "status", "verdict", "wait"];
 const SKILLS = ["lead", "status"];
 
 // A letter, a digit, an underscore or a hyphen next to a command or a skill id makes it part of another word.

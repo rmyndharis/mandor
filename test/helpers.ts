@@ -97,6 +97,38 @@ export function tempHome(opts: { config?: boolean } = {}): string {
   return home;
 }
 
+// The zcode worker's own home inside the current state root, as a sign-in leaves it: the plan as the default provider.
+export function zcodeSignIn(provider = "account:zai-individual-coding-plan"): string {
+  const home = join(process.env.MANDOR_HOME!, "zcode", "home");
+  mkdirSync(join(home, ".zcode", "v2"), { recursive: true });
+  writeFileSync(join(home, ".zcode", "v2", "provider_config.json"), JSON.stringify({ schemaVersion: 1, config: { defaultModelSelection: { providerId: provider, modelId: "GLM-5.3" } } }));
+  return home;
+}
+
+const FAKE_ZCODE = join(import.meta.dirname, "fake-bin", "fake-zcode.mjs");
+
+// A config with zcode switched on and pointed at its fake, next to the fake codex.
+export function writeZcodeConfig(home: string): void {
+  const cfg = structuredClone(DEFAULT_CONFIG);
+  cfg.tools.codex.bin = FAKE_CODEX;
+  cfg.tools.zcode = { ...cfg.tools.zcode, enabled: true, bin: FAKE_ZCODE };
+  writeJsonAtomic(join(home, "config.json"), cfg);
+}
+
+const zcodeFakeDir = () => join(process.env.MANDOR_HOME!, "zcode", "home", "fake");
+
+// The runs the fake zcode plays, in order; see the fake for a scenario's fields.
+export function writeZcodeScenarios(entries: object[]): void {
+  mkdirSync(zcodeFakeDir(), { recursive: true });
+  rmSync(join(zcodeFakeDir(), "claims"), { recursive: true, force: true });
+  writeFileSync(join(zcodeFakeDir(), "scenarios.json"), JSON.stringify(entries));
+}
+
+export function readZcodeLog(): { argv: string[]; env: Record<string, string>; cwd: string }[] {
+  const p = join(zcodeFakeDir(), "log.jsonl");
+  return existsSync(p) ? readFileSync(p, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)) : [];
+}
+
 // One exec of the fake CLI. stdout is a fixture file name or "generated:<kind>".
 export interface Scenario {
   stdout: string; threadId?: string; stderr?: string; exitCode?: number; delayMs?: number; lastMessage?: string;

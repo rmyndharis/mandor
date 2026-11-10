@@ -77,13 +77,16 @@ const squash = (s: string) => s.replace(/\s+/g, " ").trim();
 function executedCommands(rawLog: string): string[] {
   const out: string[] = [];
   for (const line of rawLog.split("\n")) {
-    let ev: { type?: unknown; item?: { type?: unknown; command?: unknown } };
+    let ev: { type?: unknown; item?: { type?: unknown; command?: unknown }; payload?: { kind?: unknown; input?: { command?: unknown } } };
     try {
       ev = JSON.parse(line);
     } catch {
       continue;
     }
     const item = ev?.item;
+    // zcode shows a command as the input of a tool call it scheduled, as the shell got it.
+    const scheduled = ev?.type === "tool.updated" && ev.payload?.kind === "scheduled" ? ev.payload.input?.command : undefined;
+    if (typeof scheduled === "string") out.push(squash(scheduled));
     if (ev?.type !== "item.completed" || item?.type !== "command_execution" || typeof item.command !== "string") continue;
     out.push(squash(executedScript(item.command)));
   }

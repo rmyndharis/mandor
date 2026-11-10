@@ -1,0 +1,180 @@
+{
+ "schemaVersion": 1,
+ "revision": 43,
+ "config": {
+  "providerConfigRules": {
+   "templateRules": [],
+   "providerRules": [
+    {
+     "providerId": "account:zai-individual-coding-plan",
+     "providerName": "Z.AI Individual Coding Plan",
+     "config": {}
+    },
+    {
+     "providerId": "account:zai-start-plan",
+     "providerName": "Start Plan",
+     "config": {}
+    }
+   ]
+  },
+  "modelConfigRules": {
+   "modelRules": [
+    {
+     "modelMatch": ".*glm-5.*",
+     "config": {
+      "properties": {
+       "contextWindow": 200000,
+       "inputFormat": {
+        "supportsImage": false,
+        "supportsVideo": false
+       }
+      },
+      "optionSpecs": {
+       "reasoningLevel": {
+        "values": [
+         "disabled",
+         "enabled"
+        ]
+       },
+       "maxOutputTokens": {
+        "max": 64000
+       }
+      }
+     }
+    },
+    {
+     "modelMatch": ".*GLM-5\\.2.*",
+     "config": {
+      "properties": {
+       "contextWindow": 1000000,
+       "inputFormat": {
+        "supportsImage": false,
+        "supportsVideo": false
+       }
+      },
+      "optionSpecs": {
+       "reasoningLevel": {
+        "values": [
+         "disabled",
+         "high",
+         "max"
+        ]
+       },
+       "maxOutputTokens": {
+        "max": 128000
+       }
+      }
+     }
+    },
+    {
+     "modelMatch": ".*GLM-5-Turbo.*",
+     "config": {
+      "properties": {
+       "contextWindow": 200000,
+       "inputFormat": {
+        "supportsImage": false,
+        "supportsVideo": false
+       }
+      },
+      "optionSpecs": {
+       "reasoningLevel": {
+        "values": [
+         "disabled",
+         "enabled"
+        ]
+       },
+       "maxOutputTokens": {
+        "max": 64000
+       }
+      }
+     }
+    },
+    {
+     "modelMatch": ".*glm-5\\.3.*",
+     "config": {
+      "properties": {
+       "contextWindow": 1000000,
+       "inputFormat": {
+        "supportsImage": false,
+        "supportsVideo": false
+       }
+      },
+      "optionSpecs": {
+       "reasoningLevel": {
+        "values": [
+         "low",
+         "high",
+         "max"
+        ]
+       },
+       "maxOutputTokens": {
+        "max": 128000
+       }
+      }
+     }
+    }
+   ],
+   "modelApiRules": [],
+   "providerSiteRules": [],
+   "templateModelRules": [],
+   "builtinProviderModelRules": [
+    {
+     "providerId": "account:zai-individual-coding-plan",
+     "modelId": "GLM-5.3",
+     "config": {
+      "enabled": true
+     }
+    },
+    {
+     "providerId": "account:zai-individual-coding-plan",
+     "modelId": "GLM-5.3-Flash",
+     "config": {
+      "enabled": true
+     }
+    },
+    {
+     "providerId": "account:zai-individual-coding-plan",
+     "modelId": "GLM-5.2",
+     "config": {
+      "enabled": true
+     }
+    },
+    {
+     "providerId": "account:zai-individual-coding-plan",
+     "modelId": "GLM-5-Turbo",
+     "config": {
+      "enabled": true
+     }
+    },
+    {
+     "providerId": "account:zai-start-plan",
+     "modelId": "GLM-5.3-Flash",
+     "config": {
+      "enabled": true
+     }
+    },
+    {
+     "providerId": "account:zai-start-plan",
+     "modelId": "GLM-5.2",
+     "config": {
+      "enabled": true
+     }
+    },
+    {
+     "providerId": "account:zai-start-plan",
+     "modelId": "GLM-5-Turbo",
+     "config": {
+      "enabled": true
+     }
+    },
+    {
+     "providerId": "account:zai-individual-coding-plan",
+     "modelId": "GLM-Off",
+     "config": {
+      "enabled": false
+     }
+    }
+   ]
+  }
+ }
+}
