@@ -147,7 +147,9 @@ const USAGE = `mandor <command>
 You run:
   init                          create the home and its config, read the model list, print warnings
   models [--refresh] [--json]   list the models the enabled tools offer
-  login zcode [zai|bigmodel]    sign the zcode worker in, in a browser, under a home of its own
+  login zcode [zai|bigmodel] [--api-key]
+                                sign the zcode worker in under a home of its own: in a browser, or with a
+                                Coding Plan API key piped in
   project setup [--clone <path>]... [--setup <command>] [--shared <glob>]... [--deny <glob>]...
                 [--generator <clone path>=<glob>]... [--worker-network] [--worker-add-dir <dir>]...
   status [--json]               goals, tasks, jobs and exhausted tools of this repository
@@ -244,14 +246,23 @@ export async function main(argv: string[]): Promise<number> {
     }
   }
   if (argv[0] === "login") {
-    const [, tool, provider = "zai", extra] = argv;
-    if (tool !== "zcode" || extra !== undefined || (provider !== "zai" && provider !== "bigmodel")) {
-      console.error("mandor: usage: login zcode [zai|bigmodel]");
+    const tool = argv[1];
+    const withKey = argv.filter((a) => a === "--api-key").length;
+    const [provider = "zai", extra] = argv.slice(2).filter((a) => a !== "--api-key");
+    if (tool !== "zcode" || extra !== undefined || withKey > 1 || (provider !== "zai" && provider !== "bigmodel")) {
+      console.error("mandor: usage: login zcode [zai|bigmodel] [--api-key]");
       return 2;
     }
     try {
-      const [{ loadConfig }, { zcodeLogin }] = await Promise.all([import("./config.ts"), import("./adapters/zcode.ts")]);
-      console.log(JSON.stringify(zcodeLogin(loadConfig(), provider), null, 2));
+      const [{ loadConfig }, { zcodeLogin, zcodeUseApiKey }] = await Promise.all([import("./config.ts"), import("./adapters/zcode.ts")]);
+      if (withKey === 0) {
+        console.log(JSON.stringify(zcodeLogin(loadConfig(), provider), null, 2));
+        return 0;
+      }
+      // From a pipe only: typed at a terminal the key would show on the screen, and as an argument in every process list.
+      const key = process.stdin.isTTY ? "" : readFileSync(0, "utf8").trim();
+      if (key === "" || /\s/.test(key)) throw new Error("no API key on stdin: pipe it in, as in `pbpaste | mandor login zcode --api-key`");
+      console.log(JSON.stringify(zcodeUseApiKey(provider, key), null, 2));
       return 0;
     } catch (e) {
       console.error(`mandor: ${(e as Error).message}`);

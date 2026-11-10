@@ -144,7 +144,7 @@ The lead's commands print JSON; `status`, `show` and `logs` print plain text.
 | --- | --- |
 | `mandor init` | Create `~/.mandor`, read the Codex model list, print warnings |
 | `mandor models [--refresh] [--json]` | List the models the enabled tools offer, with their efforts |
-| `mandor login zcode` | Sign the ZCode worker in, in a browser, under a home of its own |
+| `mandor login zcode [--api-key]` | Sign the ZCode worker in under a home of its own: in a browser, or with a Coding Plan API key piped in |
 | `mandor project setup [flags]` | Record what workers need in this repository |
 | `mandor status [--json]` | Goals, tasks, jobs, and the time each exhausted tool resets |
 | `mandor show <slug>` | The outcome detail of a task, and each of its jobs with the tokens that run used |
@@ -208,14 +208,14 @@ Each tier lists its candidates as `tool:model@effort`, in order of preference; `
 
 ## ZCode workers
 
-ZCode is off until you switch it on. Set `tools.zcode.enabled` to `true` in `~/.mandor/config.json`, then run `mandor login zcode` once and approve the sign-in in your browser. `mandor models` then lists the models of your plan, and the `zcode:` candidates of each tier start to run.
+ZCode is off until you switch it on. Set `tools.zcode.enabled` to `true` in `~/.mandor/config.json`, then sign the worker in, one of two ways. With an API key: create one for your Coding Plan at https://z.ai/manage-apikey/apikey-list, copy it, and run `pbpaste | mandor login zcode --api-key`. The key is read from the pipe, so it never shows on screen or in your shell history, and it lasts until you revoke it. In a browser: run `mandor login zcode` and approve the sign-in, which stops working after an hour. `mandor models` then lists the models of your plan, and the `zcode:` candidates of each tier start to run.
 
 A ZCode worker differs from a Codex worker in five ways:
 
 - **A home of its own.** The worker runs with `~/.mandor/zcode/home` as its `HOME` and signs in there, so the sign-in of your ZCode app is never touched. The ZCode CLI reads your MCP servers, plugins, hooks, skills and instructions from `HOME`: a worker on your own home would load all of them into every turn.
 - **mandor's own sandbox.** ZCode has no sandbox of its own, so the worker runs under a `sandbox-exec` profile: it writes only to its worktree, its own home and the temporary directories.
 - **The network is always open.** The profile cannot close the network for the worker's commands and leave it open for the CLI that runs them. A ZCode job therefore refuses to start in a project without `--worker-network`. To make up for it, the profile keeps the worker from reading what your credential directories hold (`~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gh`, the homes of the other tools and the like) and the rest of `~/.mandor`. Any other file your account can read is still readable.
-- **The sign-in runs out.** In testing a sign-in stopped working about an hour after it was made, and the CLI did not renew it. Every run then fails at once, so mandor sets the tool aside as it does one out of quota, and its tasks can move to another tool. Sign in again with `mandor login zcode`, then run `mandor ready zcode`.
+- **A browser sign-in runs out.** It lasts an hour and the CLI does not renew it. Every run then fails at once, so mandor sets the tool aside as it does one out of quota, and its tasks can move to another tool. Sign in again, then run `mandor ready zcode`. An API key does not run out. Either sign-in sits in the worker's home, which the worker's own commands can read: revoke the key at Z.ai if a run ever looks wrong.
 - **The report is checked, not enforced.** ZCode has no output schema, so the prompt states the report's format and mandor takes the last JSON object of the answer. A run that ends on another model than the task asked for is failed: ZCode falls back to your plan's default model without saying so.
 
 A bare `tools.zcode.bin` means the app's own executable in `/Applications`; give a path for an app kept elsewhere.

@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -76,6 +77,28 @@ export function zcodeLogin(cfg: Config, provider: string): { tool: "zcode"; home
   const r = spawnSync(command, [...args, "login", provider], { env: zcodeEnv(bin, workerEnv(null)), stdio: ["inherit", "ignore", "inherit"] });
   if (r.status !== 0) throw new Error(`zcode login failed (exit ${r.status ?? r.signal})`);
   return { tool: "zcode", home: zcodeHome(), provider: signedInProvider() };
+}
+
+// A personal provider file whose only content is the model a new session starts on.
+const providerFile = (defaultModelSelection: object) => ({
+  schemaVersion: 1,
+  config: { providerConfigRules: { providerRules: [] }, modelConfigRules: { providerModelRules: [], manualProviderModelRules: [] }, defaultModelSelection },
+});
+
+// The other way to sign the worker in: a Coding Plan API key, which lasts until it is revoked, where a browser sign-in
+// stops working after an hour. The CLI has no command to store one, but its runtime reads these three entries, plain
+// values included, and then asks for no browser sign-in. Whatever sign-in the home held is replaced.
+export function zcodeUseApiKey(family: string, key: string): { tool: "zcode"; home: string; provider: string } {
+  const provider = `account:${family}-individual-coding-plan`;
+  const identity = `key-${createHash("sha256").update(key).digest("hex").slice(0, 24)}`;
+  const dir = join(zcodeHome(), ".zcode", "v2");
+  writeJsonAtomic(join(dir, "credentials.json"), {
+    [`account-provider:${provider}:identity`]: identity,
+    [`account-provider:${provider}:auth-source`]: "manual",
+    [`account-provider:coding-plan:${provider}:account:${identity}:api-key`]: key,
+  });
+  writeJsonAtomic(join(dir, "provider_config.json"), providerFile({ providerId: provider, modelId: "GLM-5.3" }));
+  return { tool: "zcode", home: zcodeHome(), provider };
 }
 
 // The last object in text that parses as JSON, or null. A worker ends with its report, which a model may wrap in prose
@@ -167,13 +190,7 @@ export function createZcodeAdapter(cfg: Config): Adapter {
       if (resume !== null && !SESSION.test(resume)) throw new Error("zcode resume needs a session id");
       // The CLI has no model option: a session starts on the default of the personal provider file it is given.
       const personal = join(dirname(files.schemaPath), "zcode-provider.json");
-      writeJsonAtomic(personal, {
-        schemaVersion: 1,
-        config: {
-          providerConfigRules: { providerRules: [] }, modelConfigRules: { providerModelRules: [], manualProviderModelRules: [] },
-          defaultModelSelection: { providerId: signedInProvider(), modelId: model, options: { reasoningLevel: effort } },
-        },
-      });
+      writeJsonAtomic(personal, providerFile({ providerId: signedInProvider(), modelId: model, options: { reasoningLevel: effort } }));
       // No working directory option: the runner starts the worker in the worktree's root, which it has verified.
       const args = [...sandbox(job.worktree, dirname(personal), project.addDirs), ...zcodeStart(job.bin), ...(resume === null ? [] : ["--resume", resume]),
         "-p", prompt, "--output-format", "stream-json", "--mode", "yolo", "--disallowed-tools", DISALLOWED_TOOLS];

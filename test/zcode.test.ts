@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { TestContext } from "node:test";
 import { test } from "node:test";
@@ -415,4 +416,42 @@ test("login zcode signs the worker in under its own HOME and says which plan, an
     const b = cli(...bad);
     assert.deepEqual([b.status, b.stdout], [2, ""], bad.join(" "));
   }
+});
+
+test("login zcode --api-key stores a key piped in, as the CLI reads one, without starting the CLI or printing the key", () => {
+  const home = tempHome();
+  writeZcodeConfig(home);
+  const workerHome = join(home, "zcode", "home");
+  mkdirSync(join(workerHome, "fake"), { recursive: true });
+  const KEY = "test-key.0123456789abcdef";
+  const cli = (input: string, ...args: string[]) => spawnSync(LAUNCHER, args, { encoding: "utf8", input, env: { PATH: process.env.PATH!, HOME: temp("mandor-zuser-"), MANDOR_HOME: home, MANDOR_CODEX_BIN: process.env.MANDOR_CODEX_BIN!, CODEX_HOME: process.env.CODEX_HOME! } });
+  // An earlier browser sign-in, which the key replaces.
+  zcodeSignIn();
+  writeFileSync(join(workerHome, ".zcode", "v2", "credentials.json"), JSON.stringify({ "oauth:zai:access_token": "old" }));
+
+  const r = cli(`${KEY}\n`, "login", "zcode", "--api-key");
+  assert.equal(r.status, 0, r.stderr);
+  const provider = "account:zai-individual-coding-plan";
+  assert.deepEqual(JSON.parse(r.stdout), { tool: "zcode", home: workerHome, provider });
+  assert.ok(!r.stdout.includes(KEY) && !r.stderr.includes(KEY));
+  assert.deepEqual(readZcodeLog(), [], "the CLI is not started");
+  const file = join(workerHome, ".zcode", "v2", "credentials.json");
+  const identity = `key-${createHash("sha256").update(KEY).digest("hex").slice(0, 24)}`;
+  assert.deepEqual(JSON.parse(readFileSync(file, "utf8")), {
+    [`account-provider:${provider}:identity`]: identity,
+    [`account-provider:${provider}:auth-source`]: "manual",
+    [`account-provider:coding-plan:${provider}:account:${identity}:api-key`]: KEY,
+  });
+  assert.equal(statSync(file).mode & 0o777, 0o600);
+  // The adapter finds the plan as after a browser sign-in.
+  assert.deepEqual(zcode().detectModels().map((m) => m.model), ["GLM-5.3", "GLM-5.3-Flash", "GLM-5.2", "GLM-5-Turbo"]);
+
+  const big = cli(KEY, "login", "zcode", "bigmodel", "--api-key");
+  assert.equal(JSON.parse(big.stdout).provider, "account:bigmodel-individual-coding-plan");
+  for (const [input, why] of [["", "empty"], ["  \n", "blank"], ["two words", "whitespace inside"]]) {
+    const bad = cli(input, "login", "zcode", "--api-key");
+    assert.deepEqual([bad.status, bad.stdout], [1, ""], why);
+    assert.match(bad.stderr, /^mandor: no API key on stdin: pipe it in, as in `pbpaste \| mandor login zcode --api-key`\n$/, why);
+  }
+  assert.equal(cli(KEY, "login", "zcode", "--api-key", "--api-key").status, 2);
 });
