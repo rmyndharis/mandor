@@ -5,7 +5,7 @@ description: Use when leading coding work through mandor workers. Plans a goal, 
 
 # Leading work through mandor
 
-You lead, the workers write code. Run every command as `mandor <command>`.
+You lead, the workers write code. Run every command as `mandor <command>`, from the repository's checkout: run from the scratch directory, a command finds no repository. `mandor --help` lists every command with its options.
 
 mandor confines every worker and every write to a worktree with `sandbox-exec`, which cannot run inside Claude Code's own Bash sandbox. If a command says it cannot confine with sandbox-exec, tell the user that mandor needs Claude Code's Bash sandbox off, and stop until it is.
 
@@ -47,7 +47,7 @@ When `wait` returns:
 - Treat `violations` as blockers: accept refuses them.
 - Read each `attribution-hint` red flag. If the line credits a tool, reword it in the task worktree.
 - Rebuild any `stale-input` first, and ask the user when the rebuild needs credentials.
-- Make shared-file edits (changelog, docs) yourself in the task worktree now, so that they go into the task's single guarded commit. Apply the commit message rule of section 6 to these edits: never mention a worker, tool, model, or review.
+- Make shared-file edits (changelog, docs) yourself in a task worktree, so that they go into a guarded commit. In a goal with several tasks, make them once, for all of its tasks, in the task you accept last: the same lines added in two tasks conflict at the second accept, which costs a worker round. Apply the commit message rule of section 6 to these edits: never mention a worker, tool, model, or review.
 - After any edit of your own, run `mandor review <slug>` again before you accept. Accept commits only the tree the last review showed, and refuses when the worktree changed since.
 
 ## 6. Decide
@@ -59,7 +59,7 @@ When `wait` returns:
 
 ## 7. After accept
 
-When the goal branch has moved, accept merges the change onto its new tip and can return one of these instead of a commit. Then the task is not `integrating`: do not rerun proofs or run `confirm`.
+An accept commits at once when the change still applies to the goal branch, even if the goal has moved since the task started. When it no longer applies, accept merges the change onto the goal's new tip and returns one of these instead of a commit. Then the task is not `integrating`: do not rerun proofs or run `confirm`.
 
 - `rebased`: the merge was clean, and it changed the worktree. Wait for the next event, `review`, then run `mandor review <slug>` again and accept again.
 - `conflict`: a worker round resolves the listed paths. Wait for the next event, `review` when it is done, and review again before you accept.
