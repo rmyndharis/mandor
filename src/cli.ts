@@ -211,7 +211,8 @@ export async function main(argv: string[]): Promise<number> {
       return 1;
     }
   }
-  if (argv.length === 0 || argv[0] === "--help") {
+  // Also after a command, where a lead looks for that command's options.
+  if (argv.length === 0 || argv[0] === "--help" || argv.slice(1).includes("--help")) {
     console.log(USAGE);
     return 0;
   }

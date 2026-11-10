@@ -24,6 +24,9 @@ test("--help and a bare call print every command a person or the lead runs, and 
   for (const c of ["_run", "hook"]) assert.doesNotMatch(help.stdout, new RegExp(`^  ${c}(?: |$)`, "m"), c);
   const bare = spawnSync(launcher, [], { encoding: "utf8" });
   assert.deepEqual([bare.status, bare.stdout, bare.stderr], [0, help.stdout, ""]);
+  // After a command too, where a lead looks for that command's options.
+  const after = spawnSync(launcher, ["dispatch", "--help"], { encoding: "utf8", cwd: temp("mandor-help-") });
+  assert.deepEqual([after.status, after.stdout, after.stderr], [0, help.stdout, ""]);
   const unknown = spawnSync(launcher, ["frobnicate"], { encoding: "utf8", cwd: temp("mandor-help-") });
   assert.deepEqual([unknown.status, unknown.stdout, unknown.stderr], [2, "", "mandor: unknown command: frobnicate; see mandor --help\n"]);
 });
