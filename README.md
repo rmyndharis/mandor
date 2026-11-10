@@ -208,7 +208,7 @@ Each tier lists its candidates as `tool:model@effort`, in order of preference; `
 
 ## ZCode workers
 
-ZCode is off until you switch it on. Set `tools.zcode.enabled` to `true` in `~/.mandor/config.json`, then sign the worker in, one of two ways. With an API key: create one for your Coding Plan at https://z.ai/manage-apikey/apikey-list, copy it, and run `pbpaste | mandor login zcode --api-key`. The key is read from the pipe, so it never shows on screen or in your shell history, and it lasts until you revoke it. In a browser: run `mandor login zcode` and approve the sign-in, which stops working after an hour. `mandor models` then lists the models of your plan, and the `zcode:` candidates of each tier start to run.
+ZCode is off until you switch it on. Set `tools.zcode.enabled` to `true` in `~/.mandor/config.json`, then sign the worker in, one of two ways. With an API key: put `pbpaste | mandor login zcode --api-key` on your terminal's command line without running it, create a key for your Coding Plan at https://z.ai/manage-apikey/apikey-list and copy it, then press Enter. The order matters: the command reads the clipboard, so the key must be the last thing copied. The key never shows on screen or in your shell history, and it lasts until you revoke it. In a browser: run `mandor login zcode` and approve the sign-in, which stops working after an hour. `mandor models` then lists the models of your plan, and the `zcode:` candidates of each tier start to run.
 
 A ZCode worker differs from a Codex worker in five ways:
 

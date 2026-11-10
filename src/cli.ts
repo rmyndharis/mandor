@@ -262,7 +262,10 @@ export async function main(argv: string[]): Promise<number> {
       }
       // From a pipe only: typed at a terminal the key would show on the screen, and as an argument in every process list.
       const key = process.stdin.isTTY ? "" : readFileSync(0, "utf8").trim();
-      if (key === "" || /\s/.test(key)) throw new Error("no API key on stdin: pipe it in, as in `pbpaste | mandor login zcode --api-key`");
+      const how = "then run `pbpaste | mandor login zcode --api-key`";
+      if (key === "") throw new Error(`no API key on stdin: copy the key, ${how}`);
+      // Copying the command after the key leaves the command on the clipboard. What came is never quoted back.
+      if (/\s/.test(key)) throw new Error(`the text on stdin is not an API key: it holds spaces or line breaks. Copy the key alone, as the last thing copied, ${how}`);
       console.log(JSON.stringify(zcodeUseApiKey(provider, key), null, 2));
       return 0;
     } catch (e) {

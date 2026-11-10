@@ -448,10 +448,12 @@ test("login zcode --api-key stores a key piped in, as the CLI reads one, without
 
   const big = cli(KEY, "login", "zcode", "bigmodel", "--api-key");
   assert.equal(JSON.parse(big.stdout).provider, "account:bigmodel-individual-coding-plan");
-  for (const [input, why] of [["", "empty"], ["  \n", "blank"], ["two words", "whitespace inside"]]) {
+  // What is wrong is said, and never what was given: a clipboard that holds a copied command or a page is not a key.
+  const EMPTY = "mandor: no API key on stdin: copy the key, then run `pbpaste | mandor login zcode --api-key`\n";
+  const NOT_A_KEY = "mandor: the text on stdin is not an API key: it holds spaces or line breaks. Copy the key alone, as the last thing copied, then run `pbpaste | mandor login zcode --api-key`\n";
+  for (const [input, message] of [["", EMPTY], ["  \n", EMPTY], ["two words", NOT_A_KEY], ["pbpaste | mandor login zcode --api-key", NOT_A_KEY], ["first\nsecond\n", NOT_A_KEY]]) {
     const bad = cli(input, "login", "zcode", "--api-key");
-    assert.deepEqual([bad.status, bad.stdout], [1, ""], why);
-    assert.match(bad.stderr, /^mandor: no API key on stdin: pipe it in, as in `pbpaste \| mandor login zcode --api-key`\n$/, why);
+    assert.deepEqual([bad.status, bad.stdout, bad.stderr], [1, "", message], JSON.stringify(input));
   }
   assert.equal(cli(KEY, "login", "zcode", "--api-key", "--api-key").status, 2);
 });
