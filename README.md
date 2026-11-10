@@ -144,7 +144,7 @@ The lead's commands print JSON; `status`, `show` and `logs` print plain text.
 | `mandor models [--refresh] [--json]` | List the models Codex offers, with their efforts |
 | `mandor project setup [flags]` | Record what workers need in this repository |
 | `mandor status [--json]` | Goals, tasks, jobs, and the time each exhausted tool resets |
-| `mandor show <slug>` | The outcome detail of a task |
+| `mandor show <slug>` | The outcome detail of a task, and each of its jobs with the tokens that run used |
 | `mandor logs <slug>` | The paths of a task's job logs |
 
 | The lead runs | Purpose |

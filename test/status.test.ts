@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { TestContext } from "node:test";
 import { test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { saveRoundFile } from "../src/brief.ts";
-import type { Candidate, JobRecord, ProjectState, TaskRecord } from "../src/contracts.ts";
+import type { Candidate, JobRecord, JobResult, JobStatus, ProjectState, TaskRecord } from "../src/contracts.ts";
 import { jobDir, processStart, projectDir, projectIdFor, scratchDir } from "../src/home.ts";
 import { appendEvent, ledgerSize, loadState, now } from "../src/ledger.ts";
 import { readJob } from "../src/runner.ts";
@@ -207,6 +207,42 @@ test("show says when the worktree of an accepted or cancelled task is gone, and 
   assert.equal(worktreeLine("busy"), `worktree: ${gone}`, "a missing worktree of a live task is a fault to see, not a removal");
   assert.equal(worktreeLine("kept"), `worktree: ${s.repo}`);
   assert.equal(worktreeLine("bare"), "worktree: none");
+});
+
+test("show lists each job with the usage its own run added to its session", (t) => {
+  const s = setup(t);
+  const task: TaskRecord = {
+    id: "used", goalBranch: GOAL, tier: "ringan", after: null, status: "needs-review", stallReason: null, pending: null, base: null, worktree: null,
+    branch: "wip/used", scope: [], seq: 4, fixRounds: 1, candidate: LUNA, sessionId: null, use: null, jobIds: [], integratedCommit: null, briefPath: "",
+  };
+  appendEvent(s.id, { t: "task.created", at: now(), task });
+  const [first, second] = ["00000000-0000-7000-8000-000000000a01", "00000000-0000-7000-8000-000000000a02"];
+  // Codex reports a session's usage summed over its runs: the resume holds the start's count, and a fresh session starts over.
+  const runs: [string, JobStatus, string | null, Record<string, number> | null][] = [
+    ["j-20261108100000-0001", "done", first, { input_tokens: 100, output_tokens: 10 }],
+    ["j-20261108100100-0002", "done", first, { input_tokens: 250, output_tokens: 30 }],
+    ["j-20261108100200-0003", "quota", first, null],
+    ["j-20261108100300-0004", "done", second, { input_tokens: 40, output_tokens: 4 }],
+  ];
+  runs.forEach(([id, status, sessionId, usageCumulative], i) => {
+    appendEvent(s.id, { t: "job.started", at: now(), job: { id, taskId: "used", seq: i + 1, kind: i === 0 || i === 3 ? "start" : "resume", candidate: LUNA } });
+    appendEvent(s.id, { t: "job.finished", at: now(), jobId: id, outcome: { status, sessionId, detail: "", resetsAt: null, exitCode: 0 } });
+    const result: JobResult = { status, sessionId, report: null, usageCumulative, detail: "", resetsAt: null, exitCode: 0, creditFunded: false };
+    mkdirSync(jobDir(id), { recursive: true });
+    writeFileSync(join(jobDir(id), "result.json"), JSON.stringify(result));
+  });
+  // One with no end on record, whether it is queued, running or was never claimed.
+  appendEvent(s.id, { t: "job.started", at: now(), job: { id: "j-20261108100400-0005", taskId: "used", seq: 5, kind: "resume", candidate: LUNA } });
+  const lines = showTask(s.id, "used").split("\n");
+  assert.deepEqual(lines.slice(lines.indexOf("jobs:")), [
+    "jobs:",
+    "  j-20261108100000-0001 codex:gpt-6-luna@medium done: input_tokens 100, output_tokens 10",
+    "  j-20261108100100-0002 codex:gpt-6-luna@medium done: input_tokens 150, output_tokens 20",
+    "  j-20261108100200-0003 codex:gpt-6-luna@medium quota: no usage recorded",
+    "  j-20261108100300-0004 codex:gpt-6-luna@medium done: input_tokens 40, output_tokens 4",
+    "  j-20261108100400-0005 codex:gpt-6-luna@medium unfinished: no usage recorded",
+  ]);
+  assert.ok(!showTask(s.id, "used").includes("round files:"), "the job list is the last section when no round file exists");
 });
 
 test("show and logs refuse an unknown task and a missing slug", (t) => {

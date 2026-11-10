@@ -2,11 +2,11 @@ import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { ROUND_FILES } from "./brief.ts";
 import { formatCandidate } from "./config.ts";
-import type { JobRecord, ProjectState, TaskRecord, ToolState } from "./contracts.ts";
+import type { JobRecord, JobResult, ProjectState, TaskRecord, ToolState } from "./contracts.ts";
 import { jobDir, projectDir, roundDir } from "./home.ts";
 import { ledgerSize, loadState, loadToolState } from "./ledger.ts";
 import { readJob, reconcileLocked } from "./runner.ts";
-import { withProjectLock } from "./store.ts";
+import { readJson, withProjectLock } from "./store.ts";
 import { loadCatalog, newerReason, resolveProject } from "./tasks.ts";
 
 const NO_PROJECT = "mandor: no project here";
@@ -70,6 +70,25 @@ function roundFiles(projectId: string, slug: string): string[] {
   return seqs.flatMap((seq) => ROUND_FILES.map((n) => join(roundDir(projectId, slug, seq), n)).filter(existsSync));
 }
 
+// One line per job of the task, with what its run used. Codex reports a session's usage summed over its runs, so a run's
+// own usage is what it added to the count the session's run before it left. A job with no result on disk (not ended yet,
+// ended without one, or its directory cleared out) has none to show.
+function jobLines(jobs: ProjectState["jobs"][string][]): string[] {
+  const counted = new Map<string, Record<string, number>>();
+  return jobs.map((j) => {
+    let used = "no usage recorded";
+    try {
+      const { sessionId, usageCumulative: total } = readJson<JobResult>(join(jobDir(j.id), "result.json"));
+      if (total !== null) {
+        const before = (sessionId !== null && counted.get(sessionId)) || {};
+        used = Object.entries(total).map(([k, n]) => `${k} ${n - (before[k] ?? 0)}`).join(", ");
+        if (sessionId !== null) counted.set(sessionId, total);
+      }
+    } catch {}
+    return `  ${j.id} ${formatCandidate(j.candidate)} ${j.outcome?.status ?? "unfinished"}: ${used}`;
+  });
+}
+
 export function showTask(projectId: string, slug: string): string {
   const state = loadState(projectId);
   const t = taskOf(state, slug);
@@ -77,6 +96,7 @@ export function showTask(projectId: string, slug: string): string {
   const reason = newerReason(projectId, slug);
   const last = reason !== null ? `${t.status}: ${reason}` : outcome == null ? "none" : outcome.detail === "" ? outcome.status : `${outcome.status}: ${outcome.detail}`;
   const files = roundFiles(projectId, slug);
+  const jobs = jobLines(Object.values(state.jobs).filter((j) => j.taskId === slug));
   // confirm and cancel remove the worktree, so its path alone would send the lead to a directory that is gone.
   const settled = t.status === "accepted" || t.status === "cancelled";
   const worktree = t.worktree === null ? "none" : settled && !existsSync(t.worktree) ? `${t.worktree} (removed)` : t.worktree;
@@ -84,6 +104,7 @@ export function showTask(projectId: string, slug: string): string {
     `task: ${t.id}`, `status: ${statusOf(t)}`, `brief: ${t.briefPath}`, `worktree: ${worktree}`, `branch: ${t.branch}`,
     `base: ${t.base ?? "none"}`, `session: ${t.sessionId ?? "none"}`, `fix rounds: ${t.fixRounds}`, `last outcome: ${last}`,
     ...(files.length === 0 ? [] : ["round files:", ...files.map((f) => `  ${f}`)]),
+    ...(jobs.length === 0 ? [] : ["jobs:", ...jobs]),
   ].join("\n");
 }
 
