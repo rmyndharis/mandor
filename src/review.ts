@@ -77,7 +77,8 @@ const squash = (s: string) => s.replace(/\s+/g, " ").trim();
 function executedCommands(rawLog: string): string[] {
   const out: string[] = [];
   for (const line of rawLog.split("\n")) {
-    let ev: { type?: unknown; item?: { type?: unknown; command?: unknown }; payload?: { kind?: unknown; input?: { command?: unknown } } };
+    let ev: { type?: unknown; item?: { type?: unknown; command?: unknown }; payload?: { kind?: unknown; input?: { command?: unknown } };
+      event?: unknown; step_update?: { step_type?: unknown; tool_name?: unknown; tool_info?: { parameters?: { CommandLine?: unknown } } } };
     try {
       ev = JSON.parse(line);
     } catch {
@@ -87,6 +88,9 @@ function executedCommands(rawLog: string): string[] {
     // zcode shows a command as the input of a tool call it scheduled, as the shell got it.
     const scheduled = ev?.type === "tool.updated" && ev.payload?.kind === "scheduled" ? ev.payload.input?.command : undefined;
     if (typeof scheduled === "string") out.push(squash(scheduled));
+    // agy shows it as a tool step, with the command line it ran.
+    const step = ev?.event === "step_update" && ev.step_update?.tool_name === "run_command" ? ev.step_update.tool_info?.parameters?.CommandLine : undefined;
+    if (typeof step === "string") out.push(squash(step));
     if (ev?.type !== "item.completed" || item?.type !== "command_execution" || typeof item.command !== "string") continue;
     out.push(squash(executedScript(item.command)));
   }

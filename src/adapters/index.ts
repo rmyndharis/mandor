@@ -5,6 +5,7 @@ import { WORKER_TOOLS } from "../config.ts";
 import type { Adapter, ModelInfo, ToolName } from "../contracts.ts";
 import { mandorHome } from "../home.ts";
 import { clampDetail, ensureDir, readJson, writeJsonAtomic } from "../store.ts";
+import { agyWarnings, createAgyAdapter, TESTED_AGY_VERSION } from "./agy.ts";
 import { codexWarnings, createCodexAdapter } from "./codex.ts";
 import { createZcodeAdapter, zcodeWarnings } from "./zcode.ts";
 
@@ -18,6 +19,7 @@ const cacheFile = () => join(mandorHome(), "models.json");
 export function getAdapter(tool: ToolName, cfg: Config): Adapter {
   if (tool === "codex") return createCodexAdapter(cfg);
   if (tool === "zcode") return createZcodeAdapter(cfg);
+  if (tool === "agy") return createAgyAdapter(cfg);
   throw new Error(`adapter for ${tool} is not available`);
 }
 
@@ -84,5 +86,6 @@ export function modelsReport(cfg: Config, refresh: boolean): { codexVersion: str
   const problems = Object.entries(cache?.problems ?? {}).map(([tool, why]) => `${tool}: ${why}`);
   // A tool with a problem of its own has that to say, not a word about its version.
   const zcode = cfg.tools.zcode.enabled && cache?.problems.zcode === undefined ? zcodeWarnings(cache?.versions.zcode ?? null) : [];
-  return { codexVersion, fetchedAt: cache?.fetchedAt ?? null, models, warnings: [...codexWarnings(codexVersion), ...zcode, ...problems] };
+  const agy = cfg.tools.agy.enabled ? agyWarnings(cache?.problems.agy === undefined ? cache?.versions.agy ?? null : TESTED_AGY_VERSION) : [];
+  return { codexVersion, fetchedAt: cache?.fetchedAt ?? null, models, warnings: [...codexWarnings(codexVersion), ...zcode, ...agy, ...problems] };
 }

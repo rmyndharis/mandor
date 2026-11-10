@@ -240,7 +240,6 @@ test("version asks the CLI, and resolveBin gives each tool its own binary", () =
   assert.equal(resolveBin("zcode", config()), FAKE);
   assert.equal(resolveBin("zcode", DEFAULT_CONFIG), "/Applications/ZCode.app/Contents/MacOS/ZCode", "a bare name means the app");
   assert.equal(resolveBin("codex", config()), process.env.MANDOR_CODEX_BIN);
-  assert.throws(() => resolveBin("agy", config()), /no worker binary for agy/);
 });
 
 // The core, with the tool next to codex
@@ -293,7 +292,6 @@ test("the catalog holds every enabled tool's models, and a tool that cannot list
   writeZcodeConfig(home);
   const cfg = JSON.parse(readFileSync(join(home, "config.json"), "utf8"));
   assert.equal(getAdapter("zcode", cfg).tool, "zcode");
-  assert.throws(() => getAdapter("agy", cfg), /adapter for agy is not available/);
   // Not signed in yet: codex is listed, and the report says what zcode lacks.
   const first = refreshModels(cfg);
   assert.deepEqual([...new Set(first.map((m) => m.tool))], ["codex"]);

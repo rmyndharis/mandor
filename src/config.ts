@@ -137,7 +137,7 @@ function onPath(name: string): string | null {
 }
 
 // The tools a worker can run on: the ones with an adapter.
-export const WORKER_TOOLS: readonly ToolName[] = ["codex", "zcode"];
+export const WORKER_TOOLS: readonly ToolName[] = ["codex", "zcode", "agy"];
 
 const ZCODE_APP_BIN = "/Applications/ZCode.app/Contents/MacOS/ZCode";
 
@@ -146,7 +146,11 @@ const ZCODE_APP_BIN = "/Applications/ZCode.app/Contents/MacOS/ZCode";
 export function resolveBin(tool: ToolName, cfg: Config): string {
   if (tool === "codex") return resolveCodexBin(cfg);
   if (tool === "zcode") return cfg.tools.zcode.bin.includes("/") ? resolve(cfg.tools.zcode.bin) : ZCODE_APP_BIN;
-  throw new Error(`no worker binary for ${tool}`);
+  const { bin } = cfg.tools[tool];
+  if (bin.includes("/")) return resolve(bin);
+  const found = onPath(bin);
+  if (found === null) throw new Error(`${tool} not found on PATH`);
+  return found;
 }
 
 // The env override is not checked for existence: tests point it at a fake that may not be written yet.

@@ -115,6 +115,30 @@ export function writeZcodeConfig(home: string): void {
   writeJsonAtomic(join(home, "config.json"), cfg);
 }
 
+const FAKE_AGY = join(import.meta.dirname, "fake-bin", "fake-agy.mjs");
+const agyFakeDir = () => join(process.env.MANDOR_HOME!, "agy", "home", "fake");
+
+// A config with agy switched on and pointed at its fake, next to the fake codex, and the fake's control directory.
+export function writeAgyConfig(home: string): void {
+  const cfg = structuredClone(DEFAULT_CONFIG);
+  cfg.tools.codex.bin = FAKE_CODEX;
+  cfg.tools.agy = { ...cfg.tools.agy, enabled: true, bin: FAKE_AGY };
+  writeJsonAtomic(join(home, "config.json"), cfg);
+  mkdirSync(agyFakeDir(), { recursive: true });
+}
+
+// The runs the fake agy plays, in order; see the fake for a scenario's fields.
+export function writeAgyScenarios(entries: object[]): void {
+  mkdirSync(agyFakeDir(), { recursive: true });
+  rmSync(join(agyFakeDir(), "claims"), { recursive: true, force: true });
+  writeFileSync(join(agyFakeDir(), "scenarios.json"), JSON.stringify(entries));
+}
+
+export function readAgyLog(): { argv: string[]; env: Record<string, string>; cwd: string }[] {
+  const p = join(agyFakeDir(), "log.jsonl");
+  return existsSync(p) ? readFileSync(p, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)) : [];
+}
+
 const zcodeFakeDir = () => join(process.env.MANDOR_HOME!, "zcode", "home", "fake");
 
 // The runs the fake zcode plays, in order; see the fake for a scenario's fields.

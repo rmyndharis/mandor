@@ -504,7 +504,6 @@ test("vendor helper calls get the worker environment, and their errors carry no 
   for (const call of [() => failing.detectModels(), () => failing.version(), () => garbled.detectModels(), () => garbled.version()]) {
     assert.throws(call, (e: Error) => /^codex /.test(e.message) && !e.message.includes(SECRET));
   }
-  assert.throws(() => getAdapter("agy", DEFAULT_CONFIG), /adapter for agy is not available/);
 });
 
 test("loadModels keeps the last good list when a refresh fails, and returns [] without one", () => {

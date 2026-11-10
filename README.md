@@ -2,7 +2,7 @@
 
 <p align="center"><strong>The foreman for your coding agents.</strong></p>
 
-<p align="center">A Claude Code plugin that lets your session lead Codex and ZCode workers: it plans the goal, dispatches tasks to sandboxed workers, reviews every result, and lands each one as a guarded local commit. It never pushes.</p>
+<p align="center">A Claude Code plugin that lets your session lead Codex, ZCode and Antigravity workers: it plans the goal, dispatches tasks to sandboxed workers, reviews every result, and lands each one as a guarded local commit. It never pushes.</p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/version-v0.1.0-blue" alt="v0.1.0">
@@ -26,7 +26,7 @@ cd ~/your-project
 claude --plugin-dir ~/mandor      # then ask Claude to lead the work
 ```
 
-*Mandor* is Indonesian for foreman. The session you talk to is the foreman: it plans the goal, hands the coding to Codex and ZCode workers that run in parallel, each in its own git worktree under a kernel sandbox, reads what comes back, and accepts it as one local commit on a goal branch. You push when you are satisfied.
+*Mandor* is Indonesian for foreman. The session you talk to is the foreman: it plans the goal, hands the coding to Codex, ZCode and Antigravity workers that run in parallel, each in its own git worktree under a kernel sandbox, reads what comes back, and accepts it as one local commit on a goal branch. You push when you are satisfied.
 
 ## The problem
 
@@ -36,7 +36,7 @@ mandor turns the chores into a loop the lead follows, and enforces the parts tha
 
 ## How it works
 
-The Claude Code session you are in is the **lead**. It plans the goal and decides every outcome. **Workers** are Codex or ZCode CLI processes, one per task, each in its own git worktree under a kernel sandbox, writing code and running the proof commands the lead gave them. The **mandor** CLI sits between them: it keeps the state on disk, launches the workers, builds the review pack and enforces the guards. Independent tasks run in parallel, up to `maxParallel` workers per tool (two by default).
+The Claude Code session you are in is the **lead**. It plans the goal and decides every outcome. **Workers** are Codex, ZCode or Antigravity CLI processes, one per task, each in its own git worktree under a kernel sandbox, writing code and running the proof commands the lead gave them. The **mandor** CLI sits between them: it keeps the state on disk, launches the workers, builds the review pack and enforces the guards. Independent tasks run in parallel, up to `maxParallel` workers per tool (two by default).
 
 ```mermaid
 flowchart TD
@@ -103,6 +103,7 @@ mandor registers two Claude Code hooks. Both do nothing outside a repository tha
 - **Node 22.18 or newer.** The CLI is TypeScript run directly through Node's type stripping: no build step and no runtime dependency.
 - **Codex CLI** (`codex`) on your `PATH`, logged in. Tested with 0.166.0; `mandor init` warns about any other version.
 - **ZCode** (optional): the ZCode app in `/Applications`. Tested with its CLI 0.17.1. Its workers sign in on their own: see [ZCode workers](#zcode-workers).
+- **Antigravity** (optional): the `agy` CLI on your `PATH`, signed in. Tested with 1.5.2. Read [Antigravity workers](#antigravity-workers) before you switch it on.
 - **Claude Code** with plugin support. The plugin loads and its skills run on 2.1.319.
 
 ### Load the plugin
@@ -218,9 +219,21 @@ A ZCode worker differs from a Codex worker in four ways:
 
 A bare `tools.zcode.bin` means the app's own executable in `/Applications`; give a path for an app kept elsewhere.
 
+## Antigravity workers
+
+Antigravity is off until you switch it on, and Google's terms are the reason to think first: its FAQ calls driving the `agy` CLI from another tool unsupported on consumer plans, and an account can be blocked for it. `mandor init` and `mandor models` repeat this while it is on. If you accept that, set `tools.agy.enabled` to `true` in `~/.mandor/config.json`. There is no separate sign-in: the worker runs on the account your Antigravity app holds, and `mandor models` lists what that account offers. A model's id carries its effort, so an `agy` candidate is written without one, as in `agy:gemini-4-argon-high`.
+
+What mandor does for an Antigravity worker:
+
+- **A configuration directory of its own.** The worker runs with `~/.mandor/agy/home` in place of `~/.gemini`, so your plugins, MCP servers, hooks and rules stay out of it. A hook of yours would otherwise rewrite the worker's commands.
+- **Antigravity's own sandbox.** The worker's commands run in the CLI's sandbox: no write outside the worktree or into its git directory, and a network that reaches only what the sandbox's proxy lets through, whatever `--worker-network` says. A build that downloads its dependencies may fail there.
+- **Narrow permissions.** Without a person to ask, the CLI refuses any tool that needs a permission and still reports success. Each run is given rules for exactly its worktree, the cache directories of `--worker-add-dir`, and commands. A run that was refused a tool is failed.
+- **Paid credits are off.** Every run switches AI credits off for itself, whatever your settings say. Past the plan's quota the CLI would otherwise bill them, with no quota error.
+- **A lost conversation starts over.** When the conversation of a fix round is gone, the CLI starts a new one without failing. mandor sees the new id and starts the task over once, from the work so far.
+
 ## State and uninstall
 
-Everything lives under `~/.mandor`, or `MANDOR_HOME` when it is set: `config.json`, the model catalog, the ZCode worker's home with its sign-in, one directory per project with its event ledger, tasks, rounds and scratch files, the task and integration worktrees, the job logs, and `logs/runner.log` and `logs/hooks.log`. A repository itself gets only the worktree registrations, the goal branch, the `wip/` task branches and the commits the lead accepted.
+Everything lives under `~/.mandor`, or `MANDOR_HOME` when it is set: `config.json`, the model catalog, the ZCode worker's home with its sign-in, the Antigravity worker's configuration directory, one directory per project with its event ledger, tasks, rounds and scratch files, the task and integration worktrees, the job logs, and `logs/runner.log` and `logs/hooks.log`. A repository itself gets only the worktree registrations, the goal branch, the `wip/` task branches and the commits the lead accepted.
 
 A job's directory, its logs included, is removed 30 days after the job ended, unless it is the newest job of a task that is still open.
 
@@ -228,7 +241,7 @@ To stop using mandor, stop passing `--plugin-dir`. To remove its state, delete `
 
 ## Known limits
 
-- Two worker tools, Codex and ZCode, in this version. The configuration also names `agy`, but no adapter runs it.
+- Three worker tools in this version: Codex, ZCode and Antigravity. Only Codex is on by default.
 - You switch worker accounts yourself. mandor keeps the record of the work and resumes it with `mandor ready <tool>`.
 - No dashboard: `mandor status`, the lead's reports in chat and the log files are the interface.
 - A repository whose git directory is kept outside its work tree, made with `git init --separate-git-dir`, works from its main checkout. A linked worktree of it is a project of its own, because git does not say where the main checkout is.
