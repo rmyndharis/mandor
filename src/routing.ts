@@ -30,6 +30,19 @@ export function catalogGap(tier: Tier, config: Config, models: ModelInfo[]): str
   return `no candidate for tier ${tier} can run: no listed model and effort match the config; see mandor models`;
 }
 
+// What init and models say about the tier lists, whatever the tool state: each candidate of an enabled tool that the
+// catalog cannot run, which routing passes over without a word, and each tier a dispatch would refuse. Nothing for a
+// catalog with no usable model, a fault the commands report on their own.
+export function tierWarnings(config: Config, models: ModelInfo[]): string[] {
+  if (!hasUsableModel(models)) return [];
+  return TIER_ORDER.flatMap((tier) => {
+    const unusable = config.tiers[tier].map(parseCandidate).filter((c) => config.tools[c.tool].enabled)
+      .map((c) => settle(c, { config, models, tools: {} })).filter((why) => typeof why === "string").map((why) => `tier ${tier}: ${why}`);
+    const gap = catalogGap(tier, config, models);
+    return gap === null ? unusable : [...unusable, gap];
+  });
+}
+
 interface RouteContext { config: Config; models: ModelInfo[]; tools: ToolState; active: Record<ToolName, number>; use: Candidate | null; preferTool: ToolName | null }
 
 // The candidate with its effort settled, or the reason it cannot run whatever the slots say.

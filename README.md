@@ -118,7 +118,7 @@ This repository does not ship a marketplace listing yet, so `--plugin-dir` is ho
 
 ## First use
 
-1. **Set up the home.** `mandor init` creates `~/.mandor` and its `config.json`, reads the Codex model list, and prints warnings: an untested Codex version, secret-like variables exported by your login shell, or a sandbox that cannot be applied.
+1. **Set up the home.** `mandor init` creates `~/.mandor` and its `config.json`, reads the Codex model list, and prints warnings: an untested Codex version, secret-like variables exported by your login shell, a sandbox that cannot be applied, or a tier candidate the model list cannot run.
 2. **Describe the repository (optional).** `mandor project setup`, run in the repository, records what workers need. Without it every list is empty and workers get no network. Each run states the whole configuration:
    - `--clone <path>`: an ignored path copied from the main checkout into each worktree (build caches, downloaded SDKs). Denied and agent paths inside it are skipped. The copy is an APFS clone, so `~/.mandor` (or `MANDOR_HOME`) must be on the same volume as the repository.
    - `--setup "<command>"`: run once in each new worktree, with the worker's environment variables but without a sandbox, so it can write and reach the network like any command you run yourself. Give it only a command you trust.
@@ -194,7 +194,7 @@ The lead's commands print JSON; `status`, `show` and `logs` print plain text.
 }
 ```
 
-Each tier lists its candidates as `tool:model@effort`, in order of preference; `mandor models` shows what Codex offers. `maxParallel` caps the workers a tool runs at once, `jobTimeoutMinutes` ends a job that runs too long, and `maxFixRounds` is how many fix rounds a worker gets before the task needs a takeover.
+Each tier lists its candidates as `tool:model@effort`, in order of preference; `mandor models` shows what Codex offers. A candidate the model list cannot run (a model your plan lacks, or one that was renamed) is passed over, and `mandor init` and `mandor models` warn about it. `maxParallel` caps the workers a tool runs at once, `jobTimeoutMinutes` ends a job that runs too long, and `maxFixRounds` is how many fix rounds a worker gets before the task needs a takeover.
 
 | Variable | Effect |
 | --- | --- |

@@ -585,6 +585,23 @@ test("models warns on version mismatch", () => {
   assert.ok(newer.warnings.some((w) => w.includes("0.167.0") && w.includes(`tested version ${TESTED_CODEX_VERSION}`)), JSON.stringify(newer.warnings));
 });
 
+test("init and models warn about a tier candidate the catalog cannot run, and say nothing when every one can", () => {
+  const home = tempHome({ config: true });
+  const warned = (args: string[]): string[] => {
+    const r = cli(args);
+    assert.equal(r.status, 0, r.stderr);
+    return args[0] === "init" || args.includes("--json") ? JSON.parse(r.stdout).warnings : r.stdout.split("\n").filter((l) => l.startsWith("warning: ")).map((l) => l.slice(9));
+  };
+  for (const args of [["init"], ["models", "--json"], ["models"]]) assert.ok(!warned(args).some((w) => w.startsWith("tier ")), args.join(" "));
+  const cfg = structuredClone(DEFAULT_CONFIG);
+  cfg.tools.codex.bin = FAKE;
+  cfg.tiers.ringan = ["codex:gpt-0-gone@medium", "codex:gpt-6-luna@medium"];
+  writeFileSync(join(home, "config.json"), JSON.stringify(cfg));
+  for (const args of [["init"], ["models", "--json"], ["models"]]) {
+    assert.deepEqual(warned(args).filter((w) => w.startsWith("tier ")), ["tier ringan: codex:gpt-0-gone is not in the model catalog"], args.join(" "));
+  }
+});
+
 test("init names a secret-like variable exported by the worker login shell without printing its value", () => {
   const home = tempHome();
   const userHome = temp();

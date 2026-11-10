@@ -12,7 +12,7 @@ import { DEFAULT_CONFIG, parseCandidate } from "../src/config.ts";
 import type { Candidate, JobRecord, LedgerEvent, ModelInfo, TaskRecord, Tier, ToolName, ToolState, WaitItem } from "../src/contracts.ts";
 import { jobDir, processStart, projectDir, projectIdFor, scratchDir, worktreesDir } from "../src/home.ts";
 import { appendEvent, appendToolEvent, ledgerSize, loadState, now, readEvents } from "../src/ledger.ts";
-import { catalogGap, countActiveJobs, selectCandidate } from "../src/routing.ts";
+import { catalogGap, countActiveJobs, selectCandidate, tierWarnings } from "../src/routing.ts";
 import { decideStallLocked, readJob } from "../src/runner.ts";
 import { withProjectLock, writeFileAtomic, writeJsonAtomic } from "../src/store.ts";
 import { reviewPack } from "../src/review.ts";
@@ -178,6 +178,21 @@ test("catalogGap names a tier when no candidate of it or a heavier one could run
   assert.equal(gap("ringan", [model("codex", "gpt-6-luna", ["low"])]), gapFor("ringan"), "an effort the model does not list");
   assert.equal(gap("berat", [model("zcode", "GLM-5.3", ["max"])]), gapFor("berat"), "a tool that is off");
   assert.equal(gap("berat", [model("zcode", "GLM-5.3", ["max"])], withZcode()), null);
+});
+
+test("tierWarnings names each candidate of an enabled tool that the catalog cannot run, and each tier that nothing can run", () => {
+  assert.deepEqual(tierWarnings(DEFAULT_CONFIG, CATALOG), [], "every codex candidate runs, and the tools that are off are not judged");
+  // One model gone and one effort gone: the tier still routes to what is left, so only the candidates are named.
+  const thinner = [model("codex", "gpt-6.1-sol", ["high"]), model("codex", "gpt-6-luna", ["medium", "high"])];
+  assert.deepEqual(tierWarnings(DEFAULT_CONFIG, thinner), [
+    "tier berat: codex:gpt-6-astra is not in the model catalog",
+    "tier berat: codex:gpt-6.1-sol does not list effort max",
+    gapFor("berat"),
+  ]);
+  assert.deepEqual(tierWarnings(DEFAULT_CONFIG, RENAMED_CATALOG).filter((w) => w.startsWith("no candidate")), [gapFor("ringan"), gapFor("sedang"), gapFor("berat")]);
+  assert.deepEqual(tierWarnings(withZcode(), CATALOG.filter((m) => m.model !== "GLM-5.3-Flash")), ["tier ringan: zcode:GLM-5.3-Flash is not in the model catalog"]);
+  // No catalog at all is another fault, which the commands report on their own.
+  for (const [name, models] of UNUSABLE) assert.deepEqual(tierWarnings(DEFAULT_CONFIG, models), [], name);
 });
 
 // Projects
