@@ -147,7 +147,8 @@ The lead's commands print JSON; `status`, `show` and `logs` print plain text.
 | `mandor init` | Create `~/.mandor`, read the Codex model list, print warnings |
 | `mandor models [--refresh] [--json]` | List the models that the enabled tools offered when the list was last read, each as `tool:model` with its efforts. It is read again when it is older than five minutes, or with `--refresh` |
 | `mandor login zcode [--api-key]` | Sign the ZCode worker in under a home of its own: in a browser, or with a Coding Plan API key piped in |
-| `mandor project setup [flags]` | Record what workers need in this repository |
+| `mandor project setup [flags]` | Record what workers need in this repository. Each run replaces the whole configuration |
+| `mandor project show` | Print the configuration that `project setup` stored, which a new setup has to repeat |
 | `mandor status [--json]` | Goals with their integration worktrees, tasks, jobs, the time each exhausted tool resets with the reason, and the commits on a goal branch that mandor did not record |
 | `mandor show <slug>` | The outcome detail of a task, and each of its jobs with the tokens that run used |
 | `mandor logs <slug>` | The paths of a task's job logs |

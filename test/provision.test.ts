@@ -398,6 +398,24 @@ test("a failing setup throws and points at its log", () => {
   assert.ok(readFileSync(setupLog, "utf8").includes("marker-fail\n"));
 });
 
+test("project show prints the stored configuration and changes nothing, so the options that a new setup must repeat can be read", () => {
+  const repo = tempRepo();
+  const show = (...args: string[]) => spawnSync(launcher, ["project", "show", ...args], { cwd: repo, encoding: "utf8" });
+  const before = show();
+  assert.deepEqual([before.status, before.stderr, JSON.parse(before.stdout)], [0, "", emptyProjectConfig()]);
+  assert.equal(existsSync(projectFile(repo)), false, "showing writes no file");
+  assert.equal(cli(repo, "--clone", "build", "--deny", "**/*.p12", "--worker-network").status, 0);
+  const file = readFileSync(projectFile(repo), "utf8");
+  const after = show();
+  assert.deepEqual(JSON.parse(after.stdout), loadProjectConfig(projectIdFor(repo)));
+  assert.equal(JSON.parse(after.stdout).workerNetwork, true);
+  assert.equal(readFileSync(projectFile(repo), "utf8"), file);
+  const extra = show("--clone", "x");
+  assert.deepEqual([extra.status, extra.stdout, extra.stderr], [2, "", "mandor: usage: project show\n"]);
+  const outside = spawnSync(launcher, ["project", "show"], { cwd: temp("mandor-outside-"), encoding: "utf8" });
+  assert.equal(outside.status, 1);
+});
+
 test("project setup exits 2 for an option it does not know or a value that is missing, and 1 for a refusal", () => {
   const repo = tempRepo();
   for (const [args, said] of [[["--bogus", "x"], "unknown project setup flag: --bogus"], [["--clone"], "--clone needs a value"], [["--setup", "make", "--deny"], "--deny needs a value"]] as const) {

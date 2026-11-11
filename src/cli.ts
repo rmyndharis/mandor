@@ -158,6 +158,7 @@ You run:
   project setup [--clone <path>]... [--setup <command>] [--shared <glob>]... [--deny <glob>]...
                 [--generator <clone path>=<glob>]... [--worker-network] [--worker-add-dir <dir>]...
                 [--name-is-a-word]
+  project show                  print the stored project configuration, which a new project setup replaces
   status [--json]               goals with their worktrees, tasks, jobs, exhausted tools (with the reason), unrecorded goal commits
   show <slug>                   a task's outcome, its jobs with the usage of each run, and its round files
   logs <slug>                   the paths of a task's job logs
@@ -285,6 +286,22 @@ export async function main(argv: string[]): Promise<number> {
     const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
     console.log(pkg.version);
     return 0;
+  }
+  // Reads the stored configuration and writes nothing, so the options that a new setup must repeat can be seen.
+  if (argv[0] === "project" && argv[1] === "show") {
+    if (argv.length !== 2) {
+      console.error("mandor: usage: project show");
+      return 2;
+    }
+    try {
+      const { resolveProject } = await import("./tasks.ts");
+      const { loadProjectConfig } = await import("./provision.ts");
+      console.log(JSON.stringify(loadProjectConfig(resolveProject(process.cwd()).id), null, 2));
+      return 0;
+    } catch (e) {
+      console.error(`mandor: ${(e as Error).message}`);
+      return 1;
+    }
   }
   if (argv[0] === "project" && argv[1] === "setup") {
     try {
