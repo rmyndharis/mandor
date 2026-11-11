@@ -10,6 +10,10 @@ All notable changes to mandor are recorded here. The format follows [Keep a Chan
 - An Antigravity run that was refused a tool with an unusual name is failed instead of reported done.
 - The copy of the ZCode catalog in the state home is readable by the user only.
 
+### Security
+
+- A repository inside the mandor home is refused before any git command writes to it.
+
 ## [0.1.0] - 2026-11-11
 
 ### Added

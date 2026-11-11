@@ -8,7 +8,7 @@ import type { TestContext } from "node:test";
 import { test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { Candidate, JobRecord, ModelInfo, StallReason, TaskRecord, WaitItem } from "../src/contracts.ts";
-import { addWorktree, projectRoot } from "../src/git.ts";
+import { addWorktree, assertRepoOutsideHome, projectRoot } from "../src/git.ts";
 import { jobDir, processStart, projectDir, projectIdFor, scratchDir, worktreesDir } from "../src/home.ts";
 import { appendEvent, ledgerSize, listProjects, loadState, now, readEvents } from "../src/ledger.ts";
 import { emptyProjectConfig, saveProjectConfig } from "../src/provision.ts";
@@ -2059,6 +2059,54 @@ test("dispatch refuses a repository whose config cannot be read", (t) => {
   assert.throws(() => send(s, "second", { use: null }, first.task.worktree!), /cannot read the git config/);
   assert.equal(task(s, "second"), undefined);
   assert.equal(existsSync(join(worktreesDir(s.id), "task-second")), false);
+});
+
+test("goal start and dispatch refuse a repository inside the mandor home before anything of it runs", (t) => {
+  const s = setup(t);
+  // A repository under the home is a worker's own: its checkout hook must not run, and nothing may be added to it.
+  const inside = join(s.home, "elsewhere", "repo");
+  mkdirSync(inside, { recursive: true });
+  for (const args of [["init", "-q", "-b", "main"], ["config", "user.name", "Test"], ["config", "user.email", "test@example.invalid"]]) must(inside, ...args);
+  writeFileSync(join(inside, "README.md"), "inside\n");
+  must(inside, "add", "README.md");
+  must(inside, "commit", "-q", "-m", "Initial commit");
+  const marker = join(temp("mandor-hook-"), "ran");
+  const hook = join(inside, ".git", "hooks", "post-checkout");
+  writeFileSync(hook, `#!/bin/sh\ntouch '${marker}'\n`);
+  chmodSync(hook, 0o755);
+  const link = join(temp("mandor-link-"), "repo");
+  symlinkSync(inside, link);
+  const id = projectIdFor(inside);
+  for (const where of [inside, link]) {
+    assert.throws(() => goalStart(where, GOAL, null), /inside the mandor home/, where);
+    assert.equal(existsSync(marker), false, `the checkout hook ran for ${where}`);
+    assert.equal(must(inside, "branch", "--list", GOAL), "");
+    assert.equal(existsSync(join(worktreesDir(id), "goal-feat__slice")), false);
+    assert.equal(ledgerSize(id), 0);
+  }
+  assert.throws(() => send(s, "hello", {}, inside), /inside the mandor home/);
+  assert.equal(existsSync(join(worktreesDir(id), "task-hello")), false);
+});
+
+test("assertRepoOutsideHome refuses a repository under the home however the home is spelled, and not a sibling that shares a prefix", (t) => {
+  const s = setup(t);
+  const inside = join(s.home, "elsewhere", "repo");
+  mkdirSync(inside, { recursive: true });
+  must(inside, "init", "-q", "-b", "main");
+  const sibling = `${s.home}-sibling`;
+  mkdirSync(sibling);
+  t.after(() => rmSync(sibling, { recursive: true, force: true }));
+  must(sibling, "init", "-q", "-b", "main");
+  const spelled = join(temp("mandor-homelink-"), "home");
+  symlinkSync(s.home, spelled);
+  t.after(() => {
+    process.env.MANDOR_HOME = s.home;
+  });
+  for (const home of [s.home, spelled]) {
+    process.env.MANDOR_HOME = home;
+    assert.throws(() => assertRepoOutsideHome(inside), /inside the mandor home/, home);
+    assert.doesNotThrow(() => assertRepoOutsideHome(sibling), home);
+  }
 });
 
 // CLI

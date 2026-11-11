@@ -6,7 +6,7 @@ import { loadRounds, renderBrief, renderConflictMessage, renderFixMessage, rende
 import { loadConfig, resolveBin, WORKER_TOOLS, type Config } from "./config.ts";
 import type { Candidate, FileRef, GoalRecord, JobKind, JobRecord, LedgerEvent, ModelInfo, Pending, ProjectState, StallReason, TaskRecord, TaskStatus, Tier, ToolName, ToolState } from "./contracts.ts";
 import {
-  addWorktree, apply3way, applyCheck, applyToIndex, assertCommitIdentity, assertHeadIdentity, branchExists, changedPaths, commitRunning, commitStaged, configuredDrivers,
+  addWorktree, apply3way, applyCheck, applyToIndex, assertCommitIdentity, assertHeadIdentity, assertRepoOutsideHome, branchExists, changedPaths, commitRunning, commitStaged, configuredDrivers,
   confineProblem, deleteBranchAt, diffSinceBaseBytes, diffStat, dropLastCommit, git, indexLockPath, indexTree, isClean, projectRoot,
   removeOwnedWorktree, resetHardHead, resetTo, revParse, stagedDiff, worktreeAddRunning,
 } from "./git.ts";
@@ -327,6 +327,7 @@ export function goalStart(cwd: string, branch: string, from: string | null): { g
   // wip/ holds the disposable task branches: no accept can commit on one, and a branch named wip blocks them all.
   if (branch === "wip" || branch.startsWith("wip/")) throw new Error(`refusing goal branch ${branch}: wip/ is for task branches`);
   refuseDrivers(root);
+  assertRepoOutsideHome(root);
   const config = loadProjectConfig(id);
   // Peeled, so a tag names its commit; a ref that looks like an option then fails as a revision. Without --from, the
   // HEAD of the checkout the command ran in, which is the branch the user is on.
@@ -422,6 +423,7 @@ export function dispatch(cwd: string, o: { goal: string; slug: string; tier: Tie
   const gap = use === null ? catalogGap(o.tier, config, models) : null;
   if (gap !== null) throw new Error(gap);
   refuseDrivers(root);
+  assertRepoOutsideHome(root);
   const body = readFileSync(o.briefFile, "utf8");
   const project = loadProjectConfig(id);
   const all = worktreesDir(id);

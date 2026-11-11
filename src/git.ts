@@ -119,6 +119,17 @@ function commonDirOf(repo: string): string {
   return realpathSync.native(common[0]);
 }
 
+// A repository under the home would be a worker's own, not the user's.
+function refuseInsideHome(subject: string, commonDir: string, home: string): void {
+  if (commonDir.startsWith(home + sep)) throw new Error(`refusing ${subject}: its repository ${commonDir} is inside the mandor home ${home}`);
+}
+
+// For a command about to run git in repo and write there: nothing of a repository under the home may run, a checkout hook
+// included, so this comes before the first such command.
+export function assertRepoOutsideHome(repo: string): void {
+  refuseInsideHome(repo, commonDirOf(repo), realpathSync.native(mandorHome()));
+}
+
 // The admin dirs the user's own repository keeps for this worktree, found by the back-pointer each one holds. The
 // worktree is given by its constructed path. A pointer <wt>/.git is matched by resolving its grandparent (the
 // worktree's parent, mandor's own) and keeping the worktree name literal, so a root a worker replaced with a link
@@ -343,8 +354,7 @@ function bind(repo: string, worktree: string, userConfig = false): Bound {
   const home = realpathSync.native(mandorHome());
   if (!real.startsWith(home + sep)) throw new Error(`refusing ${worktree}: not under the mandor home ${home}`);
   const commonDir = commonDirOf(repo);
-  // A repository under the home would be a worker's own, not the user's.
-  if (commonDir.startsWith(home + sep)) throw new Error(`refusing ${worktree}: its repository ${commonDir} is inside the mandor home`);
+  refuseInsideHome(worktree, commonDir, home);
   const named = adminDirs(commonDir, real);
   if (named.length !== 1) throw new Error(`refusing ${worktree}: ${named.length === 0 ? "not a worktree of" : "named by more than one admin dir of"} ${repo}`);
   const location = { GIT_DIR: named[0], GIT_WORK_TREE: real };
