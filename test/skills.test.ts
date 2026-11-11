@@ -29,6 +29,19 @@ test("lead skill mentions scratch, goal start, plan set, dispatch, wait --since,
   }
 });
 
+test("lead skill leaves the user's settings, git identity and sign-ins to the user, and names each situation where it stops", () => {
+  const lead = read("lead");
+  const section = lead.slice(lead.indexOf("## 12."));
+  assert.ok(section.startsWith("## 12. What is the user's"), "the rule has a section of its own");
+  for (const term of [
+    "Never edit `config.json`", "git identity", "switch a worker tool on", "`mandor login`", "`mandor project setup`", "`mandor init`",
+    "`config.json` is invalid", "binary is missing", "commit identity", "no candidate the catalog can run", "setup command", "clone path",
+    "state home is on another volume", "ledger or a lock file", "earlier accept", "index lock", "remote-tracking branch",
+  ]) {
+    assert.ok(section.includes(term), term);
+  }
+});
+
 test("status skill runs mandor status", () => {
   assert.ok(read("status").includes("mandor status"));
 });

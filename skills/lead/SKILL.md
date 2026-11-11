@@ -101,3 +101,7 @@ After the user approves a takeover, run `mandor verdict <slug> takeover --approv
 ## 11. Reporting
 
 Report each event to the user in their language, one short line per event.
+
+## 12. What is the user's to change
+
+The settings, the git identity and the sign-ins are the user's. Never edit `config.json` or the git identity, never switch a worker tool on, and never run `mandor login`, `mandor project setup` or `mandor init`, except where this playbook tells you to ask the user to run one. When a command fails for one of these reasons, tell the user what the error names and stop until they have dealt with it: `config.json` is invalid, or an enabled tool's binary is missing; the commit identity is missing or a placeholder; a tier has no candidate the catalog can run; the setup command failed, a clone path was refused, or the state home is on another volume than the repository; the project's ledger or a lock file is damaged; an earlier accept left a state mandor cannot explain, or a git index lock; `drop` refuses because a remote-tracking branch holds the commit.
