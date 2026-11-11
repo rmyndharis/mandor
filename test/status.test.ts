@@ -61,7 +61,7 @@ function setup(t: TestContext) {
   const briefFile = join(scratchDir(id, "t"), "brief.md");
   writeFileSync(briefFile, "Create the file.\n");
   goalStart(repo, GOAL, null);
-  const send = (slug: string) => dispatch(repo, { goal: GOAL, slug, tier: "ringan", briefFile, scope: [], use: LUNA, after: null });
+  const send = (slug: string) => dispatch(repo, { goal: GOAL, slug, tier: "light", briefFile, scope: [], use: LUNA, after: null });
   return { home, repo, id, send };
 }
 
@@ -103,7 +103,7 @@ test("status lists tasks", async (t) => {
 
 test("statusTable shows stall reasons, elapsed times and exhausted tools", () => {
   const task = (id: string, over: Partial<TaskRecord>): TaskRecord => ({
-    id, goalBranch: GOAL, tier: "ringan", after: null, status: "waiting", stallReason: null, pending: null, base: null, worktree: null,
+    id, goalBranch: GOAL, tier: "light", after: null, status: "waiting", stallReason: null, pending: null, base: null, worktree: null,
     branch: `wip/${id}`, scope: [], seq: 0, fixRounds: 0, candidate: null, sessionId: null, use: null, jobIds: [], integratedCommit: null, briefPath: "", ...over,
   });
   const job = (id: string, taskId: string, seq: number, over: Partial<JobRecord>): JobRecord => ({
@@ -194,7 +194,7 @@ test("show says when the worktree of an accepted or cancelled task is gone, and 
   const s = setup(t);
   const gone = join(s.home, "worktrees", s.id, "task-gone");
   const record = (id: string, over: Partial<TaskRecord>): TaskRecord => ({
-    id, goalBranch: GOAL, tier: "ringan", after: null, status: "waiting", stallReason: null, pending: null, base: null, worktree: gone,
+    id, goalBranch: GOAL, tier: "light", after: null, status: "waiting", stallReason: null, pending: null, base: null, worktree: gone,
     branch: `wip/${id}`, scope: [], seq: 1, fixRounds: 0, candidate: LUNA, sessionId: null, use: null, jobIds: [], integratedCommit: null, briefPath: "", ...over,
   });
   for (const task of [record("done", { status: "accepted" }), record("stopped", { status: "cancelled" }), record("busy", { status: "working" }),
@@ -212,7 +212,7 @@ test("show says when the worktree of an accepted or cancelled task is gone, and 
 test("show lists each job with the usage its own run added to its session", (t) => {
   const s = setup(t);
   const task: TaskRecord = {
-    id: "used", goalBranch: GOAL, tier: "ringan", after: null, status: "needs-review", stallReason: null, pending: null, base: null, worktree: null,
+    id: "used", goalBranch: GOAL, tier: "light", after: null, status: "needs-review", stallReason: null, pending: null, base: null, worktree: null,
     branch: "wip/used", scope: [], seq: 4, fixRounds: 1, candidate: LUNA, sessionId: null, use: null, jobIds: [], integratedCommit: null, briefPath: "",
   };
   appendEvent(s.id, { t: "task.created", at: now(), task });

@@ -116,7 +116,7 @@ function transcript(command: string): string {
 function armed() {
   const s = project();
   addJob(s.id);
-  const input = { cwd: s.repo, session_id: "s", hook_event_name: "Stop", transcript_path: transcript("mandor dispatch --goal feat/hooks --task a --tier ringan --brief b.md") };
+  const input = { cwd: s.repo, session_id: "s", hook_event_name: "Stop", transcript_path: transcript("mandor dispatch --goal feat/hooks --task a --tier light --brief b.md") };
   blocks(hook("stop", input), "armed");
   return { ...s, input };
 }
@@ -130,7 +130,7 @@ function armedWithDeadRunner() {
 
 function taskRecord(slug: string, status: TaskStatus, over: Partial<TaskRecord> = {}): TaskRecord {
   return {
-    id: slug, goalBranch: GOAL, tier: "ringan", after: null, status, stallReason: null, pending: null, base: null, worktree: null, branch: `wip/${slug}`,
+    id: slug, goalBranch: GOAL, tier: "light", after: null, status, stallReason: null, pending: null, base: null, worktree: null, branch: `wip/${slug}`,
     scope: [], seq: 1, fixRounds: 0, candidate: LUNA, sessionId: null, use: null, jobIds: [], integratedCommit: null, briefPath: "/nowhere", ...over,
   };
 }

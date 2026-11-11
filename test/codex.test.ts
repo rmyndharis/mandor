@@ -593,10 +593,10 @@ test("init and models warn about a tier candidate the catalog cannot run, and sa
   for (const args of [["init"], ["models", "--json"], ["models"]]) assert.ok(!warned(args).some((w) => w.startsWith("tier ")), args.join(" "));
   const cfg = structuredClone(DEFAULT_CONFIG);
   cfg.tools.codex.bin = FAKE;
-  cfg.tiers.ringan = ["codex:gpt-0-gone@medium", "codex:gpt-6-luna@medium"];
+  cfg.tiers.light = ["codex:gpt-0-gone@medium", "codex:gpt-6-luna@medium"];
   writeFileSync(join(home, "config.json"), JSON.stringify(cfg));
   for (const args of [["init"], ["models", "--json"], ["models"]]) {
-    assert.deepEqual(warned(args).filter((w) => w.startsWith("tier ")), ["tier ringan: codex:gpt-0-gone is not in the model catalog"], args.join(" "));
+    assert.deepEqual(warned(args).filter((w) => w.startsWith("tier ")), ["tier light: codex:gpt-0-gone is not in the model catalog"], args.join(" "));
   }
 });
 

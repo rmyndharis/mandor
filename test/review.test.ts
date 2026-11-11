@@ -66,7 +66,7 @@ function fixture(t: TestContext, files: Record<string, string> = {}, scope: stri
   goalStart(repo, GOAL, null);
   const brief = join(scratch, "brief.md");
   writeFileSync(brief, "Do the work.\n");
-  const { task } = dispatch(repo, { goal: GOAL, slug: SLUG, tier: "ringan", briefFile: brief, scope, use: null, after: null });
+  const { task } = dispatch(repo, { goal: GOAL, slug: SLUG, tier: "light", briefFile: brief, scope, use: null, after: null });
   return { repo, id, wt: task.worktree!, scratch };
 }
 
@@ -217,7 +217,7 @@ test("unrun-claim flags each commands_run entry no command_execution item matche
   writeScenarios([{ stdout: "generated:done", commands: ["npm   test\n"], lastMessage: JSON.stringify(REPORT), writeFile: [{ path: "a.txt", content: "a\n" }] }]);
   const brief = join(scratch, "brief.md");
   writeFileSync(brief, "Do the work.\n");
-  dispatch(repo, { goal: GOAL, slug: SLUG, tier: "ringan", briefFile: brief, scope: [], use: { tool: "codex", model: "gpt-6-luna", effort: "medium" }, after: null });
+  dispatch(repo, { goal: GOAL, slug: SLUG, tier: "light", briefFile: brief, scope: [], use: { tool: "codex", model: "gpt-6-luna", effort: "medium" }, after: null });
   assert.ok(await until(() => loadState(id).tasks[SLUG]?.status === "needs-review"), "the task reaches needs-review");
   withProjectLock(id, () => {}); // the completion still holds the lock for its pump
 

@@ -211,7 +211,7 @@ function project(t: TestContext) {
   const briefFile = join(scratchDir(id, "t"), "brief.md");
   writeFileSync(briefFile, "Create the file.\n");
   goalStart(repo, GOAL, null);
-  const send = (slug: string, use: Candidate | null = FLASH) => dispatch(repo, { goal: GOAL, slug, tier: "ringan", briefFile, scope: [], use, after: null });
+  const send = (slug: string, use: Candidate | null = FLASH) => dispatch(repo, { goal: GOAL, slug, tier: "light", briefFile, scope: [], use, after: null });
   return { home, repo, id, send };
 }
 

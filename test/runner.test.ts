@@ -105,7 +105,7 @@ function home(t: TestContext): string {
 
 function createTask(over: Partial<TaskRecord>): TaskRecord {
   const task: TaskRecord = {
-    id: SLUG, goalBranch: "feat/x", tier: "ringan", after: null, status: "waiting", stallReason: null,
+    id: SLUG, goalBranch: "feat/x", tier: "light", after: null, status: "waiting", stallReason: null,
     pending: { kind: "start", message: null }, base: null, worktree: null, branch: `wip/${SLUG}`, scope: [], seq: 0, fixRounds: 0,
     candidate: null, sessionId: null, use: null, jobIds: [], integratedCommit: null, briefPath: join(projectDir(PROJECT), "tasks", SLUG, "brief.md"),
     ...over,

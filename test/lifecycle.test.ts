@@ -96,7 +96,7 @@ const lastUpdate = (s: Lab, slug: string) => readEvents(s.id).items.findLast((e)
 const setTask = (s: Lab, slug: string, patch: Partial<TaskRecord>) => appendEvent(s.id, { t: "task.updated", at: now(), taskId: slug, patch, reason: "test" });
 
 const send = (s: Lab, slug: string, over: Partial<Parameters<typeof tasks.dispatch>[1]> = {}) =>
-  tasks.dispatch(s.repo, { goal: GOAL, slug, tier: "ringan", briefFile: s.file(`${slug}.md`, `Do ${slug}.\n`), scope: [], use: null, after: null, ...over });
+  tasks.dispatch(s.repo, { goal: GOAL, slug, tier: "light", briefFile: s.file(`${slug}.md`, `Do ${slug}.\n`), scope: [], use: null, after: null, ...over });
 
 // Without a review first: accept commits only the tree the last review showed.
 const unreviewedAccept = (s: Lab, slug: string, evidence = "node --test: 1 passed\n") =>
@@ -151,7 +151,7 @@ function ledgerTask(s: Lab, slug: string, over: Partial<TaskRecord> = {}): void 
   writeFileAtomic(briefPath, `Do ${slug}.\n`);
   appendEvent(s.id, {
     t: "task.created", at: now(), task: {
-      id: slug, goalBranch: GOAL, tier: "ringan", after: null, status: "waiting", stallReason: null, pending: { kind: "start", message: null }, base: null,
+      id: slug, goalBranch: GOAL, tier: "light", after: null, status: "waiting", stallReason: null, pending: { kind: "start", message: null }, base: null,
       worktree: temp("mandor-wt-"), branch: `wip/${slug}`, scope: [], seq: 0, fixRounds: 0,
       candidate: null, sessionId: null, use: null, jobIds: [], integratedCommit: null, briefPath, ...over,
     },
@@ -1014,7 +1014,7 @@ test("reassign prefers the tool only after a model-limit", async (t) => {
   const config = structuredClone(DEFAULT_CONFIG);
   config.tools.codex.bin = process.env.MANDOR_CODEX_BIN!;
   config.tools.zcode.enabled = true;
-  config.tiers.sedang = ["zcode:GLM-5.3@high", "codex:gpt-6.1-sol@high"];
+  config.tiers.medium = ["zcode:GLM-5.3@high", "codex:gpt-6.1-sol@high"];
   writeJsonAtomic(join(s.home, "config.json"), config);
   const model = (tool: ToolName, name: string, efforts: string[]): ModelInfo => ({ tool, model: name, label: name, efforts, defaultEffort: efforts[0], hidden: false });
   writeCatalog([model("codex", "gpt-6-luna", ["medium"]), model("codex", "gpt-6.1-sol", ["high"]), model("zcode", "GLM-5.3", ["high"])]);
@@ -1122,7 +1122,7 @@ test("reassign with no usable catalog, or no tier candidate in it, keeps the sta
     assert.throws(() => tasks.reassign(s.repo, "hello"), /no model catalog; run mandor models --refresh/);
   }
   writeCatalog([{ tool: "codex", model: "gpt-renamed", label: "x", efforts: ["high"], defaultEffort: "high", hidden: false }]);
-  assert.throws(() => tasks.reassign(s.repo, "hello"), /no candidate for tier ringan can run/);
+  assert.throws(() => tasks.reassign(s.repo, "hello"), /no candidate for tier light can run/);
   assert.equal(ledgerSize(s.id), size);
   assert.deepEqual([task(s, "hello").status, task(s, "hello").stallReason], ["stalled", "quota"]);
 });
@@ -1157,14 +1157,14 @@ test("reassign refuses a driver configured since dispatch, before it stages anyt
 
 // Ready
 
-test("after ready with a catalog lacking gpt-6-astra, the next berat dispatch picks codex:gpt-6.1-sol@max", async (t) => {
+test("after ready with a catalog lacking gpt-6-astra, the next heavy dispatch picks codex:gpt-6.1-sol@max", async (t) => {
   const s = setup(t);
   tasks.goalStart(s.repo, GOAL, null);
   const fixture = JSON.parse(readFileSync(CATALOG_FIXTURE, "utf8")) as { models: { slug: string }[] };
   writeFileSync(join(process.env.CODEX_HOME!, "fake", "models.json"), JSON.stringify({ ...fixture, models: fixture.models.filter((m) => m.slug !== "gpt-6-astra") }));
   assert.deepEqual(tasks.ready("codex"), { resumed: [] });
   writeScenarios([DONE]);
-  assert.deepEqual(send(s, "heavy", { tier: "berat" }).task.candidate, SOL_MAX);
+  assert.deepEqual(send(s, "heavy", { tier: "heavy" }).task.candidate, SOL_MAX);
   await needsReview(s, "heavy");
 });
 

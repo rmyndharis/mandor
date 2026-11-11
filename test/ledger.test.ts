@@ -13,7 +13,7 @@ const cand: Candidate = { tool: "codex", model: "m", effort: "" };
 const goal: GoalRecord = { branch: "feat/x", from: "main", integrationWorktree: "/w/int", createdAt: AT };
 const ref: FileRef = { path: "/p/plan.md", sha256: "ab", excerpt: "plan" };
 const task = (id: string, over: Partial<TaskRecord> = {}): TaskRecord => ({
-  id, goalBranch: "feat/x", tier: "sedang", after: null, status: "waiting", stallReason: null, pending: null,
+  id, goalBranch: "feat/x", tier: "medium", after: null, status: "waiting", stallReason: null, pending: null,
   base: null, worktree: null, branch: `feat/x-${id}`, scope: [], seq: 0, fixRounds: 0, candidate: null,
   sessionId: null, use: null, jobIds: [], integratedCommit: null, briefPath: "/b.md", ...over,
 });
@@ -42,6 +42,14 @@ test("plan.set sets the goal's description and plan", () => {
   assert.equal(s.goals["feat/x"].description, "do x");
   assert.deepEqual(s.goals["feat/x"].plan, ref);
   assert.equal(s.goals["feat/x"].from, "main");
+});
+
+test("a task recorded under the Indonesian alias of its tier replays as that tier", () => {
+  const s = replay([
+    { t: "task.created", at: AT, task: { ...task("a"), tier: "berat" as never } },
+    { t: "task.created", at: AT, task: task("b", { tier: "light" }) },
+  ]);
+  assert.deepEqual([s.tasks.a.tier, s.tasks.b.tier], ["heavy", "light"]);
 });
 
 test("task.created inserts the task by id", () => {

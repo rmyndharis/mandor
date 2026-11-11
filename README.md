@@ -68,7 +68,7 @@ flowchart TD
 ```
 
 1. **Plan.** `goal start <branch>` creates the goal branch and an integration worktree for it. The lead splits the goal into tasks, each with scope globs, a tier and proof commands, and writes a brief for every task.
-2. **Work.** `dispatch` makes a task worktree from the goal tip and starts a worker on it. The tier (`ringan`, `sedang` or `berat`, for light, medium and heavy work) picks a model from its list of candidates, in order. `--use` pins one. `wait` returns when a task needs the lead.
+2. **Work.** `dispatch` makes a task worktree from the goal tip and starts a worker on it. The tier (`light`, `medium` or `heavy`) picks a model from its list of candidates, in order. `--use` pins one. `wait` returns when a task needs the lead.
 3. **Review.** `review <slug>` prints the diff stat, the changed files, the red flags and the violations, and records the tree it showed. The lead reads every changed file and runs the proof commands itself. The worker's report is not evidence.
 4. **Decide.** `accept` makes one local commit in the integration worktree. `fix` sends specific notes back to the same worker, for three rounds by default. `takeover` lets the lead make the change itself; after a stall it needs your approval.
 5. **Confirm.** The lead reruns the proofs in the integration worktree. `confirm` closes the task. `drop` removes the commit and sends the notes back to the worker as a fix round.
@@ -189,16 +189,16 @@ The lead's commands print JSON; `status`, `show` and `logs` print plain text.
     "agy": { "enabled": false, "maxParallel": 2, "bin": "agy", "ignoreUserConfig": true }
   },
   "tiers": {
-    "ringan": ["codex:gpt-6-luna@medium"],
-    "sedang": ["codex:gpt-6.1-sol@high", "codex:gpt-6-luna@high"],
-    "berat": ["codex:gpt-6.1-sol@max"]
+    "light": ["codex:gpt-6-luna@medium"],
+    "medium": ["codex:gpt-6.1-sol@high", "codex:gpt-6-luna@high"],
+    "heavy": ["codex:gpt-6.1-sol@max"]
   },
   "jobTimeoutMinutes": 60,
   "maxFixRounds": 3
 }
 ```
 
-Each tier lists its candidates as `tool:model@effort`, in order of preference; `mandor models` shows what Codex offers. A candidate the model list cannot run (a model your plan lacks, or one that was renamed) is passed over, and `mandor init` and `mandor models` warn about it. `maxParallel` caps the workers a tool runs at once, `jobTimeoutMinutes` ends a job that runs too long, and `maxFixRounds` is how many fix rounds a worker gets before the task needs a takeover.
+Each tier lists its candidates as `tool:model@effort`, in order of preference; `mandor models` shows what Codex offers. A candidate the model list cannot run (a model your plan lacks, or one that was renamed) is passed over, and `mandor init` and `mandor models` warn about it. `maxParallel` caps the workers a tool runs at once, `jobTimeoutMinutes` ends a job that runs too long, and `maxFixRounds` is how many fix rounds a worker gets before the task needs a takeover. The Indonesian tier names `ringan`, `sedang` and `berat` are still read as `light`, `medium` and `heavy`, in `config.json` and for `--tier`.
 
 | Variable | Effect |
 | --- | --- |

@@ -74,61 +74,61 @@ const route = (tier: Tier, over: Partial<Context> = {}) =>
 // One candidate in one tier, so nothing else can answer.
 function only(candidate: string, models: ModelInfo[]) {
   const config = structuredClone(DEFAULT_CONFIG);
-  config.tiers = { ringan: [], sedang: [], berat: [candidate] };
-  return route("berat", { config, models });
+  config.tiers = { light: [], medium: [], heavy: [candidate] };
+  return route("heavy", { config, models });
 }
 
-test("berat idle picks codex:gpt-6-astra@ultra", () => {
-  assert.deepEqual(route("berat"), picked("codex:gpt-6-astra@ultra"));
-  assert.deepEqual(route("berat", { config: withZcode() }), picked("codex:gpt-6-astra@ultra"), "a tie goes to the first listed");
+test("heavy idle picks codex:gpt-6-astra@ultra", () => {
+  assert.deepEqual(route("heavy"), picked("codex:gpt-6-astra@ultra"));
+  assert.deepEqual(route("heavy", { config: withZcode() }), picked("codex:gpt-6-astra@ultra"), "a tie goes to the first listed");
 });
 
-test("second berat with one codex active still picks codex", () => {
-  assert.deepEqual(route("berat", { active: { ...IDLE, codex: 1 } }), picked("codex:gpt-6-astra@ultra"));
+test("second heavy with one codex active still picks codex", () => {
+  assert.deepEqual(route("heavy", { active: { ...IDLE, codex: 1 } }), picked("codex:gpt-6-astra@ultra"));
 });
 
 test("spread with zcode enabled picks zcode:GLM-5.3@max", () => {
-  assert.deepEqual(route("berat", { config: withZcode(), active: { ...IDLE, codex: 1 } }), picked("zcode:GLM-5.3@max"));
+  assert.deepEqual(route("heavy", { config: withZcode(), active: { ...IDLE, codex: 1 } }), picked("zcode:GLM-5.3@max"));
 });
 
 test("exhausted codex skips every codex candidate", () => {
-  assert.deepEqual(route("berat", { config: withZcode(), tools: spent("codex") }), picked("zcode:GLM-5.3@max"));
-  assert.deepEqual(route("berat", { tools: spent("codex") }), { none: true });
+  assert.deepEqual(route("heavy", { config: withZcode(), tools: spent("codex") }), picked("zcode:GLM-5.3@max"));
+  assert.deepEqual(route("heavy", { tools: spent("codex") }), { none: true });
 });
 
 test("exhausted codex:gpt-6-astra skips only that model", () => {
-  assert.deepEqual(route("berat", { tools: spent("codex:gpt-6-astra") }), picked("codex:gpt-6.1-sol@max"));
+  assert.deepEqual(route("heavy", { tools: spent("codex:gpt-6-astra") }), picked("codex:gpt-6.1-sol@max"));
 });
 
 test("preferTool codex after model-limit picks codex:gpt-6.1-sol@max even with zcode idle", () => {
   const after = { config: withZcode(), tools: spent("codex:gpt-6-astra"), active: { ...IDLE, codex: 1 } };
-  assert.deepEqual(route("berat", after), picked("zcode:GLM-5.3@max"), "without the preference the idle tool wins");
-  assert.deepEqual(route("berat", { ...after, preferTool: "codex" }), picked("codex:gpt-6.1-sol@max"));
+  assert.deepEqual(route("heavy", after), picked("zcode:GLM-5.3@max"), "without the preference the idle tool wins");
+  assert.deepEqual(route("heavy", { ...after, preferTool: "codex" }), picked("codex:gpt-6.1-sol@max"));
 });
 
 test("preferTool with nothing left in this tier takes another tool of the tier before any escalation", () => {
   const after = { config: withZcode(), tools: spent("codex:gpt-6-luna"), preferTool: "codex" as const };
-  assert.deepEqual(route("ringan", after), picked("zcode:GLM-5.3-Flash@high"));
+  assert.deepEqual(route("light", after), picked("zcode:GLM-5.3-Flash@high"));
 });
 
-test("ringan escalates to sedang", () => {
-  assert.deepEqual(route("ringan", { tools: spent("codex:gpt-6-luna") }), picked("codex:gpt-6.1-sol@high"));
+test("light escalates to medium", () => {
+  assert.deepEqual(route("light", { tools: spent("codex:gpt-6-luna") }), picked("codex:gpt-6.1-sol@high"));
 });
 
 test("a heavier tier is tried only after this one, and a lighter one never", () => {
-  assert.deepEqual(route("ringan"), picked("codex:gpt-6-luna@medium"));
-  assert.deepEqual(route("berat", { tools: spent("codex:gpt-6-astra", "codex:gpt-6.1-sol") }), { none: true }, "luna is free, but only in lighter tiers");
+  assert.deepEqual(route("light"), picked("codex:gpt-6-luna@medium"));
+  assert.deepEqual(route("heavy", { tools: spent("codex:gpt-6-astra", "codex:gpt-6.1-sol") }), { none: true }, "luna is free, but only in lighter tiers");
 });
 
-test("berat all-exhausted returns none", () => {
-  assert.deepEqual(route("berat", { tools: spent("codex") }), { none: true });
+test("heavy all-exhausted returns none", () => {
+  assert.deepEqual(route("heavy", { tools: spent("codex") }), { none: true });
 });
 
 test("a full tool empties the tier and returns at-limit without escalating", () => {
-  assert.deepEqual(route("ringan", { active: CODEX_FULL }), { wait: "at-limit" });
-  assert.deepEqual(route("ringan", { tools: spent("codex:gpt-6-luna"), active: CODEX_FULL }), { wait: "at-limit" }, "the tier it escalated to had candidates");
-  assert.deepEqual(route("ringan", { config: withZcode(), active: CODEX_FULL }), picked("zcode:GLM-5.3-Flash@high"), "the tier still has another tool");
-  assert.deepEqual(route("ringan", { tools: spent("codex"), active: CODEX_FULL }), { none: true }, "no slot brings back an exhausted tool");
+  assert.deepEqual(route("light", { active: CODEX_FULL }), { wait: "at-limit" });
+  assert.deepEqual(route("light", { tools: spent("codex:gpt-6-luna"), active: CODEX_FULL }), { wait: "at-limit" }, "the tier it escalated to had candidates");
+  assert.deepEqual(route("light", { config: withZcode(), active: CODEX_FULL }), picked("zcode:GLM-5.3-Flash@high"), "the tier still has another tool");
+  assert.deepEqual(route("light", { tools: spent("codex"), active: CODEX_FULL }), { none: true }, "no slot brings back an exhausted tool");
 });
 
 test("a candidate needs an enabled tool and a visible model of that tool", () => {
@@ -148,16 +148,16 @@ test("a candidate needs an effort its model lists, and an empty one takes the mo
 });
 
 test("use honored", () => {
-  assert.deepEqual(route("berat", { use: LUNA }), { candidate: LUNA }, "a candidate of no berat list");
-  assert.deepEqual(route("berat", { use: { ...LUNA, effort: "" } }), { candidate: LUNA }, "an empty effort takes the model's default");
+  assert.deepEqual(route("heavy", { use: LUNA }), { candidate: LUNA }, "a candidate of no heavy list");
+  assert.deepEqual(route("heavy", { use: { ...LUNA, effort: "" } }), { candidate: LUNA }, "an empty effort takes the model's default");
 });
 
 test("use at limit returns at-limit", () => {
-  assert.deepEqual(route("berat", { use: LUNA, active: CODEX_FULL }), { wait: "at-limit" });
+  assert.deepEqual(route("heavy", { use: LUNA, active: CODEX_FULL }), { wait: "at-limit" });
 });
 
 test("a use that cannot run throws the reason, also when its tool is full", () => {
-  const use = (s: string, over: Partial<Context> = {}) => () => route("ringan", { use: parseCandidate(s), ...over });
+  const use = (s: string, over: Partial<Context> = {}) => () => route("light", { use: parseCandidate(s), ...over });
   assert.throws(use("zcode:GLM-5.3@high"), /zcode is not enabled/);
   assert.throws(use("codex:gpt-9@high"), /codex:gpt-9 is not in the model catalog/);
   assert.throws(use("codex:m@high", { models: [model("codex", "m", ["high"], { hidden: true })] }), /codex:m is hidden/);
@@ -170,14 +170,14 @@ test("a use that cannot run throws the reason, also when its tool is full", () =
 
 test("catalogGap names a tier when no candidate of it or a heavier one could run, whatever the tool state", () => {
   const gap = (tier: Tier, models: ModelInfo[], config = DEFAULT_CONFIG) => catalogGap(tier, config, models);
-  assert.equal(gap("ringan", CATALOG), null);
-  assert.equal(gap("ringan", [model("codex", "gpt-6-astra", ["ultra"])]), null, "a heavier tier's candidate counts");
-  assert.equal(gap("berat", [model("codex", "gpt-6-luna", ["medium"])]), gapFor("berat"), "a lighter tier's does not");
-  assert.equal(gap("ringan", RENAMED_CATALOG), gapFor("ringan"));
-  assert.equal(gap("ringan", [...RENAMED_CATALOG, model("codex", "gpt-6-luna", ["medium"], { hidden: true })]), gapFor("ringan"), "hidden");
-  assert.equal(gap("ringan", [model("codex", "gpt-6-luna", ["low"])]), gapFor("ringan"), "an effort the model does not list");
-  assert.equal(gap("berat", [model("zcode", "GLM-5.3", ["max"])]), gapFor("berat"), "a tool that is off");
-  assert.equal(gap("berat", [model("zcode", "GLM-5.3", ["max"])], withZcode()), null);
+  assert.equal(gap("light", CATALOG), null);
+  assert.equal(gap("light", [model("codex", "gpt-6-astra", ["ultra"])]), null, "a heavier tier's candidate counts");
+  assert.equal(gap("heavy", [model("codex", "gpt-6-luna", ["medium"])]), gapFor("heavy"), "a lighter tier's does not");
+  assert.equal(gap("light", RENAMED_CATALOG), gapFor("light"));
+  assert.equal(gap("light", [...RENAMED_CATALOG, model("codex", "gpt-6-luna", ["medium"], { hidden: true })]), gapFor("light"), "hidden");
+  assert.equal(gap("light", [model("codex", "gpt-6-luna", ["low"])]), gapFor("light"), "an effort the model does not list");
+  assert.equal(gap("heavy", [model("zcode", "GLM-5.3", ["max"])]), gapFor("heavy"), "a tool that is off");
+  assert.equal(gap("heavy", [model("zcode", "GLM-5.3", ["max"])], withZcode()), null);
 });
 
 test("tierWarnings names each candidate of an enabled tool that the catalog cannot run, and each tier that nothing can run", () => {
@@ -185,12 +185,12 @@ test("tierWarnings names each candidate of an enabled tool that the catalog cann
   // One model gone and one effort gone: the tier still routes to what is left, so only the candidates are named.
   const thinner = [model("codex", "gpt-6.1-sol", ["high"]), model("codex", "gpt-6-luna", ["medium", "high"])];
   assert.deepEqual(tierWarnings(DEFAULT_CONFIG, thinner), [
-    "tier berat: codex:gpt-6-astra is not in the model catalog",
-    "tier berat: codex:gpt-6.1-sol does not list effort max",
-    gapFor("berat"),
+    "tier heavy: codex:gpt-6-astra is not in the model catalog",
+    "tier heavy: codex:gpt-6.1-sol does not list effort max",
+    gapFor("heavy"),
   ]);
-  assert.deepEqual(tierWarnings(DEFAULT_CONFIG, RENAMED_CATALOG).filter((w) => w.startsWith("no candidate")), [gapFor("ringan"), gapFor("sedang"), gapFor("berat")]);
-  assert.deepEqual(tierWarnings(withZcode(), CATALOG.filter((m) => m.model !== "GLM-5.3-Flash")), ["tier ringan: zcode:GLM-5.3-Flash is not in the model catalog"]);
+  assert.deepEqual(tierWarnings(DEFAULT_CONFIG, RENAMED_CATALOG).filter((w) => w.startsWith("no candidate")), [gapFor("light"), gapFor("medium"), gapFor("heavy")]);
+  assert.deepEqual(tierWarnings(withZcode(), CATALOG.filter((m) => m.model !== "GLM-5.3-Flash")), ["tier light: zcode:GLM-5.3-Flash is not in the model catalog"]);
   // No catalog at all is another fault, which the commands report on their own.
   for (const [name, models] of UNUSABLE) assert.deepEqual(tierWarnings(DEFAULT_CONFIG, models), [], name);
 });
@@ -254,7 +254,7 @@ const lastUpdate = (p: Project, slug: string) => readEvents(p.id).items.findLast
 type DispatchOptions = Parameters<typeof dispatch>[1];
 
 const send = (p: Project, slug: string, over: Partial<DispatchOptions> = {}) =>
-  dispatch(p.repo, { goal: GOAL, slug, tier: "ringan", briefFile: p.file(`${slug}.md`, `Do ${slug}.\n`), scope: [], use: null, after: null, ...over });
+  dispatch(p.repo, { goal: GOAL, slug, tier: "light", briefFile: p.file(`${slug}.md`, `Do ${slug}.\n`), scope: [], use: null, after: null, ...over });
 
 function pump(p: Project): void {
   const models = loadCatalog();
@@ -301,7 +301,7 @@ function waitingTask(p: Project, slug: string, over: Partial<TaskRecord> = {}): 
   writeFileAtomic(briefPath, `Do ${slug}.\n`);
   appendEvent(p.id, {
     t: "task.created", at: now(), task: {
-      id: slug, goalBranch: GOAL, tier: "ringan", after: null, status: "waiting", stallReason: null, pending: { kind: "start", message: null }, base: null,
+      id: slug, goalBranch: GOAL, tier: "light", after: null, status: "waiting", stallReason: null, pending: { kind: "start", message: null }, base: null,
       worktree: temp("mandor-wt-"), branch: `wip/${slug}`, scope: [], seq: 0, fixRounds: 0,
       candidate: null, sessionId: null, use: null, jobIds: [], integratedCommit: null, briefPath, ...over,
     },
@@ -410,7 +410,7 @@ test("dispatch routes a null use to its tier's candidate", async (t) => {
   const p = setup(t);
   goalStart(p.repo, GOAL, null);
   writeScenarios([DONE, DONE]);
-  const heavy = send(p, "heavy", { tier: "berat" }).task;
+  const heavy = send(p, "heavy", { tier: "heavy" }).task;
   assert.deepEqual([heavy.status, heavy.candidate, heavy.use], ["working", { tool: "codex", model: "gpt-6-astra", effort: "ultra" }, null]);
   const light = send(p, "light").task;
   assert.deepEqual([light.status, light.candidate], ["working", LUNA]);
@@ -474,8 +474,8 @@ test("dispatch refuses a tier with no candidate in the catalog and creates nothi
   const p = setup(t);
   goalStart(p.repo, GOAL, null);
   writeCatalog(RENAMED_CATALOG);
-  assert.throws(() => send(p, "x"), { message: gapFor("ringan") });
-  assert.throws(() => send(p, "x", { tier: "berat" }), { message: gapFor("berat") });
+  assert.throws(() => send(p, "x"), { message: gapFor("light") });
+  assert.throws(() => send(p, "x", { tier: "heavy" }), { message: gapFor("heavy") });
   assert.equal(task(p, "x"), undefined);
   assert.equal(existsSync(join(worktreesDir(p.id), "task-x")), false);
   assert.equal(existsSync(join(projectDir(p.id), "tasks", "x", "reserved")), false);
@@ -628,7 +628,7 @@ test("a tier whose candidates are all exhausted still gives all-exhausted", (t) 
   // By model, so the tool itself is fine: every candidate is in the catalog, and each is spent.
   exhaust("codex:gpt-6-astra");
   exhaust("codex:gpt-6.1-sol");
-  const heavy = send(p, "heavy", { tier: "berat" }).task;
+  const heavy = send(p, "heavy", { tier: "heavy" }).task;
   assert.deepEqual([heavy.status, heavy.stallReason, heavy.pending], ["stalled", "all-exhausted", { kind: "start", message: null }]);
   assert.equal(decideStallLocked(p.id, heavy, "model-limit", loadCatalog()), "all-exhausted");
   // Only a heavier tier's candidate is in the catalog, and it is spent.
@@ -642,14 +642,14 @@ test("a tier with no candidate in the catalog stalls failed with the reason, kee
   const handoff = { kind: "handoff" as const, message: null };
   writeCatalog(RENAMED_CATALOG);
   waitingTask(p, "routed");
-  waitingTask(p, "fresh", { tier: "berat", pending: handoff, candidate: LUNA });
+  waitingTask(p, "fresh", { tier: "heavy", pending: handoff, candidate: LUNA });
   waitingTask(p, "pinned", { use: RENAMED });
   writeScenarios([DONE]);
   const woke = await waitForNext(p.repo, { since: 0, timeoutMs: 30_000 });
   assert.deepEqual(woke.kind === "events" && woke.items.filter((i) => i.task !== "pinned").map((i) => [i.task, i.status, i.next]), [["routed", "stalled", "inspect"], ["fresh", "stalled", "inspect"]]);
   const seen = (slug: string) => [task(p, slug).status, task(p, slug).stallReason, task(p, slug).pending, lastUpdate(p, slug).reason];
-  assert.deepEqual(seen("routed"), ["stalled", "failed", { kind: "start", message: null }, gapFor("ringan")]);
-  assert.deepEqual(seen("fresh"), ["stalled", "failed", handoff, gapFor("berat")]);
+  assert.deepEqual(seen("routed"), ["stalled", "failed", { kind: "start", message: null }, gapFor("light")]);
+  assert.deepEqual(seen("fresh"), ["stalled", "failed", handoff, gapFor("heavy")]);
   assert.deepEqual(task(p, "pinned").candidate, RENAMED, "a use never reads the tier's list");
   await needsReview(p, "pinned");
 });
@@ -658,7 +658,7 @@ test("a pending resume whose candidate model is exhausted stalls with model-limi
   const p = setup(t);
   const resume = { kind: "resume" as const, message: "Fix it." };
   waitingTask(p, "stuck", { pending: resume, candidate: LUNA, sessionId: THREAD, seq: 1 });
-  waitingTask(p, "next", { tier: "sedang" });
+  waitingTask(p, "next", { tier: "medium" });
   exhaust("codex:gpt-6-luna");
   writeScenarios([DONE]);
   pump(p);
@@ -816,7 +816,7 @@ test("a pending handoff starts a fresh session on a routed candidate and saves h
   const p = setup(t);
   goalStart(p.repo, GOAL, null);
   writeScenarios([{ stdout: "generated:done", threadId: THREAD, writeFile: [{ path: "a.txt", content: "a\n" }] }, DONE]);
-  send(p, "hello", { tier: "sedang", use: LUNA });
+  send(p, "hello", { tier: "medium", use: LUNA });
   await needsReview(p, "hello");
   appendEvent(p.id, { t: "task.updated", at: now(), taskId: "hello", patch: { status: "waiting", pending: { kind: "handoff", message: null } }, reason: "test" });
   pump(p);
@@ -844,7 +844,7 @@ test("a pending resume sends its message on the task's session, on the candidate
   const p = setup(t);
   goalStart(p.repo, GOAL, null);
   writeScenarios([{ stdout: "generated:done", threadId: THREAD }, DONE]);
-  send(p, "hello", { tier: "sedang", use: LUNA });
+  send(p, "hello", { tier: "medium", use: LUNA });
   await needsReview(p, "hello");
   assert.equal(task(p, "hello").sessionId, THREAD);
   // No use left, so only the candidate can keep it off the tier's own choice.

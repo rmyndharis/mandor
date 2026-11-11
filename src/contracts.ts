@@ -1,6 +1,11 @@
 export type ToolName = "codex" | "zcode" | "agy";
-export type Tier = "ringan" | "sedang" | "berat";
-export const TIER_ORDER: readonly Tier[] = ["ringan", "sedang", "berat"];
+export type Tier = "light" | "medium" | "heavy";
+export const TIER_ORDER: readonly Tier[] = ["light", "medium", "heavy"];
+// The Indonesian names the tiers are also read by, so a --tier value, a config file and a ledger written with them
+// still load. Nothing writes them.
+const TIER_ALIASES: Record<string, Tier> = { ringan: "light", sedang: "medium", berat: "heavy" };
+// A tier's name for one of its aliases. Any other name comes back as given, for the caller to accept or refuse.
+export const tierName = (name: string): string => (Object.hasOwn(TIER_ALIASES, name) ? TIER_ALIASES[name] : name);
 
 export interface Candidate { tool: ToolName; model: string; effort: string } // effort "" when absent
 export interface ModelInfo { tool: ToolName; model: string; label: string; efforts: string[]; defaultEffort: string | null; hidden: boolean }

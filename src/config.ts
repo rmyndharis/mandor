@@ -1,7 +1,7 @@
 import { accessSync, constants, statSync } from "node:fs";
 import { delimiter, isAbsolute, join, resolve } from "node:path";
 import type { Candidate, Tier, ToolName } from "./contracts.ts";
-import { TIER_ORDER } from "./contracts.ts";
+import { TIER_ORDER, tierName } from "./contracts.ts";
 import { mandorHome } from "./home.ts";
 import { IGNORE_USER_CONFIG } from "./spikes.ts";
 import { readJson, writeJsonAtomic } from "./store.ts";
@@ -25,9 +25,9 @@ export const DEFAULT_CONFIG: Config = {
   version: 1,
   tools: { codex: tool("codex", true), zcode: tool("zcode", false), agy: tool("agy", false) },
   tiers: {
-    berat: ["codex:gpt-6-astra@ultra", "codex:gpt-6.1-sol@max", "zcode:GLM-5.3@max", "agy:gemini-4-argon-high"],
-    sedang: ["codex:gpt-6.1-sol@high", "zcode:GLM-5.3@high", "agy:gemini-4-argon-medium", "codex:gpt-6-luna@high"],
-    ringan: ["codex:gpt-6-luna@medium", "zcode:GLM-5.3-Flash@high", "agy:gemini-3.8-flash-medium"],
+    heavy: ["codex:gpt-6-astra@ultra", "codex:gpt-6.1-sol@max", "zcode:GLM-5.3@max", "agy:gemini-4-argon-high"],
+    medium: ["codex:gpt-6.1-sol@high", "zcode:GLM-5.3@high", "agy:gemini-4-argon-medium", "codex:gpt-6-luna@high"],
+    light: ["codex:gpt-6-luna@medium", "zcode:GLM-5.3-Flash@high", "agy:gemini-3.8-flash-medium"],
   },
   jobTimeoutMinutes: 60,
   maxFixRounds: 3,
@@ -104,6 +104,15 @@ export function validateConfig(v: unknown): string[] {
   return errs;
 }
 
+// A file whose tiers are keyed by an alias reads as if keyed by the tier's name. An alias beside its own tier is left
+// as written, so the check below names it as an unknown tier rather than one list silently winning.
+function withTierNames(raw: unknown): unknown {
+  if (!isObject(raw) || !isObject(raw.tiers)) return raw;
+  const given = raw.tiers;
+  const tiers = Object.fromEntries(Object.entries(given).map(([k, list]) => [Object.hasOwn(given, tierName(k)) ? k : tierName(k), list]));
+  return { ...raw, tiers };
+}
+
 // A present file is the whole config: it is not merged with the defaults.
 export function loadConfig(): Config {
   const file = join(mandorHome(), "config.json");
@@ -118,9 +127,10 @@ export function loadConfig(): Config {
     if (e instanceof SyntaxError) throw new Error(`invalid config: ${file}: ${e.message}`);
     throw e;
   }
-  const errs = validateConfig(raw);
+  const config = withTierNames(raw);
+  const errs = validateConfig(config);
   if (errs.length > 0) throw new Error(`invalid config: ${errs.join("; ")}`);
-  return raw as Config;
+  return config as Config;
 }
 
 function onPath(name: string): string | null {

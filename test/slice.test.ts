@@ -84,7 +84,7 @@ const task = (s: Slice, slug: string) => loadState(s.id).tasks[slug];
 type DispatchOptions = Parameters<typeof dispatch>[1];
 
 function send(s: Slice, slug: string, over: Partial<DispatchOptions> = {}, cwd = s.repo) {
-  return dispatch(cwd, { goal: GOAL, slug, tier: "ringan", briefFile: s.file(`${slug}.md`, `Create the file for ${slug}.\n`), scope: [], use: LUNA, after: null, ...over });
+  return dispatch(cwd, { goal: GOAL, slug, tier: "light", briefFile: s.file(`${slug}.md`, `Create the file for ${slug}.\n`), scope: [], use: LUNA, after: null, ...over });
 }
 
 // Reviewed first, as accept commits only the tree the last review showed.
@@ -107,7 +107,7 @@ function refused(s: Slice, slug: string, tip: string): void {
 }
 
 const taskRecord = (slug: string, over: Partial<TaskRecord>): TaskRecord => ({
-  id: slug, goalBranch: GOAL, tier: "ringan", after: null, status: "waiting", stallReason: null, pending: null, base: null, worktree: null,
+  id: slug, goalBranch: GOAL, tier: "light", after: null, status: "waiting", stallReason: null, pending: null, base: null, worktree: null,
   branch: `wip/${slug}`, scope: [], seq: 0, fixRounds: 0, candidate: LUNA, sessionId: null, use: null, jobIds: [], integratedCommit: null, briefPath: "", ...over,
 });
 
@@ -1701,7 +1701,7 @@ for (const signal of ["SIGKILL", "SIGTERM"] as const) {
     goalStart(s.repo, GOAL, null);
     const inAdd = join(s.home, "in-add");
     holdWorktreeAdd(s.repo, inAdd);
-    const args = ["dispatch", "--goal", GOAL, "--task", "hello", "--tier", "ringan", "--brief", s.file("hello.md", "Say hello.\n")];
+    const args = ["dispatch", "--goal", GOAL, "--task", "hello", "--tier", "light", "--brief", s.file("hello.md", "Say hello.\n")];
     const c = detached(s, t, args);
     assert.ok(await until(() => existsSync(inAdd) || c.exitCode !== null), "the add reaches its hook, or ends");
     if (!existsSync(inAdd)) return t.skip("this git runs no reference-transaction hook for a symbolic HEAD");
@@ -1728,7 +1728,7 @@ for (const what of ["dispatch", "goal start"] as const) {
     const s = setup(t);
     if (what === "dispatch") goalStart(s.repo, GOAL, null);
     const args = what === "dispatch"
-      ? ["dispatch", "--goal", GOAL, "--task", "hello", "--tier", "ringan", "--brief", s.file("hello.md", "Say hello.\n")]
+      ? ["dispatch", "--goal", GOAL, "--task", "hello", "--tier", "light", "--brief", s.file("hello.md", "Say hello.\n")]
       : ["goal", "start", GOAL];
     const worktree = join(worktreesDir(s.id), what === "dispatch" ? "task-hello" : "goal-feat__slice");
     const reservation = what === "dispatch" ? reservationOf(s, "hello") : goalReservation(s);
@@ -1768,7 +1768,7 @@ test("a dispatch killed during its post-checkout hook, with the worktree whole, 
   goalStart(s.repo, GOAL, null);
   const inHook = join(s.home, "in-hook");
   hook(s.repo, "post-checkout", `touch "${inHook}"; exec sleep 30`);
-  const args = ["dispatch", "--goal", GOAL, "--task", "hello", "--tier", "ringan", "--brief", s.file("hello.md", "Say hello.\n")];
+  const args = ["dispatch", "--goal", GOAL, "--task", "hello", "--tier", "light", "--brief", s.file("hello.md", "Say hello.\n")];
   const c = detached(s, t, args);
   assert.ok(await until(() => existsSync(inHook)), "the add reaches its hook");
   kill(-c.pid!);
@@ -2022,7 +2022,7 @@ test("goal start and dispatch refuse where sandbox-exec cannot apply a profile, 
   }
   // Outside any sandbox the same command runs.
   assert.equal(cli(s, "goal", "start", GOAL).status, 0);
-  const args = ["dispatch", "--goal", GOAL, "--task", "hello", "--tier", "ringan", "--brief", s.file("hello.md", "Say hello.\n")];
+  const args = ["dispatch", "--goal", GOAL, "--task", "hello", "--tier", "light", "--brief", s.file("hello.md", "Say hello.\n")];
   for (const outer of outers) {
     const sent = nested(outer, ...args);
     assert.equal(sent.status, 1, outer);
@@ -2082,12 +2082,13 @@ test("the CLI prints JSON for scratch, goal start, plan set, dispatch, wait, ver
   // A bare directory covers everything under it, a dot directory too; a file, a glob and a dotted name are taken as given.
   const given = ["a.txt", "b/**", "src", "docs/", "lib/core", "x.d/", "c?.ts", ".github", ".vscode", ".circleci", ".github/", ".eslintrc.json", "Makefile", "*.mjs", "src/**"];
   const stored = ["a.txt", "b/**", "src/**", "docs/**", "lib/core/**", "x.d/", "c?.ts", ".github/**", ".vscode/**", ".circleci/**", ".github/**", ".eslintrc.json", "Makefile/**", "*.mjs", "src/**"];
-  const one = run("dispatch", "--goal", GOAL, "--task", "one", "--tier", "ringan", "--brief", brief, ...given.flatMap((g) => ["--scope", g]), "--use", "codex:gpt-6-luna");
+  const one = run("dispatch", "--goal", GOAL, "--task", "one", "--tier", "light", "--brief", brief, ...given.flatMap((g) => ["--scope", g]), "--use", "codex:gpt-6-luna");
   assert.equal(one.status, 0, one.stderr);
   assert.deepEqual([one.json.task.use, one.json.task.scope], [LUNA, stored], "an empty effort takes the model default");
+  // The Indonesian alias of a tier is recorded as the tier.
   const two = run("dispatch", "--goal", GOAL, "--task", "two", "--tier", "sedang", "--brief", brief, "--after", "one");
   assert.equal(two.status, 0, two.stderr);
-  assert.deepEqual([two.json.task.status, two.json.task.after, two.json.task.use], ["waiting", "one", null]);
+  assert.deepEqual([two.json.task.status, two.json.task.after, two.json.task.use, two.json.task.tier], ["waiting", "one", null, "medium"]);
 
   const woke = run("wait", "--since", String(one.json.cursor), "--timeout", "30");
   assert.equal(woke.status, 0, woke.stderr);
@@ -2104,5 +2105,5 @@ test("the CLI prints JSON for scratch, goal start, plan set, dispatch, wait, ver
   assert.equal(run("wait").status, 2);
   const late = run("wait", "--since", String(ledgerSize(s.id) + 1));
   assert.deepEqual([late.status, /invalid cursor/.test(late.stderr)], [1, true], late.stderr);
-  assert.equal(run("dispatch", "--goal", GOAL, "--task", "x", "--tier", "heavy", "--brief", brief).status, 2);
+  assert.equal(run("dispatch", "--goal", GOAL, "--task", "x", "--tier", "huge", "--brief", brief).status, 2);
 });

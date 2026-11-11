@@ -1,6 +1,6 @@
 import { closeSync, openSync, readdirSync, readSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { LedgerEvent, ProjectState, ToolEvent, ToolState } from "./contracts.ts";
+import { tierName, type LedgerEvent, type ProjectState, type Tier, type ToolEvent, type ToolState } from "./contracts.ts";
 import { mandorHome, projectDir } from "./home.ts";
 import { appendJsonl, clampDetail, readJsonl } from "./store.ts";
 
@@ -66,7 +66,8 @@ export function replay(events: LedgerEvent[]): ProjectState {
         break;
       }
       case "task.created":
-        s.tasks[ev.task.id] = ev.task;
+        // A task recorded under an alias of its tier routes as that tier.
+        s.tasks[ev.task.id] = { ...ev.task, tier: tierName(ev.task.tier) as Tier };
         break;
       case "task.updated": {
         const t = s.tasks[ev.taskId];

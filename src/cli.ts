@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { parseCandidate } from "./config.ts";
-import { TIER_ORDER, type Tier, type ToolName } from "./contracts.ts";
+import { TIER_ORDER, tierName, type Tier, type ToolName } from "./contracts.ts";
 import { scratchDir } from "./home.ts";
 import { checkClonePath, checkClonePaths, emptyProjectConfig, saveProjectConfig, type ProjectConfig } from "./provision.ts";
 import { GRADLE_ADD_DIRS, NETWORK_KEY, WORKER_NETWORK } from "./spikes.ts";
@@ -96,7 +96,7 @@ async function leadCommand(argv: string[]): Promise<unknown> {
   }
   if (cmd === "dispatch") {
     const f = flags(argv.slice(1), ["--goal", "--task", "--tier", "--brief", "--use", "--after"], ["--scope"]);
-    const tier = required(f, "--tier") as Tier;
+    const tier = tierName(required(f, "--tier")) as Tier;
     if (!TIER_ORDER.includes(tier)) throw new UsageError(`--tier must be one of ${TIER_ORDER.join(", ")}`);
     const use = optional(f, "--use");
     return (await tasks()).dispatch(cwd, {

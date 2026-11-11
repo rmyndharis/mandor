@@ -30,9 +30,9 @@ const clone = () => structuredClone(DEFAULT_CONFIG) as any;
 
 test("DEFAULT_CONFIG tiers equal the spec table", () => {
   assert.deepEqual(DEFAULT_CONFIG.tiers, {
-    berat: ["codex:gpt-6-astra@ultra", "codex:gpt-6.1-sol@max", "zcode:GLM-5.3@max", "agy:gemini-4-argon-high"],
-    sedang: ["codex:gpt-6.1-sol@high", "zcode:GLM-5.3@high", "agy:gemini-4-argon-medium", "codex:gpt-6-luna@high"],
-    ringan: ["codex:gpt-6-luna@medium", "zcode:GLM-5.3-Flash@high", "agy:gemini-3.8-flash-medium"],
+    heavy: ["codex:gpt-6-astra@ultra", "codex:gpt-6.1-sol@max", "zcode:GLM-5.3@max", "agy:gemini-4-argon-high"],
+    medium: ["codex:gpt-6.1-sol@high", "zcode:GLM-5.3@high", "agy:gemini-4-argon-medium", "codex:gpt-6-luna@high"],
+    light: ["codex:gpt-6-luna@medium", "zcode:GLM-5.3-Flash@high", "agy:gemini-3.8-flash-medium"],
   });
 });
 
@@ -110,8 +110,8 @@ test("validateConfig rejects an unknown tier and an unknown tool", () => {
 test("validateConfig rejects a missing tool and a missing tier", () => {
   const cfg = clone();
   delete cfg.tools.zcode;
-  delete cfg.tiers.ringan;
-  assert.deepEqual(validateConfig(cfg), ["tools.zcode is missing", "tiers.ringan is missing"]);
+  delete cfg.tiers.light;
+  assert.deepEqual(validateConfig(cfg), ["tools.zcode is missing", "tiers.light is missing"]);
 });
 
 test("validateConfig reports one message per bad field", () => {
@@ -127,9 +127,9 @@ test("validateConfig reports one message per bad field", () => {
     [(c) => (c.jobTimeoutMinutes = 0), /jobTimeoutMinutes/],
     [(c) => (c.jobTimeoutMinutes = Infinity), /jobTimeoutMinutes/],
     [(c) => (c.jobTimeoutMinutes = 1441), /jobTimeoutMinutes/],
-    [(c) => (c.tiers.berat = "codex:x"), /tiers\.berat/],
-    [(c) => (c.tiers.berat = [3]), /tiers\.berat/],
-    [(c) => (c.tiers.berat = ["foo:bar"]), /tiers\.berat.*foo:bar/],
+    [(c) => (c.tiers.heavy = "codex:x"), /tiers\.heavy/],
+    [(c) => (c.tiers.heavy = [3]), /tiers\.heavy/],
+    [(c) => (c.tiers.heavy = ["foo:bar"]), /tiers\.heavy.*foo:bar/],
   ];
   for (const [mutate, re] of cases) {
     const cfg = clone();
@@ -169,19 +169,35 @@ test("a config file with a tool missing fails instead of being completed from th
   assert.equal(readFileSync(file, "utf8"), text);
 });
 
+test("a config file keyed by the Indonesian tier names loads as the tiers they name, and is left as written", () => {
+  const home = tempHome();
+  const file = join(home, "config.json");
+  const { light, medium, heavy } = DEFAULT_CONFIG.tiers;
+  const text = JSON.stringify({ ...clone(), tiers: { ringan: light, sedang: medium, berat: heavy } });
+  writeFileSync(file, text);
+  assert.deepEqual(loadConfig(), DEFAULT_CONFIG);
+  assert.equal(readFileSync(file, "utf8"), text);
+
+  // One alias among the present names reads too, and an alias beside its own tier is refused, not merged.
+  writeFileSync(file, JSON.stringify({ ...clone(), tiers: { light, sedang: medium, heavy } }));
+  assert.deepEqual(loadConfig(), DEFAULT_CONFIG);
+  writeFileSync(file, JSON.stringify({ ...clone(), tiers: { light, medium, heavy, ringan: ["codex:x"] } }));
+  assert.throws(() => loadConfig(), /^Error: invalid config: unknown tier: ringan$/);
+});
+
 test("loadConfig returns a copy, so callers cannot change the defaults", () => {
   tempHome();
-  loadConfig().tiers.berat.length = 0;
-  assert.equal(DEFAULT_CONFIG.tiers.berat.length, 4);
+  loadConfig().tiers.heavy.length = 0;
+  assert.equal(DEFAULT_CONFIG.tiers.heavy.length, 4);
 });
 
 test("loadConfig throws on an invalid file and on text that is not JSON", () => {
   const home = tempHome();
   const bad = clone();
   bad.tools.codex.maxParallel = 0;
-  bad.tiers.berat = ["foo:bar"];
+  bad.tiers.heavy = ["foo:bar"];
   writeFileSync(join(home, "config.json"), JSON.stringify(bad));
-  assert.throws(() => loadConfig(), /^Error: invalid config: tools\.codex\.maxParallel .*; tiers\.berat/);
+  assert.throws(() => loadConfig(), /^Error: invalid config: tools\.codex\.maxParallel .*; tiers\.heavy/);
   writeFileSync(join(home, "config.json"), "{ nope");
   assert.throws(() => loadConfig(), /invalid config: .*config\.json/);
 });
