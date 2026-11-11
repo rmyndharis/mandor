@@ -651,8 +651,8 @@ test("mandor models never prints the fake's SECRET_TOKEN_123 stderr", () => {
     assert.equal(r.stderr, "");
     assert.ok(!r.stdout.includes(SECRET), args.join(" "));
     if (!args.includes("--json")) {
-      assert.match(r.stdout, /^gpt-6-astra .*ultra.* default medium$/m);
-      assert.match(r.stdout, /^gpt-reserve .* hidden$/m);
+      assert.match(r.stdout, /^codex:gpt-6-astra .*ultra.* default medium$/m);
+      assert.match(r.stdout, /^codex:gpt-reserve .* hidden$/m);
       assert.match(r.stdout, /^warning: /m);
     }
   }

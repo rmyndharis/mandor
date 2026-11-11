@@ -151,14 +151,14 @@ const USAGE = `mandor <command>
 
 You run:
   init                          create the home and its config, read the model list, print warnings
-  models [--refresh] [--json]   list the models read at the last refresh (a list older than 5 minutes is read again)
+  models [--refresh] [--json]   list the models read at the last refresh, as tool:model (a list older than 5 minutes is read again)
   login zcode [zai|bigmodel] [--api-key]
                                 sign the zcode worker in under a home of its own: in a browser, or with a
                                 Coding Plan API key piped in
   project setup [--clone <path>]... [--setup <command>] [--shared <glob>]... [--deny <glob>]...
                 [--generator <clone path>=<glob>]... [--worker-network] [--worker-add-dir <dir>]...
                 [--name-is-a-word]
-  status [--json]               goals, tasks, jobs, exhausted tools (with the reason) and unrecorded goal commits
+  status [--json]               goals with their worktrees, tasks, jobs, exhausted tools (with the reason), unrecorded goal commits
   show <slug>                   a task's outcome, its jobs with the usage of each run, and its round files
   logs <slug>                   the paths of a task's job logs
   goal adopt <branch>           keep, as your own, the commits on a goal branch that mandor did not make
@@ -245,7 +245,7 @@ export async function main(argv: string[]): Promise<number> {
       if (init) console.log(JSON.stringify({ home, config: join(home, "config.json"), codexVersion: r.codexVersion, models: r.models.length, warnings: r.warnings }, null, 2));
       else if (argv.includes("--json")) console.log(JSON.stringify(r, null, 2));
       else {
-        for (const m of r.models) console.log(`${m.model} ${m.efforts.join(",")} default ${m.defaultEffort ?? "none"}${m.hidden ? " hidden" : ""}`);
+        for (const m of r.models) console.log(`${m.tool}:${m.model} ${m.efforts.join(",")} default ${m.defaultEffort ?? "none"}${m.hidden ? " hidden" : ""}`);
         for (const w of r.warnings) console.log(`warning: ${w}`);
       }
       return 0;

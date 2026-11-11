@@ -84,13 +84,15 @@ test("status lists tasks", async (t) => {
   const lines = plain.out.trimEnd().split("\n");
   assert.match(lines[0], /^task\s+status\s+candidate\s+seq\s+fix rounds\s+elapsed$/);
   assert.match(lines[1], /^hello\s+needs-review\s+codex:gpt-6-luna@medium\s+1\s+0\s+\d+s$/);
-  assert.equal(lines.length, 3);
-  assert.equal(lines[2], `cursor: ${ledgerSize(s.id)}`);
+  assert.match(lines[2], new RegExp(`^goal ${GOAL}: .*goal-feat__status$`), "each goal with its integration worktree");
+  assert.equal(lines.length, 4);
+  assert.equal(lines[3], `cursor: ${ledgerSize(s.id)}`);
 
   const json = cli(s.repo, "status", "--json");
   assert.equal(json.code, 0, json.err);
   const data = JSON.parse(json.out);
-  assert.deepEqual(Object.keys(data), ["project", "cursor", "tasks", "jobs", "tools", "unrecorded"]);
+  assert.deepEqual(Object.keys(data), ["project", "cursor", "goals", "tasks", "jobs", "tools", "unrecorded"]);
+  assert.deepEqual(data.goals.map((g: { branch: string; integrationWorktree: string }) => [g.branch, g.integrationWorktree.endsWith("goal-feat__status")]), [[GOAL, true]]);
   assert.deepEqual([data.project, data.cursor, data.tools, data.unrecorded], [s.id, ledgerSize(s.id), {}, {}]);
   assert.deepEqual(data.tasks.map((x: TaskRecord) => [x.id, x.status]), [["hello", "needs-review"]]);
   assert.equal(data.jobs.length, 1);

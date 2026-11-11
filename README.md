@@ -145,10 +145,10 @@ The lead's commands print JSON; `status`, `show` and `logs` print plain text.
 | You run | Purpose |
 | --- | --- |
 | `mandor init` | Create `~/.mandor`, read the Codex model list, print warnings |
-| `mandor models [--refresh] [--json]` | List the models that the enabled tools offered when the list was last read, with their efforts. It is read again when it is older than five minutes, or with `--refresh` |
+| `mandor models [--refresh] [--json]` | List the models that the enabled tools offered when the list was last read, each as `tool:model` with its efforts. It is read again when it is older than five minutes, or with `--refresh` |
 | `mandor login zcode [--api-key]` | Sign the ZCode worker in under a home of its own: in a browser, or with a Coding Plan API key piped in |
 | `mandor project setup [flags]` | Record what workers need in this repository |
-| `mandor status [--json]` | Goals, tasks, jobs, the time each exhausted tool resets with the reason, and the commits on a goal branch that mandor did not record |
+| `mandor status [--json]` | Goals with their integration worktrees, tasks, jobs, the time each exhausted tool resets with the reason, and the commits on a goal branch that mandor did not record |
 | `mandor show <slug>` | The outcome detail of a task, and each of its jobs with the tokens that run used |
 | `mandor logs <slug>` | The paths of a task's job logs |
 | `mandor goal adopt <branch>` | Keep, as your own, the commits at the top of a goal branch that mandor did not make: accept refuses while a goal branch ends in one |

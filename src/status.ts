@@ -151,9 +151,11 @@ function statusReport(cwd: string, json: boolean): string {
   })!;
   const tools = loadToolState(Math.floor(nowMs / 1000));
   // A job's env is the worker's environment and never reaches output.
-  if (json) return JSON.stringify({ project: id, cursor, tasks: Object.values(state.tasks), jobs: jobs.map(({ env, ...rest }) => rest), tools, unrecorded }, null, 2);
+  const goals = Object.values(state.goals).map((g) => ({ branch: g.branch, integrationWorktree: g.integrationWorktree, description: g.description, plan: g.plan?.path ?? null }));
+  if (json) return JSON.stringify({ project: id, cursor, goals, tasks: Object.values(state.tasks), jobs: jobs.map(({ env, ...rest }) => rest), tools, unrecorded }, null, 2);
   const notes = Object.entries(unrecorded).map(([branch, commits]) => `${unrecordedNote(branch, commits)}; accept refuses until the user removes them or runs mandor goal adopt ${branch}, which the lead does not run`);
-  return `${[statusTable(state, jobs, tools, nowMs), ...notes].join("\n")}\ncursor: ${cursor}`;
+  const where = goals.map((g) => `goal ${g.branch}: ${g.integrationWorktree}`);
+  return `${[statusTable(state, jobs, tools, nowMs), ...where, ...notes].join("\n")}\ncursor: ${cursor}`;
 }
 
 // argv is status [--json], show <slug> or logs <slug>. Prints, and returns the exit code.
