@@ -5,7 +5,8 @@
 <p align="center">A Claude Code plugin that lets your session lead Codex, ZCode and Antigravity workers: it plans the goal, dispatches tasks to sandboxed workers, reviews every result, and lands each one as a guarded local commit. It never pushes.</p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-v0.1.0-blue" alt="v0.1.0">
+  <a href="https://github.com/rmyndharis/mandor/actions/workflows/ci.yml"><img src="https://github.com/rmyndharis/mandor/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/github/package-json/v/rmyndharis/mandor?label=version&color=blue" alt="Version"></a>
   <img src="https://img.shields.io/badge/Claude_Code-plugin-D97757?logo=claude&logoColor=white" alt="Claude Code plugin">
   <img src="https://img.shields.io/badge/platform-macOS-lightgrey?logo=apple&logoColor=white" alt="macOS">
   <img src="https://img.shields.io/badge/node-%E2%89%A522.18-339933?logo=node.js&logoColor=white" alt="Node 22.18+">
@@ -273,9 +274,11 @@ Load your working copy into a session with `claude --plugin-dir .`.
 
 ## Contributing
 
-Issues and pull requests are welcome. Keep changes small, add a test for any change in what a guard refuses or what a worker may do, and run `npm run typecheck` and `npm test` before you open a pull request.
+Issues and pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) says how to file an issue, what a commit and a pull request should look like, and how a release is cut. Keep changes small, add a test for any change in what a guard refuses or what a worker may do, and run `npm run typecheck` and `npm test` before you open a pull request.
 
 A change that gives workers more reach than they have today (a wider environment, a writable path, a weaker guard) should explain in the pull request why it is safe.
+
+Report a security problem privately, as [SECURITY.md](SECURITY.md) describes. Releases and what changed in each are listed in the [changelog](CHANGELOG.md).
 
 ## Support
 

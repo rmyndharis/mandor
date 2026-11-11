@@ -1,0 +1,63 @@
+name: Bug report
+description: Something mandor does wrong
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A security problem does not belong here: report it privately, as [SECURITY.md](https://github.com/rmyndharis/mandor/blob/main/SECURITY.md) describes.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you saw, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The commands you ran, or what you asked the lead to do, from a state someone else can reach.
+      placeholder: |
+        1. mandor project setup ...
+        2. mandor goal start ...
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Output and logs
+      description: The message mandor printed, and the relevant lines of the job log (`mandor logs <slug>`) or of `~/.mandor/logs`. Remove keys, tokens and private paths first.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: mandor version
+      description: The output of `mandor --version`, and the commit if you run from a clone.
+    validations:
+      required: true
+  - type: dropdown
+    id: worker
+    attributes:
+      label: Worker tool
+      multiple: true
+      options:
+        - Codex
+        - ZCode
+        - Antigravity
+        - None, or not relevant
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: The versions of macOS, Node, Claude Code and the worker CLI involved.
+      placeholder: |
+        macOS 26.1
+        Node 22.18.0
+        Claude Code 2.1.319
+        codex-cli 0.166.0
+    validations:
+      required: true
