@@ -546,6 +546,32 @@ test("a dependent at the tool's limit moves once per goal tip, and a pump with n
   await needsReview(p, "second");
 });
 
+test("a dependent is not moved to a new goal tip under a driver configured since dispatch", async (t) => {
+  const p = setup(t);
+  const { goal } = goalStart(p.repo, GOAL, null);
+  writeScenarios([{ stdout: "generated:done", writeFile: [{ path: "hello.txt", content: "hello\n" }] }, DONE]);
+  send(p, "first");
+  send(p, "second", { after: "first" });
+  await needsReview(p, "first");
+  const { commit } = accept(p, "first");
+  const slots = occupy(2);
+  confirmed(p, "first");
+  const moved = task(p, "second");
+  assert.deepEqual([moved.status, moved.base], ["waiting", commit]);
+  // A goal tip whose checkout runs the driver on a file that is new to the dependent's worktree.
+  writeFileSync(join(goal.integrationWorktree, ".gitattributes"), "data.txt filter=x\n");
+  writeFileSync(join(goal.integrationWorktree, "data.txt"), "data\n");
+  must(goal.integrationWorktree, "add", ".gitattributes", "data.txt");
+  must(goal.integrationWorktree, "commit", "-q", "-m", "Add the data file");
+  must(p.repo, "config", "filter.x.smudge", "/usr/bin/tr a-z A-Z");
+  pump(p);
+  assert.deepEqual([task(p, "second").status, task(p, "second").stallReason, task(p, "second").base], ["stalled", "failed", commit]);
+  assert.equal(lastUpdate(p, "second").reason, "could not prepare the worktree");
+  assert.equal(existsSync(join(moved.worktree!, "data.txt")), false);
+  assert.match(runnerLog(), /filter\.x\.smudge/);
+  slots.forEach(release);
+});
+
 test("a task with after and a handoff or resume pending is never reset, wherever the goal tip goes", async (t) => {
   const p = setup(t);
   const { goal } = goalStart(p.repo, GOAL, null);

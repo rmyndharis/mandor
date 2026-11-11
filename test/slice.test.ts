@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import type { ChildProcess } from "node:child_process";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import type { TestContext } from "node:test";
@@ -587,6 +587,23 @@ test("accept refuses a driver configured since dispatch, before it can run", (t)
   assert.throws(() => accept(s, "hello"), /filter\.x\.clean/);
   assert.equal(existsSync(ran), false);
   refused(s, "hello", tip);
+});
+
+test("confirm refuses a driver configured since dispatch, before git reads the integration worktree", (t) => {
+  const s = setup(t);
+  const { goal } = goalStart(s.repo, GOAL, null);
+  reviewable(s, "hello", { "hello.txt": "hello\n", ".gitattributes": "hello.txt filter=x\n" });
+  accept(s, "hello");
+  const ran = join(s.home, "driver-ran");
+  const script = join(s.home, "clean.sh");
+  writeFileSync(script, `#!/bin/sh\ntouch "${ran}"\ncat\n`, { mode: 0o755 });
+  must(s.repo, "config", "filter.x.clean", script);
+  // git status compares the content of a file whose timestamp the index does not hold, and so runs its clean filter.
+  const later = new Date(Date.now() + 60_000);
+  utimesSync(join(goal.integrationWorktree, "hello.txt"), later, later);
+  assert.throws(() => confirm(s.repo, "hello", s.file("c.md", "ok\n")), /filter\.x\.clean/);
+  assert.equal(existsSync(ran), false);
+  assert.equal(task(s, "hello").status, "integrating");
 });
 
 // A repository that keeps its hooks in a tracked directory, as husky does: core.hooksPath names it (in the spelling

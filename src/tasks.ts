@@ -93,7 +93,11 @@ export function startJobLocked(projectId: string, task: TaskRecord, kind: JobKin
 // A fresh session's prompt: the rendered brief, what happened so far, and the changes in the files now.
 export function handoffPrompt(projectId: string, task: TaskRecord): string {
   if (task.worktree === null || task.base === null) throw new Error(`task ${task.id} has no worktree or base`);
-  return renderHandoff({ originalBrief: readFileSync(task.briefPath, "utf8"), rounds: loadRounds(projectId, task.id), diffStat: diffStat(recordedRoot(projectId), task.worktree, task.base) });
+  const root = recordedRoot(projectId);
+  // The diffstat stages the worktree, which would run a driver configured since dispatch. The pump and the runner reach
+  // this with no command in front of them to refuse it.
+  refuseDrivers(root);
+  return renderHandoff({ originalBrief: readFileSync(task.briefPath, "utf8"), rounds: loadRounds(projectId, task.id), diffStat: diffStat(root, task.worktree, task.base) });
 }
 
 // A dependent waits in a worktree made from an older tip. The reset comes first, so a crash before the event only
@@ -103,6 +107,9 @@ function moveToGoalTipLocked(projectId: string, task: TaskRecord): void {
   const root = recordedRoot(projectId);
   const tip = revParse(root, `refs/heads/${task.goalBranch}`);
   if (tip === task.base) return;
+  // The reset checks out the tip, which would run a driver configured since dispatch. After the return above, as this
+  // runs on every poll.
+  refuseDrivers(root);
   resetTo(root, task.worktree, tip);
   appendEvent(projectId, { t: "task.updated", at: now(), taskId: task.id, patch: { base: tip }, reason: `moved to the goal tip ${tip}` });
 }
@@ -774,6 +781,8 @@ export function confirm(cwd: string, slug: string, evidenceFile: string): { curs
   const { root, id } = resolveProject(cwd);
   const models = loadCatalog();
   assertOutsideRepos(evidenceFile, projectRoot);
+  // git status in the integration worktree runs a clean filter on a file whose timestamp the index does not hold.
+  refuseDrivers(root);
   return withProjectLock(id, () => {
     const state = loadState(id);
     const task = state.tasks[slug];

@@ -1178,6 +1178,55 @@ test("reassign refuses a driver configured since dispatch, before it stages anyt
   assert.equal(task(s, "hello").stallReason, "timeout");
 });
 
+// A clean filter that leaves a marker outside the worktree when git runs it, and passes the content through.
+function driverScript(s: Lab): { script: string; ran: string } {
+  const ran = join(s.home, "driver-ran");
+  const script = join(s.home, "clean.sh");
+  writeFileSync(script, `#!/bin/sh\ntouch "${ran}"\ncat\n`, { mode: 0o755 });
+  return { script, ran };
+}
+
+test("the pump refuses a driver configured since dispatch before it builds a handoff, and stalls the task", async (t) => {
+  const s = setup(t);
+  tasks.goalStart(s.repo, GOAL, null);
+  writeScenarios([{ ...DONE, writeFile: [{ path: "hello.txt", content: "hello\n" }, { path: ".gitattributes", content: "hello.txt filter=x\n" }] }, DONE]);
+  send(s, "hello");
+  await needsReview(s, "hello");
+  setTask(s, "hello", { status: "stalled", stallReason: "timeout" });
+  const slots = occupy(2);
+  const { task: held } = tasks.reassign(s.repo, "hello");
+  assert.deepEqual([held.status, held.pending], ["waiting", { kind: "handoff", message: null }]);
+  slots.forEach(release);
+  const { script, ran } = driverScript(s);
+  must(s.repo, "config", "filter.x.clean", script);
+  pump(s);
+  assert.equal(existsSync(ran), false);
+  assert.deepEqual([task(s, "hello").status, task(s, "hello").stallReason, task(s, "hello").jobIds.length], ["stalled", "failed", 1]);
+  assert.equal(lastUpdate(s, "hello").reason, "could not build the handoff");
+  assert.match(runnerLog(), /filter\.x\.clean/);
+});
+
+test("a handoff after an account mismatch refuses a driver configured since dispatch, and stalls the task", async (t) => {
+  const s = setup(t);
+  tasks.goalStart(s.repo, GOAL, null);
+  writeScenarios([
+    { stdout: "generated:quota", threadId: THREAD, writeFile: [{ path: "a.txt", content: "a\n" }, { path: ".gitattributes", content: "a.txt filter=x\n" }] },
+    { stdout: "generated:account-mismatch" },
+    { ...DONE, threadId: "00000000-0000-7000-8000-000000000602" },
+  ]);
+  send(s, "hello");
+  await stalled(s, "hello", "all-exhausted");
+  const { script, ran } = driverScript(s);
+  must(s.repo, "config", "filter.x.clean", script);
+  tasks.ready("codex");
+  const settled = () => (task(s, "hello").status === "stalled" && task(s, "hello").stallReason === "account-mismatch") || task(s, "hello").jobIds.length === 3;
+  assert.ok(await until(settled), "the account mismatch is settled");
+  withProjectLock(s.id, () => {});
+  assert.equal(existsSync(ran), false);
+  assert.deepEqual([task(s, "hello").status, task(s, "hello").stallReason, task(s, "hello").jobIds.length, execs().length], ["stalled", "account-mismatch", 2, 2]);
+  assert.match(runnerLog(), /filter\.x\.clean/);
+});
+
 // Ready
 
 test("after ready with a catalog lacking gpt-6-astra, the next heavy dispatch picks codex:gpt-6.1-sol@max", async (t) => {

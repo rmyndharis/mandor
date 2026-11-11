@@ -21,6 +21,7 @@ All notable changes to mandor are recorded here. The format follows [Keep a Chan
 ### Security
 
 - A repository inside the mandor home is refused before any git command writes to it.
+- A filter or merge driver configured after dispatch is refused by a handoff, by a dependent task's move to a new goal tip and by `confirm`, as the other steps that stage or check out a worktree already do.
 
 ## [0.1.0] - 2026-11-11
 
