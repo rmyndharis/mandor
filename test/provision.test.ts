@@ -398,6 +398,17 @@ test("a failing setup throws and points at its log", () => {
   assert.ok(readFileSync(setupLog, "utf8").includes("marker-fail\n"));
 });
 
+test("project setup exits 2 for an option it does not know or a value that is missing, and 1 for a refusal", () => {
+  const repo = tempRepo();
+  for (const [args, said] of [[["--bogus", "x"], "unknown project setup flag: --bogus"], [["--clone"], "--clone needs a value"], [["--setup", "make", "--deny"], "--deny needs a value"]] as const) {
+    const r = cli(repo, ...args);
+    assert.deepEqual([r.status, r.stdout, r.stderr], [2, "", `mandor: ${said}\n`], args.join(" "));
+  }
+  const refused = cli(repo, "--clone", "../outside");
+  assert.equal(refused.status, 1, refused.stderr);
+  assert.match(refused.stderr, /^mandor: refusing clone path/);
+});
+
 test("project setup writes project.json", () => {
   const repo = tempRepo();
   assert.deepEqual(loadProjectConfig(projectIdFor(repo)), emptyProjectConfig()); // before any setup

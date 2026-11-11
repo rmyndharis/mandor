@@ -31,14 +31,14 @@ function projectSetup(id: string, args: string[]): ProjectConfig {
       continue;
     }
     const value = args[++i];
-    if (value === undefined) throw new Error(`${flag} needs a value`);
+    if (value === undefined) throw new UsageError(`${flag} needs a value`);
     if (flag === "--clone") c.clone.push(value);
     else if (flag === "--setup") c.setup = value;
     else if (flag === "--shared") c.shared.push(value);
     else if (flag === "--deny") c.deny.push(value);
     else if (flag === "--generator") generators.push(value);
     else if (flag === "--worker-add-dir") c.workerAddDirs.push(workerAddDir(value));
-    else throw new Error(`unknown project setup flag: ${flag}`);
+    else throw new UsageError(`unknown project setup flag: ${flag}`);
   }
   // Checked after every flag is read, so each --deny applies whatever the order.
   c.clone = checkClonePaths(c.clone, c.deny);
@@ -298,7 +298,7 @@ export async function main(argv: string[]): Promise<number> {
       return 0;
     } catch (e) {
       console.error(`mandor: ${(e as Error).message}`);
-      return 1;
+      return e instanceof UsageError ? 2 : 1;
     }
   }
   // Plain text, not the JSON the lead's commands print.
