@@ -11,6 +11,7 @@ All notable changes to mandor are recorded here. The format follows [Keep a Chan
 ### Fixed
 
 - A new worktree, a reset of a task worktree and a drop no longer fail when the configuration sets `submodule.recurse` and the repository has an initialized submodule.
+- A task stalled because the handoff after an account mismatch could not be built says so in `wait` and `show`, and names the runner log, instead of repeating the account mismatch.
 
 ### Security
 

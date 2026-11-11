@@ -11,7 +11,7 @@ import { appendEvent, appendToolEvent, listProjects, loadState, loadToolState, n
 import { loadProjectConfig } from "./provision.ts";
 import { catalogGap, countActiveJobs, selectCandidate } from "./routing.ts";
 import { clampDetail, ensureDir, readJson, withProjectLock, withSlotsLock, writeFileAtomic, writeJsonAtomic } from "./store.ts";
-import { cancelStands, cancelStandsLocked, handoffPrompt, pumpLocked, startJobLocked } from "./tasks.ts";
+import { cancelStands, cancelStandsLocked, COULD_NOT_BUILD, handoffPrompt, pumpLocked, startJobLocked } from "./tasks.ts";
 
 const jobFile = (jobId: string) => join(jobDir(jobId), "job.json");
 const resultFile = (jobId: string) => join(jobDir(jobId), "result.json");
@@ -202,9 +202,10 @@ function settleTaskLocked(job: JobRecord, status: JobStatus, result: JobResult, 
       const message = (e as Error).message;
       logRunnerTail(`handoff after job ${jobId}`, message);
       // A busy lock passes, so the pump retries the handoff. Anything else needs the lead: the job
-      // is finished, so a task left working would never be picked up again.
+      // is finished, so a task left working would never be picked up again. Its reason names the runner log, which
+      // holds the cause; the job's own reason would only repeat the account mismatch.
       if (/^(project|slots) busy/.test(message)) handoffLater("the handoff waits for a busy lock");
-      else stall("account-mismatch");
+      else update({ status: "stalled", stallReason: "account-mismatch" }, COULD_NOT_BUILD);
     }
   } else stall(stallReason ?? stallFor(status));
 }

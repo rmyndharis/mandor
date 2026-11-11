@@ -1225,6 +1225,8 @@ test("a handoff after an account mismatch refuses a driver configured since disp
   assert.equal(existsSync(ran), false);
   assert.deepEqual([task(s, "hello").status, task(s, "hello").stallReason, task(s, "hello").jobIds.length, execs().length], ["stalled", "account-mismatch", 2, 2]);
   assert.match(runnerLog(), /filter\.x\.clean/);
+  // What wait and show say names the runner log, which holds the cause, and not only the vendor's account mismatch.
+  assert.match(tasks.newerReason(s.id, "hello") ?? "", /^could not build the handoff; see .*runner\.log$/);
 });
 
 // Ready

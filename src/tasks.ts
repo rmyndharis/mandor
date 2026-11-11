@@ -136,7 +136,7 @@ const readTools = () => loadToolState(Math.floor(Date.now() / 1000));
 // The running step names a failure in the ledger, which the lead reads. The error itself only goes to the log: git's
 // stderr can quote file names a worker chose.
 const COULD_NOT_PREPARE = "could not prepare the worktree";
-const COULD_NOT_BUILD = "could not build the handoff";
+export const COULD_NOT_BUILD = "could not build the handoff";
 const COULD_NOT_START = "could not start the job";
 
 // Starts a task's pending entry if it can. One task's problem stalls that task, its pending entry kept for whoever revives
