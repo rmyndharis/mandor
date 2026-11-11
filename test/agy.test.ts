@@ -10,6 +10,7 @@ import { DEFAULT_CONFIG, resolveBin } from "../src/config.ts";
 import type { Candidate, JobRecord, RawRun } from "../src/contracts.ts";
 import { processStart, projectIdFor, scratchDir } from "../src/home.ts";
 import { loadState, loadToolState } from "../src/ledger.ts";
+import { emptyProjectConfig, saveProjectConfig } from "../src/provision.ts";
 import { reviewPack } from "../src/review.ts";
 import { showTask } from "../src/status.ts";
 import { dispatch, goalStart, verdictFix } from "../src/tasks.ts";
@@ -135,7 +136,7 @@ test("refine turns a resume that landed in a new conversation into an account mi
   assert.equal(a.refine(quota, job({ kind: "resume", sessionId: "00000000-0000-7000-8000-00000000ffff" })).status, "quota", "a failure keeps its own reason");
 });
 
-function prepared(over: Partial<JobRecord> = {}, project = { network: false, addDirs: [] as string[] }) {
+function prepared(over: Partial<JobRecord> = {}, project = { network: true, addDirs: [] as string[] }) {
   const home = tempHome();
   const dir = temp("mandor-ajob-");
   const promptPath = join(dir, "prompt.md");
@@ -144,6 +145,11 @@ function prepared(over: Partial<JobRecord> = {}, project = { network: false, add
   const run = agy().prepare(job({ promptPath, worktree, ...over }), { schemaPath: join(dir, "schema.json"), lastMessagePath: join(dir, "last-message.json") }, project);
   return { home, dir, run, worktree };
 }
+
+test("prepare refuses a project without worker network, as the sandbox's proxy, not the project, decides what a command reaches", () => {
+  assert.throws(() => prepared({}, { network: false, addDirs: [] }), /^Error: agy workers .*proxy.*project setup --worker-network$/);
+  assert.doesNotThrow(() => prepared({}, { network: true, addDirs: [] }));
+});
 
 test("prepare runs the CLI on the worker's own directory, in its sandbox, with paid credits off and permissions for the worktree only", () => {
   const { home, dir, run, worktree } = prepared();
@@ -223,18 +229,29 @@ function reap(home: string): void {
   }
 }
 
-function project(t: TestContext) {
+function project(t: TestContext, opts: { network?: boolean } = {}) {
   const home = tempHome();
   writeAgyConfig(home);
   t.after(() => reap(home));
   const repo = tempRepo();
   const id = projectIdFor(repo);
+  saveProjectConfig(id, { ...emptyProjectConfig(), workerNetwork: opts.network ?? true });
   const briefFile = join(scratchDir(id, "t"), "brief.md");
   writeFileSync(briefFile, "Create the file.\n");
   goalStart(repo, GOAL, null);
   const send = (slug: string, use: Candidate | null = FLASH) => dispatch(repo, { goal: GOAL, slug, tier: "light", briefFile, scope: [], use, after: null });
   return { home, repo, id, send };
 }
+
+test("an agy job in a project without worker network never starts the worker and says why in the log", async (t) => {
+  const p = project(t, { network: false });
+  writeAgyScenarios([{}]);
+  p.send("closed");
+  assert.ok(await until(() => loadState(p.id).tasks.closed.status === "stalled"), showTask(p.id, "closed"));
+  assert.match(readFileSync(join(p.home, "logs", "runner.log"), "utf8"), /agy workers .*project setup --worker-network/);
+  // Reading the model list runs the CLI too, so only a run with a prompt is a worker.
+  assert.equal(readAgyLog().filter((e) => e.argv.includes("-p")).length, 0, "the worker never started");
+});
 
 test("the catalog holds agy's models next to codex's, and the report says what using it means", () => {
   const home = tempHome();

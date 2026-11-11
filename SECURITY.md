@@ -20,7 +20,7 @@ Fixes go into the latest release only.
 
 ## What counts
 
-- A worker whose commands or edits write outside its task worktree, the temporary directories, the cache directories the project opens and, for ZCode, its own home and the per-user cache directory, or whose commands reach the network in a project that has not allowed it. Antigravity is the exception for the network: its sandbox's proxy decides, as the README says.
+- A worker whose commands or edits write outside its task worktree, the temporary directories, the cache directories the project opens and, for ZCode, its own home and the per-user cache directory, or whose commands reach the network in a project that has not allowed it. An Antigravity job is refused in such a project; where one runs, its sandbox's proxy decides what its commands reach, as the README says.
 - A credential, token or agent socket that reaches a worker's environment.
 - A change that is committed without the review that accept requires, or a tree that differs from the one the review showed.
 - A guard that can be bypassed: a denied path, a symlink to one, or a hostile git configuration that is not refused.
@@ -31,7 +31,7 @@ Fixes go into the latest release only.
 
 The README states these limits in its Safety model and under [Before you start](README.md#before-you-start), and they are not vulnerabilities in mandor:
 
-- A worker can read any file your account can read, and what its model reads reaches the worker's vendor. With `--worker-network`, or with Antigravity at whatever its sandbox's proxy lets through, its commands can also send one out.
+- A worker can read any file your account can read, and what its model reads reaches the worker's vendor. With `--worker-network` its commands can also send one out, for Antigravity at whatever its sandbox's proxy lets through.
 - Workers run on your own accounts at their tools, and a Codex worker inherits what Codex loads for you.
 - Your code reaches the vendor of every tool you have enabled, as tools are enabled per machine, not per project.
 - To check a result, the Claude Code session that leads the work runs the task's tests and builds on code a worker wrote, with your privileges and no sandbox. The temporary and cache directories a project opens are shared with those commands and with your own tools.
