@@ -44,7 +44,7 @@ function resetTime(epochSec: number | null): string {
 export function statusTable(state: ProjectState, jobs: JobRecord[], tools: ToolState, nowMs: number): string {
   const tasks = Object.values(state.tasks);
   const rows = tasks.map((t) => [t.id, statusOf(t), t.candidate === null ? "-" : formatCandidate(t.candidate), String(t.seq), String(t.fixRounds), elapsed(t, jobs, nowMs)]);
-  const exhausted = Object.entries(tools).map(([key, v]) => `exhausted: ${key} until ${resetTime(v.resetsAt)}`);
+  const exhausted = Object.entries(tools).map(([key, v]) => `exhausted: ${key} until ${resetTime(v.resetsAt)}${v.detail === "" ? "" : `: ${v.detail}`}`);
   const head = ["task", "status", "candidate", "seq", "fix rounds", "elapsed"];
   return [tasks.length === 0 ? "no tasks" : columns([head, ...rows]), ...exhausted].join("\n");
 }

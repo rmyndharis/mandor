@@ -130,7 +130,11 @@ test("statusTable shows stall reasons, elapsed times and exhausted tools", () =>
   assert.deepEqual(rows[1], ["a", "working", "codex:gpt-6-luna@medium", "2", "1", "42s"]);
   assert.deepEqual(rows[2], ["b", "stalled (quota)", "codex:gpt-6-luna@medium", "1", "0", "1h02m"]);
   assert.deepEqual(rows[3], ["c", "waiting", "-", "0", "0", "-"]);
-  assert.deepEqual(rows.slice(4), [["exhausted: codex until 2026-11-08T15:00:00Z"], ["exhausted: codex:gpt-6-luna until unknown"]]);
+  // The reason of a mark, the paid-credit one included, is on the line: the lead reads this table, not status --json.
+  assert.deepEqual(rows.slice(4), [["exhausted: codex until 2026-11-08T15:00:00Z: x"], ["exhausted: codex:gpt-6-luna until unknown: y"]]);
+  const credits = "plan limit reached while workspace credits are available";
+  assert.equal(statusTable(state, jobs, { codex: { resetsAt, detail: credits } }, nowMs).split("\n").at(-1), `exhausted: codex until 2026-11-08T15:00:00Z: ${credits}`);
+  assert.equal(statusTable(state, jobs, { codex: { resetsAt, detail: "" } }, nowMs).split("\n").at(-1), "exhausted: codex until 2026-11-08T15:00:00Z", "no reason, no colon");
   assert.equal(statusTable({ goals: {}, tasks: {}, jobs: {} }, [], {}, nowMs), "no tasks");
 });
 
