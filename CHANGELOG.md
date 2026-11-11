@@ -19,6 +19,7 @@ All notable changes to mandor are recorded here. The format follows [Keep a Chan
 - The session summary gives each task its stall reason and next action, each goal its integration worktree, and names the lead skill. It also lists the warnings of the tools that are switched on, and so does `dispatch`. `init` and `models` no longer print Codex's warnings while Codex is off.
 - `mandor tiers` lists each tier's candidates as the config writes them, with what keeps one from running.
 - `mandor diff <slug>` prints a task's change as patch text, through the same confined staging as the review, and records no review.
+- `mandor project setup --shared-temp` keeps the shared temporary directories open to a Codex or ZCode worker, for a toolchain that cannot work without them. A JVM gets its temporary directory from `JAVA_TOOL_OPTIONS`.
 
 ### Fixed
 
@@ -51,6 +52,7 @@ All notable changes to mandor are recorded here. The format follows [Keep a Chan
 - A `--deny` entry that names a directory covers everything under it in a commit, as a glob that matches a directory already did in a clone. An entry that ends in a slash names a directory in both.
 - The worktree root is verified before the Antigravity settings or the ZCode profile are built from it.
 - Accept refuses while a goal branch ends in a commit that mandor did not record. `mandor goal adopt <branch>` keeps such commits as the user's own.
+- A Codex or ZCode worker gets a temporary directory of its own for each job, as its `TMPDIR`, `TMPPREFIX` (zsh) and clang's module cache, removed when the run ends. `/tmp`, `/var/folders` and the shared `TMPDIR` are closed to it, as the lead's proofs and your own tools keep caches and compiled files there. A build that names `/tmp` itself, runs `mktemp` or needs the per-user cache directory fails in the sandbox; `mandor project setup --shared-temp` keeps them open. Antigravity's temporary directories are its sandbox's own.
 
 ## [0.2.0] - 2026-11-11
 

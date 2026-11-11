@@ -26,6 +26,23 @@ export function jobDir(jobId: string): string {
   return join(mandorHome(), "jobs", jobId);
 }
 
+// The one temporary directory a Codex or ZCode worker may write besides its worktree: the shared ones (/tmp, $TMPDIR) are
+// where the lead's proofs and the user's own tools keep caches and compiled files, so a worker is given its own, inside the
+// job's directory, which the runner makes before the start.
+export function jobTmpDir(jobId: string): string {
+  return join(jobDir(jobId), "tmp");
+}
+
+// What points the tools of a worker at that directory. TMPDIR is read by most of them; zsh writes the temporary files of a
+// here-document and of a process substitution to a prefix of its own, which is /tmp/zsh unless TMPPREFIX says otherwise,
+// and without it every here-document of a worker's login shell fails; clang keeps its module cache in the per-user cache
+// directory, which the profile of a worker that has its own temporary directory does not open; and a JVM on macOS takes
+// java.io.tmpdir from the system, not from TMPDIR. mktemp and the cache of xcrun do the same and cannot be pointed
+// anywhere: a project whose toolchain needs them keeps the shared directories open.
+export function ownTempEnv(dir: string): Record<string, string> {
+  return { TMPDIR: dir, TMPPREFIX: join(dir, "zsh"), CLANG_MODULE_CACHE_PATH: join(dir, "clang-modules"), JAVA_TOOL_OPTIONS: `-Djava.io.tmpdir=${dir}` };
+}
+
 export function worktreesDir(id: string): string {
   return join(mandorHome(), "worktrees", id);
 }

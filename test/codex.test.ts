@@ -10,7 +10,7 @@ import { codexWarnings, createCodexAdapter, TESTED_CODEX_VERSION } from "../src/
 import { getAdapter, loadModels, refreshModels } from "../src/adapters/index.ts";
 import { DEFAULT_CONFIG } from "../src/config.ts";
 import type { JobRecord, JobResult, RawRun } from "../src/contracts.ts";
-import { workerEnv } from "../src/home.ts";
+import { jobTmpDir, workerEnv } from "../src/home.ts";
 import type { Scenario } from "./helpers.ts";
 import { temp as tempDir, readFakeLog, tempHome, writeScenarios } from "./helpers.ts";
 
@@ -308,19 +308,26 @@ test("concurrent fakes claim each scenario exactly once", async () => {
 // prepare
 
 test("prepare start and resume argv match the S2-confirmed placement", () => {
+  tempHome();
   const project = { network: true, addDirs: ["/tmp/cache"] };
   const start = codex().prepare(job(), FILES, project);
-  // No -C: the worktree is the cwd the runner binds, never a path Codex would resolve again.
+  const own = jobTmpDir(job().id);
+  // No -C: the worktree is the cwd the runner binds, never a path Codex would resolve again. The shared temporary
+  // directories are closed, and the job's own is the one writable root besides the worktree and the project's.
   assert.deepEqual(start.args, [
     "exec", "--json", "-s", "workspace-write", "--ignore-user-config",
-    "-c", "sandbox_workspace_write.network_access=true", "--add-dir", "/tmp/cache",
+    "-c", "sandbox_workspace_write.network_access=true",
+    "-c", "sandbox_workspace_write.exclude_slash_tmp=true", "-c", "sandbox_workspace_write.exclude_tmpdir_env_var=true",
+    "--add-dir", own, "--add-dir", "/tmp/cache",
     "-m", "gpt-6-luna", "-c", 'model_reasoning_effort="low"',
     "--output-schema", "/tmp/run/schema.json", "-o", "/tmp/run/last.json", "-",
   ]);
   const resume = codex().prepare(job({ kind: "resume", sessionId: "00000000-0000-7000-8000-000000000002" }), FILES, project);
   assert.deepEqual(resume.args, [
     "exec", "-s", "workspace-write", "--ignore-user-config",
-    "-c", "sandbox_workspace_write.network_access=true", "--add-dir", "/tmp/cache",
+    "-c", "sandbox_workspace_write.network_access=true",
+    "-c", "sandbox_workspace_write.exclude_slash_tmp=true", "-c", "sandbox_workspace_write.exclude_tmpdir_env_var=true",
+    "--add-dir", own, "--add-dir", "/tmp/cache",
     "resume", "00000000-0000-7000-8000-000000000002", "--json",
     "-m", "gpt-6-luna", "-c", 'model_reasoning_effort="low"',
     "--output-schema", "/tmp/run/schema.json", "-o", "/tmp/run/last.json", "-",
@@ -328,13 +335,29 @@ test("prepare start and resume argv match the S2-confirmed placement", () => {
   // The prompt is the job's own file, which the runner makes the worker's stdin: as an argument it would show in every
   // process list and fail the start past the system's limit on arguments.
   assert.deepEqual([start.stdinFile, resume.stdinFile], ["/tmp/prompt.md", "/tmp/prompt.md"]);
+  // A resume works in the directory of its own too.
+  assert.deepEqual([resume.env.TMPDIR, resume.env.TMPPREFIX, resume.env.JAVA_TOOL_OPTIONS], [own, `${own}/zsh`, `-Djava.io.tmpdir=${own}`]);
 });
 
-test("prepare uses job.bin and job.env", () => {
-  const env = { HOME: "/tmp/h", CODEX_HOME: "/tmp/h/.codex" };
+test("prepare uses job.bin and job.env, and moves TMPDIR to a directory of the job's own, closing the shared ones", () => {
+  tempHome();
+  const env = { HOME: "/tmp/h", CODEX_HOME: "/tmp/h/.codex", TMPDIR: "/var/folders/xx/T/" };
   const p = codex().prepare(job({ bin: "/opt/bin/codex", env }), FILES, NO_EXTRAS);
+  const own = jobTmpDir(job().id);
   assert.equal(p.command, "/opt/bin/codex");
+  // zsh writes the file of a here-document to TMPPREFIX, which is /tmp/zsh unless it is told otherwise, and clang its module cache to the per-user cache directory.
+  assert.deepEqual(p.env, { ...env, TMPDIR: own, TMPPREFIX: `${own}/zsh`, CLANG_MODULE_CACHE_PATH: `${own}/clang-modules`, JAVA_TOOL_OPTIONS: `-Djava.io.tmpdir=${own}` });
+  for (const key of ["exclude_slash_tmp", "exclude_tmpdir_env_var"]) assert.ok(p.args.includes(`sandbox_workspace_write.${key}=true`), key);
+  assert.deepEqual(p.args.filter((a, i) => p.args[i - 1] === "--add-dir"), [own]);
+});
+
+test("prepare leaves the shared temporary directories and the environment alone for a project that keeps them open", () => {
+  tempHome();
+  const env = { HOME: "/tmp/h", CODEX_HOME: "/tmp/h/.codex", TMPDIR: "/var/folders/xx/T/" };
+  const p = codex().prepare(job({ bin: "/opt/bin/codex", env }), FILES, { network: false, addDirs: ["/tmp/cache"], sharedTemp: true });
   assert.deepEqual(p.env, env);
+  assert.ok(!p.args.some((a) => a.includes("exclude_")), p.args.join(" "));
+  assert.deepEqual(p.args.filter((a, i) => p.args[i - 1] === "--add-dir"), ["/tmp/cache"]);
 });
 
 test("prepare follows the config and project switches and refuses a run it cannot express", () => {
@@ -342,7 +365,7 @@ test("prepare follows the config and project switches and refuses a run it canno
   cfg.tools.codex.ignoreUserConfig = false;
   const args = createCodexAdapter(cfg).prepare(job(), FILES, NO_EXTRAS).args;
   assert.ok(!args.includes("--ignore-user-config"));
-  assert.ok(!args.includes("--add-dir"));
+  assert.equal(args.filter((a) => a === "--add-dir").length, 1, "only the job's own directory");
   assert.ok(!args.includes("sandbox_workspace_write.network_access=true"));
   const noEffort = job({ candidate: { tool: "codex", model: "gpt-6-luna", effort: "" } });
   assert.throws(() => codex().prepare(noEffort, FILES, NO_EXTRAS), /codex candidate needs an effort/);

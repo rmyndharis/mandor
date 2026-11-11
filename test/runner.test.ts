@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { type ChildProcess, execFileSync, spawn, spawnSync } from "node:child_process";
-import fs, { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import fs, { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import { basename, dirname, join } from "node:path";
 import type { TestContext } from "node:test";
@@ -9,7 +9,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 import { DEFAULT_CONFIG } from "../src/config.ts";
 import type { Candidate, JobKind, JobOutcome, JobRecord, JobResult, LedgerEvent, TaskRecord, TaskStatus, WorkerReport } from "../src/contracts.ts";
-import { jobDir, processStart, projectDir, workerEnv } from "../src/home.ts";
+import { jobDir, jobTmpDir, ownTempEnv, processStart, projectDir, workerEnv } from "../src/home.ts";
 import { appendEvent, loadState, now, readEvents } from "../src/ledger.ts";
 import { countActiveJobs } from "../src/routing.ts";
 import { cancelMarker, pruneJobs, reconcileLocked, runJob, spawnInRoot } from "../src/runner.ts";
@@ -602,6 +602,85 @@ test("a resume that lost its session and was paid by workspace credits exhausts 
   assert.deepEqual(tools.map((e) => e.key), ["codex"], "the tool stays off until the user says it is ready");
 });
 
+test("a Codex worker gets a temporary directory of its own, made before it starts, private to the user and gone when the run ends", async (t) => {
+  setup(t);
+  writeScenarios([{ stdout: "generated:done" }]);
+  const job = queueJob();
+  await runJob(job.id);
+  const entry = execs()[0];
+  assert.equal(entry.env.TMPDIR, jobTmpDir(job.id));
+  assert.equal(entry.env.TMPPREFIX, join(jobTmpDir(job.id), "zsh"));
+  assert.ok(entry.argv.includes("sandbox_workspace_write.exclude_slash_tmp=true") && entry.argv.includes("sandbox_workspace_write.exclude_tmpdir_env_var=true"));
+  assert.equal(existsSync(jobTmpDir(job.id)), false, "nothing of it outlives the run");
+  // A worker of its own, which sees the directory as it is at the start.
+  const worker = script('stat -f %Lp "$TMPDIR" > "$0.mode"; echo x > "$TMPDIR/left"; echo "$TMPDIR" > "$0.tmpdir"');
+  const seen = queueJob({ bin: worker });
+  await runJob(seen.id);
+  assert.equal(read(`${worker}.mode`).trim(), "700");
+  assert.equal(read(`${worker}.tmpdir`).trim(), jobTmpDir(seen.id));
+  assert.equal(existsSync(jobTmpDir(seen.id)), false, "what the worker left in it goes too");
+});
+
+test("a project that keeps the shared temporary directories open gives its worker no directory of its own and leaves the environment as it was", async (t) => {
+  setup(t);
+  saveProjectConfig(PROJECT, { ...emptyProjectConfig(), sharedTemp: true });
+  writeScenarios([{ stdout: "generated:done" }]);
+  const job = queueJob();
+  await runJob(job.id);
+  const entry = execs()[0];
+  assert.equal(entry.env.TMPDIR, job.env.TMPDIR);
+  assert.equal(entry.env.TMPPREFIX, undefined);
+  assert.ok(!entry.argv.some((a) => a.includes("exclude_slash_tmp")));
+  assert.equal(existsSync(jobTmpDir(job.id)), false);
+});
+
+test("what a worker leaves in its temporary directory goes with the run, a read-only directory and an immutable file included", async (t) => {
+  setup(t);
+  const worker = script('mkdir -p "$TMPDIR/ro/sub" && echo x > "$TMPDIR/ro/sub/f" && /usr/bin/chflags uchg "$TMPDIR/ro/sub/f" && chmod 500 "$TMPDIR/ro/sub" "$TMPDIR/ro"');
+  const job = queueJob({ bin: worker });
+  await runJob(job.id);
+  assert.equal(existsSync(jobTmpDir(job.id)), false);
+});
+
+test("a temporary directory that exists already is made private to the user before the worker starts", async (t) => {
+  setup(t);
+  const worker = script('stat -f %Lp "$TMPDIR" > "$0.mode"');
+  const job = queueJob({ bin: worker });
+  mkdirSync(jobTmpDir(job.id), { recursive: true });
+  chmodSync(jobTmpDir(job.id), 0o755);
+  await runJob(job.id);
+  assert.equal(read(`${worker}.mode`).trim(), "700");
+});
+
+test("a project that keeps the shared temporary directories open has no directory of the job's own while the worker runs", async (t) => {
+  setup(t);
+  saveProjectConfig(PROJECT, { ...emptyProjectConfig(), sharedTemp: true });
+  const worker = script(`[ -e "${join(process.env.MANDOR_HOME!, "jobs")}/$MANDOR_JOB/tmp" ] && echo yes > "$0.seen" || echo no > "$0.seen"`);
+  const job = queueJob({ bin: worker });
+  await runJob(job.id);
+  assert.equal(read(`${worker}.seen`).trim(), "no");
+});
+
+test("a job that fails before its worker starts leaves no temporary directory", async (t) => {
+  setup(t);
+  const job = queueJob({ kind: "resume", sessionId: null }); // a Codex resume needs a session, so prepare refuses it
+  await runJob(job.id);
+  assert.match(finishedEvents(job.id)[0].outcome.detail, /^runner error; see /);
+  assert.equal(existsSync(jobTmpDir(job.id)), false);
+});
+
+test("reconcile removes the temporary directory of a job whose runner died", async (t) => {
+  setup(t);
+  writeScenarios([{ stdout: "generated:done", delayMs: 30_000 }]);
+  const job = await workerRunning(startJob().id);
+  assert.equal(existsSync(jobTmpDir(job.id)), true, "made for the run");
+  kill(job.runnerPid!);
+  assert.ok(await until(() => !alive(job.runnerPid!), 5_000));
+  kill(-job.workerPid!);
+  assert.deepEqual(reconcile(), [job.id]);
+  assert.equal(existsSync(jobTmpDir(job.id)), false);
+});
+
 // Worker processes
 
 test("a worker that ignores SIGINT is killed 10 s after the stop", async (t) => {
@@ -661,7 +740,7 @@ test("a runner error after the worker started kills the worker before the job co
 
 // Launch and the hidden _run command
 
-test("worker env from the fake log equals the allowlist (no CODEX_API_KEY, SSH_AUTH_SOCK, GH_TOKEN; GIT_SSH_COMMAND=/usr/bin/false; GRADLE_OPTS set)", async (t) => {
+test("worker env from the fake log equals the allowlist and the job's temporary directory (no CODEX_API_KEY, SSH_AUTH_SOCK, GH_TOKEN; GIT_SSH_COMMAND=/usr/bin/false; GRADLE_OPTS set)", async (t) => {
   setup(t);
   const secrets = { CODEX_API_KEY: "sk-test", SSH_AUTH_SOCK: "/tmp/agent.sock", GH_TOKEN: "gh-test" };
   const saved = Object.keys(secrets).map((k) => [k, process.env[k]] as const);
@@ -676,7 +755,8 @@ test("worker env from the fake log equals the allowlist (no CODEX_API_KEY, SSH_A
   const runs = execs();
   assert.equal(runs.length, 1);
   const { __CF_USER_TEXT_ENCODING: _, ...env } = runs[0].env; // macOS adds it to every process
-  assert.deepEqual(env, job.env);
+  const expected: Record<string, string> = { ...job.env, ...ownTempEnv(jobTmpDir(job.id)) };
+  assert.deepEqual(env, expected, "the allowlist, with a temporary directory of the job's own");
   for (const k of Object.keys(secrets)) assert.equal(k in env, false, k);
   assert.equal(env.GIT_SSH_COMMAND, "/usr/bin/false");
   assert.equal(env.GRADLE_OPTS, "-Dorg.gradle.daemon=false");
@@ -874,6 +954,40 @@ test("a job directory goes 30 days after the job ended, once the ledger holds it
   pruneJobs();
   assert.deepEqual(kept(all), [false, true, true, true, false]);
   assert.equal(readJob(young.id).status, "done");
+});
+
+test("a job's temporary directory goes with the job directory, whatever a worker left in it", (t) => {
+  setup(t);
+  const job = endedJob(31 * DAY);
+  const own = jobTmpDir(job.id);
+  mkdirSync(join(own, "a", "b"), { recursive: true });
+  writeFileSync(join(own, "a", "b", "left"), "x");
+  const outside = temp("mandor-outside-");
+  writeFileSync(join(outside, "precious"), "keep");
+  symlinkSync(outside, join(own, "link"));
+  setTaskStatus("accepted");
+  pruneJobs();
+  assert.equal(existsSync(jobDir(job.id)), false);
+  assert.equal(readFileSync(join(outside, "precious"), "utf8"), "keep", "a link in it is removed, never followed");
+});
+
+test("a job's temporary directory goes with its job directory when the home is reached through a link", (t) => {
+  const real = tempHome({ config: true });
+  const link = join(temp("mandor-link-"), "home");
+  symlinkSync(real, link);
+  const saved = process.env.MANDOR_HOME;
+  process.env.MANDOR_HOME = link;
+  t.after(() => {
+    process.env.MANDOR_HOME = saved;
+    reap(real);
+  });
+  createTask({ worktree: temp("mandor-wt-") });
+  const job = endedJob(31 * DAY);
+  mkdirSync(join(jobTmpDir(job.id), "a"), { recursive: true });
+  writeFileSync(join(jobTmpDir(job.id), "a", "left"), "x");
+  setTaskStatus("accepted");
+  pruneJobs();
+  assert.equal(existsSync(jobDir(job.id)), false);
 });
 
 test("a job of a cancelled task goes too, and a ledger that cannot be read keeps every job", (t) => {

@@ -6,7 +6,7 @@ import { parseReport } from "../brief.ts";
 import type { Config } from "../config.ts";
 import { resolveCodexBin } from "../config.ts";
 import type { Adapter, JobRecord, JobResult, JobStatus, ModelInfo, RawRun } from "../contracts.ts";
-import { workerEnv } from "../home.ts";
+import { jobTmpDir, ownTempEnv, workerEnv } from "../home.ts";
 import { CREDIT_OFF_SWITCH, CREDIT_SIGNAL, NETWORK_KEY, ROLLOUT_GLOB, STATE_DB } from "../spikes.ts";
 import { clampDetail } from "../store.ts";
 import { keepVendorStderr, lostSession } from "./vendor.ts";
@@ -146,6 +146,11 @@ export function createCodexAdapter(cfg: Config, run: Run = runVendor): Adapter {
       const before = ["-s", "workspace-write"];
       if (cfg.tools.codex.ignoreUserConfig) before.push("--ignore-user-config");
       if (project.network && NETWORK_KEY !== null) before.push("-c", NETWORK_KEY);
+      // The shared temporary directories (/tmp and $TMPDIR) are closed, as the lead's proofs and the user's own tools keep
+      // caches and compiled files there; the worker's TMPDIR is a directory of the job's own, which is open instead.
+      // Unless the project keeps them open (--shared-temp), for a toolchain that needs them.
+      const own = project.sharedTemp === true ? null : jobTmpDir(job.id);
+      if (own !== null) before.push("-c", "sandbox_workspace_write.exclude_slash_tmp=true", "-c", "sandbox_workspace_write.exclude_tmpdir_env_var=true", "--add-dir", own);
       for (const d of project.addDirs) before.push("--add-dir", d);
       const after = [
         ...(CREDIT_OFF_SWITCH === null ? [] : ["-c", CREDIT_OFF_SWITCH]),
@@ -153,10 +158,11 @@ export function createCodexAdapter(cfg: Config, run: Run = runVendor): Adapter {
         "--output-schema", files.schemaPath, "-o", files.lastMessagePath, "-",
       ];
       const stdinFile = job.promptPath;
-      if (job.kind === "start") return { command: job.bin, args: ["exec", "--json", ...before, ...after], env: job.env, stdinFile };
+      const env = own === null ? job.env : { ...job.env, ...ownTempEnv(own) };
+      if (job.kind === "start") return { command: job.bin, args: ["exec", "--json", ...before, ...after], env, stdinFile };
       const id = job.sessionId ?? "";
       if (!UUID.test(id)) throw new Error("codex resume needs a session UUID");
-      return { command: job.bin, args: ["exec", ...before, "resume", id, "--json", ...after], env: job.env, stdinFile };
+      return { command: job.bin, args: ["exec", ...before, "resume", id, "--json", ...after], env, stdinFile };
     },
 
     classify(raw: RawRun): JobResult {

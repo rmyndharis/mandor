@@ -94,7 +94,7 @@ export function addWorktree(repo: string, path: string, branch: string, base: st
 const lines = (s: string) => s.replace(/\n$/, "").split("\n");
 
 // The real form of a path whose last parts may not exist, so a half-made or removed worktree still compares equal.
-function realOf(p: string): string {
+export function realOf(p: string): string {
   try {
     return realpathSync.native(p);
   } catch {
@@ -178,9 +178,16 @@ function adminDirs(commonDir: string, constructed: string): string[] {
 // runs confined by the kernel sandbox, which denies every write outside the tree: a steered unlink gets EPERM and the
 // removal fails closed, nothing deleted outside. ROOT is the resolved path, as seatbelt matches the real one
 // (/private/var, not /var). sandbox-exec that cannot apply exits non-zero, so this throws rather than fall back.
-function removeTree(path: string): void {
-  const profile = '(version 1)(allow default)(deny file-write*)(allow file-write* (subpath (param "ROOT")))';
-  const r = spawnSync("/usr/bin/sandbox-exec", ["-D", `ROOT=${path}`, "-p", profile, "/bin/rm", "-rf", "--", path],
+export function removeTree(raw: string): void {
+  // The parent resolved, as the sandbox matches the real path: a home reached through a link (/tmp, /var) is denied otherwise.
+  // The last entry stays as it is, so a link at the path itself is removed and never followed.
+  const path = join(realOf(dirname(raw)), basename(raw));
+  const profile = '(version 1)(allow default)(deny file-write*)(allow file-write-data (literal "/dev/null"))(allow file-write* (subpath (param "ROOT")))';
+  // A directory without write permission (a Go module cache has them), or a file with the user immutable or append-only
+  // flag, which a worker can make of its own files, stops the removal, so they are cleared first, inside the same
+  // confinement. A failure to clear one is no answer: rm says. An ACL that denies the removal is left, and rm names the file.
+  const r = spawnSync("/usr/bin/sandbox-exec", ["-D", `ROOT=${path}`, "-p", profile, "/bin/sh", "-c",
+    'chflags -R nouchg,nouappnd -- "$1" 2>/dev/null; chmod -R u+rwX -- "$1" 2>/dev/null; exec rm -rf -- "$1"', "sh", path],
     { stdio: ["ignore", "ignore", "pipe"], encoding: "utf8" });
   if (r.status === 0) return;
   // One line, control characters masked: the names in it are the worker's, and rm passes a tab, DEL and C1 codes through.

@@ -2,12 +2,13 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, copyFileSync, existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, relative } from "node:path";
 import { parseReport, REPORT_SCHEMA } from "../brief.ts";
 import type { Config } from "../config.ts";
 import { resolveBin } from "../config.ts";
+import { realOf } from "../git.ts";
 import type { Adapter, JobResult, JobStatus, ModelInfo, RawRun, WorkerReport } from "../contracts.ts";
-import { mandorHome, workerEnv } from "../home.ts";
+import { jobTmpDir, mandorHome, ownTempEnv, workerEnv } from "../home.ts";
 import { clampDetail, ensureDir, readJson, writeJsonAtomic } from "../store.ts";
 import { keepVendorStderr, lostSession } from "./vendor.ts";
 
@@ -155,18 +156,33 @@ export function lastJsonObject(text: string, accept: (v: Record<string, unknown>
 // Whether an object is a worker's report, which is what the adapters look for at the end of an answer.
 export const fitsReport = (v: Record<string, unknown>): boolean => parseReport(JSON.stringify(v)) !== null;
 
-// Writes only to the worktree, the worker's home and the temporary directories. What the user's credential directories
-// and the state directory hold cannot be read, but for the worktree, the worker's home and the job's own directory,
-// which holds the provider file; a path's metadata stays readable, as the CLI's database open resolves every
+// Writes only to the worktree, the worker's home, the project's added directories and, in place of the shared temporary
+// directories, a temporary directory of the job's own: /tmp and /var/folders hold what the lead's proofs and the user's own
+// tools keep caches and compiled files in, the per-user cache directory under /var/folders among them. A project that
+// keeps them open (--shared-temp) leaves tmp null, and the profile opens them as it did. What the user's credential
+// directories and the state directory hold cannot be read, but for the worktree, the worker's home and the job's own
+// directory, which holds the provider file; a path's metadata stays readable, as the CLI's database open resolves every
 // directory above its file. The paths are parameters.
-function sandbox(worktree: string, jobFiles: string, addDirs: string[]): string[] {
+function sandbox(worktree: string, jobFiles: string, tmp: string | null, addDirs: string[]): string[] {
   const user = homedir();
-  const params: [string, string][] = [["WT", worktree], ["WH", zcodeHome()], ["JOB", jobFiles], ["STATE", mandorHome()],
-    ...addDirs.map((d, i): [string, string] => [`ADD${i}`, d]), ...PRIVATE_HOME_PATHS.map((p, i): [string, string] => [`PRIV${i}`, join(user, p)])];
+  // Seatbelt matches the real path of what a process opens, so a path that goes through a link (a state home spelled with
+  // /tmp or /var, a cache directory that is a link) would match nothing. The state home is resolved, and what lies under
+  // it is kept as it is named: a worker can write in those places and not replace them, and a name resolved after a swap
+  // would grant the place the link leads to.
+  const home = mandorHome();
+  const real = realOf(home);
+  const under = (p: string): string => {
+    const rel = relative(home, p);
+    return rel === "" || rel.startsWith("..") || isAbsolute(rel) ? realOf(p) : join(real, rel);
+  };
+  const params: [string, string][] = [["WT", worktree], ["WH", under(zcodeHome())], ["JOB", under(jobFiles)], ["STATE", real],
+    ...(tmp === null ? [] : [["JT", under(tmp)] as [string, string]]),
+    ...addDirs.map((d, i): [string, string] => [`ADD${i}`, realOf(d)]), ...PRIVATE_HOME_PATHS.map((p, i): [string, string] => [`PRIV${i}`, join(user, p)])];
   const sub = (names: string[]) => names.map((n) => `(subpath (param "${n}"))`).join(" ");
-  const writable = ["WT", "WH", ...addDirs.map((_, i) => `ADD${i}`)];
+  const writable = ["WT", "WH", ...(tmp === null ? [] : ["JT"]), ...addDirs.map((_, i) => `ADD${i}`)];
+  const shared = tmp === null ? ' (subpath "/private/tmp") (subpath "/private/var/folders")' : "";
   const profile = `(version 1)(allow default)(deny file-write*)(allow file-write-data (literal "/dev/null") (literal "/dev/tty") (literal "/dev/dtracehelper"))`
-    + `(allow file-write* ${sub(writable)} (subpath "/private/tmp") (subpath "/private/var/folders"))`
+    + `(allow file-write* ${sub(writable)}${shared})`
     + `(deny file-read-data ${sub(["STATE", ...PRIVATE_HOME_PATHS.map((_, i) => `PRIV${i}`)])})(allow file-read-data ${sub(["WT", "WH", "JOB"])})`;
   return [...params.flatMap(([k, v]) => ["-D", `${k}=${v}`]), "-p", profile];
 }
@@ -233,9 +249,10 @@ export function createZcodeAdapter(cfg: Config): Adapter {
       const personal = join(dirname(files.schemaPath), "zcode-provider.json");
       writeJsonAtomic(personal, providerFile({ providerId: signedInProvider(), modelId: model, options: { reasoningLevel: effort } }));
       // No working directory option: the runner starts the worker in the worktree's root, which it has verified.
-      const args = [...sandbox(job.worktree, dirname(personal), project.addDirs), ...zcodeStart(job.bin), ...(resume === null ? [] : ["--resume", resume]),
+      const own = project.sharedTemp === true ? null : jobTmpDir(job.id);
+      const args = [...sandbox(job.worktree, dirname(personal), own, project.addDirs), ...zcodeStart(job.bin), ...(resume === null ? [] : ["--resume", resume]),
         "-p", prompt, "--output-format", "stream-json", "--mode", "yolo", "--disallowed-tools", DISALLOWED_TOOLS];
-      return { command: "/usr/bin/sandbox-exec", args, env: { ...zcodeEnv(job.bin, job.env), ZCODE_PERSONAL_PROVIDER_CONFIG_FILE: personal } };
+      return { command: "/usr/bin/sandbox-exec", args, env: { ...zcodeEnv(job.bin, job.env), ...(own === null ? {} : ownTempEnv(own)), ZCODE_PERSONAL_PROVIDER_CONFIG_FILE: personal } };
     },
 
     classify(raw: RawRun): JobResult {

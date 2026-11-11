@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { TestContext } from "node:test";
 import { test } from "node:test";
@@ -11,7 +12,7 @@ import { createZcodeAdapter, lastJsonObject, REPORT_FORMAT, TESTED_ZCODE_VERSION
 import { REPORT_SCHEMA } from "../src/brief.ts";
 import { DEFAULT_CONFIG, resolveBin } from "../src/config.ts";
 import type { Candidate, JobRecord, RawRun } from "../src/contracts.ts";
-import { jobDir, processStart, projectIdFor, scratchDir } from "../src/home.ts";
+import { jobDir, jobTmpDir, processStart, projectIdFor, scratchDir } from "../src/home.ts";
 import { loadState, loadToolState } from "../src/ledger.ts";
 import { emptyProjectConfig, saveProjectConfig } from "../src/provision.ts";
 import { reviewPack } from "../src/review.ts";
@@ -200,10 +201,19 @@ test("refine fails a resume that opened another session as an account mismatch, 
   assert.equal(resumed(null).status, "done", "a run that names no session proves nothing");
 });
 
-function prepared(over: Partial<JobRecord> = {}, project = { network: true, addDirs: [] as string[] }) {
-  const home = tempHome();
+// inJobDir: the job's files are in the job's own directory, where the profile can read the temporary directory that lies in it.
+// linked: the state home is reached through a link, as a MANDOR_HOME spelled with /tmp or /var is.
+function prepared(over: Partial<JobRecord> = {}, project: { network: boolean; addDirs: string[]; sharedTemp?: boolean } = { network: true, addDirs: [] }, inJobDir = false, linked = false) {
+  let home = tempHome();
+  if (linked) {
+    const link = join(temp("mandor-zlink-"), "home");
+    symlinkSync(home, link);
+    process.env.MANDOR_HOME = link;
+    home = link;
+  }
   zcodeSignIn();
-  const dir = temp("mandor-zjob-");
+  const dir = inJobDir ? join(home, "jobs", job(over).id) : temp("mandor-zjob-");
+  mkdirSync(dir, { recursive: true });
   const promptPath = join(dir, "prompt.md");
   writeFileSync(promptPath, "Do the task.\nSecond line with a \"quote\".\n");
   const worktree = temp("mandor-zwt-");
@@ -213,7 +223,7 @@ function prepared(over: Partial<JobRecord> = {}, project = { network: true, addD
 }
 
 test("prepare runs the CLI inside sandbox-exec, with the worker's own HOME, the prompt as its argument and the job's model in a file of its own", () => {
-  const { home, dir, run, worktree } = prepared();
+  const { home, dir, run, worktree, j } = prepared();
   const workerHome = join(home, "zcode", "home");
   assert.equal(zcodeHome(), workerHome);
   assert.equal(run.command, "/usr/bin/sandbox-exec");
@@ -235,6 +245,10 @@ test("prepare runs the CLI inside sandbox-exec, with the worker's own HOME, the 
   const profile = sandbox[sandbox.indexOf("-p") + 1];
   assert.match(profile, /^\(version 1\)\(allow default\)\(deny file-write\*\)/);
   assert.ok(!profile.includes(worktree) && !profile.includes(home), "paths are parameters");
+  // The shared temporary directories are closed: the job's own is the one a command may write besides the worktree.
+  assert.ok(sandbox.includes(`JT=${jobTmpDir(j.id)}`), sandbox.join(" "));
+  assert.doesNotMatch(profile, /\/private\/tmp|\/private\/var\/folders/);
+  assert.deepEqual([run.env.TMPDIR, run.env.TMPPREFIX, run.env.CLANG_MODULE_CACHE_PATH, run.env.JAVA_TOOL_OPTIONS], [jobTmpDir(j.id), `${jobTmpDir(j.id)}/zsh`, `${jobTmpDir(j.id)}/clang-modules`, `-Djava.io.tmpdir=${jobTmpDir(j.id)}`]);
   // Contents only: a path's own metadata stays readable, as opening a database resolves every directory above it.
   assert.match(profile, /\(deny file-read-data /);
   assert.doesNotMatch(profile, /deny file-read\*/);
@@ -247,6 +261,56 @@ test("prepare runs the CLI inside sandbox-exec, with the worker's own HOME, the 
   assert.equal(dirname(personal), dir);
   assert.deepEqual(JSON.parse(readFileSync(personal, "utf8")).config.defaultModelSelection, { providerId: PLAN, modelId: "GLM-5.3-Flash", options: { reasoningLevel: "high" } });
   assert.equal(run.env.ELECTRON_RUN_AS_NODE, undefined, "only an app bundle is started as Node");
+});
+
+// What a command writes under the profile of a prepared run, each place by its own file, which is then removed.
+function writes(run: { args: string[]; env: Record<string, string> }, places: Record<string, string>): string[] {
+  const at = run.args.indexOf(FAKE);
+  const mark = `mandor-zprobe-${process.pid}`;
+  const probe = Object.entries(places).map(([name, dir]) => `echo x > "${dir}/${mark}" 2>/dev/null && echo ${name}-ok || echo ${name}-denied`).join("; ");
+  const r = spawnSync("/usr/bin/sandbox-exec", [...run.args.slice(0, at), "/bin/sh", "-c", probe], { env: run.env, encoding: "utf8" });
+  for (const dir of Object.values(places)) rmSync(join(dir, mark), { force: true });
+  return r.stdout.trim().split("\n");
+}
+
+const SHARED = () => ({ tmp: "/tmp", shared: realpathSync(tmpdir()), cache: realpathSync(spawnSync("/usr/bin/getconf", ["DARWIN_USER_CACHE_DIR"], { encoding: "utf8" }).stdout.trim()) });
+
+test("under the profile a command writes the worktree and the job's own temporary directory, and none of /tmp, the shared temporary directory and the per-user cache directory", () => {
+  const { run, worktree, j } = prepared();
+  const own = jobTmpDir(j.id);
+  mkdirSync(own, { recursive: true });
+  assert.deepEqual(writes(run, { wt: worktree, own, ...SHARED() }), ["wt-ok", "own-ok", "tmp-denied", "shared-denied", "cache-denied"]);
+});
+
+test("the profile names the paths under the state home as they really are, so a home reached through a link keeps the worker's home and temporary directory writable and the rest unreadable", () => {
+  const { run, worktree, j, home } = prepared({}, { network: true, addDirs: [] }, true, true);
+  const own = jobTmpDir(j.id);
+  mkdirSync(own, { recursive: true });
+  assert.deepEqual(writes(run, { wt: worktree, own, home: zcodeHome() }), ["wt-ok", "own-ok", "home-ok"]);
+  const secret = join(realpathSync(home), "secret.txt");
+  writeFileSync(secret, "state\n");
+  const at = run.args.indexOf(FAKE);
+  const read = spawnSync("/usr/bin/sandbox-exec", [...run.args.slice(0, at), "/bin/cat", join(home, "secret.txt")], { env: run.env, encoding: "utf8" });
+  assert.deepEqual([read.status === 0, read.stdout], [false, ""], "the state home is closed to reads, whichever way it is spelled");
+});
+
+test("a here-document of zsh works under the profile with the environment prepare gives, and fails without TMPPREFIX", () => {
+  const { run, worktree, j } = prepared({}, { network: true, addDirs: [] }, true);
+  mkdirSync(jobTmpDir(j.id), { recursive: true });
+  const at = run.args.indexOf(FAKE);
+  const heredoc = `cd "${worktree}" && cat > h.txt <<'EOT'\nzsh here-document\nEOT\necho rc=$?`;
+  const under = (env: Record<string, string>) => spawnSync("/usr/bin/sandbox-exec", [...run.args.slice(0, at), "/bin/zsh", "-c", heredoc], { env, encoding: "utf8" });
+  const { TMPPREFIX: _, ...without } = run.env;
+  assert.match(under(run.env).stdout, /rc=0/);
+  assert.match(under(without).stderr, /can't create temp file for here document/);
+});
+
+test("a project that keeps the shared temporary directories open gets the profile and the environment it had", () => {
+  const { run, worktree, home } = prepared({}, { network: true, addDirs: [], sharedTemp: true });
+  assert.deepEqual(writes(run, { wt: worktree, ...SHARED() }), ["wt-ok", "tmp-ok", "shared-ok", "cache-ok"]);
+  assert.equal(run.env.TMPPREFIX, undefined);
+  assert.ok(!run.args.some((a) => a.startsWith("JT=")), "no directory of its own");
+  assert.ok(home.length > 0);
 });
 
 test("prepare names the root it is handed and never follows a link at it: the runner has verified the root", () => {

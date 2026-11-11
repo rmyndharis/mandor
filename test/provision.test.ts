@@ -416,6 +416,15 @@ test("project show prints the stored configuration and changes nothing, so the o
   assert.equal(outside.status, 1);
 });
 
+test("project setup --shared-temp keeps the shared temporary directories open to Codex and ZCode workers, and a plain setup closes them again", () => {
+  const repo = tempRepo();
+  assert.equal(loadProjectConfig(projectIdFor(repo)).sharedTemp, false, "closed unless a project says otherwise");
+  assert.equal(cli(repo, "--shared-temp").status, 0);
+  assert.equal(loadProjectConfig(projectIdFor(repo)).sharedTemp, true);
+  assert.equal(cli(repo, "--shared", "x.txt").status, 0);
+  assert.equal(loadProjectConfig(projectIdFor(repo)).sharedTemp, false);
+});
+
 test("project setup exits 2 for an option it does not know or a value that is missing, and 1 for a refusal", () => {
   const repo = tempRepo();
   for (const [args, said] of [[["--bogus", "x"], "unknown project setup flag: --bogus"], [["--clone"], "--clone needs a value"], [["--setup", "make", "--deny"], "--deny needs a value"]] as const) {
@@ -436,7 +445,7 @@ test("project setup writes project.json", () => {
   assert.equal(r.status, 0, r.stderr);
   const want: ProjectConfig = {
     clone: ["build", "android/local.properties"], setup: "make stubs", shared: ["CHANGELOG.md", "docs/"], deny: ["**/*.p12"],
-    generators: { build: ["scripts/build.sh", "scripts/*.py"] }, workerNetwork: true, workerAddDirs: [], nameIsWord: true,
+    generators: { build: ["scripts/build.sh", "scripts/*.py"] }, workerNetwork: true, workerAddDirs: [], sharedTemp: false, nameIsWord: true,
   };
   assert.deepEqual(JSON.parse(r.stdout), want);
   assert.deepEqual(loadProjectConfig(projectIdFor(repo)), want);

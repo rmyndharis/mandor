@@ -30,6 +30,10 @@ function projectSetup(id: string, args: string[]): ProjectConfig {
       c.nameIsWord = true;
       continue;
     }
+    if (flag === "--shared-temp") {
+      c.sharedTemp = true;
+      continue;
+    }
     const value = args[++i];
     if (value === undefined) throw new UsageError(`${flag} needs a value`);
     if (flag === "--clone") c.clone.push(value);
@@ -158,7 +162,7 @@ You run:
                                 Coding Plan API key piped in
   project setup [--clone <path>]... [--setup <command>] [--shared <glob>]... [--deny <glob>]...
                 [--generator <clone path>=<glob>]... [--worker-network] [--worker-add-dir <dir>]...
-                [--name-is-a-word]
+                [--name-is-a-word] [--shared-temp]
   project show                  print the stored project configuration, which a new project setup replaces
   status [--json]               goals with their worktrees, tasks, jobs, exhausted tools (with the reason), unrecorded goal commits
   show <slug>                   a task's outcome, its jobs with the usage of each run, and its round files

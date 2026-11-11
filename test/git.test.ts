@@ -8,7 +8,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import {
   addWorktree, apply3way, applyCheck, applyToIndex, assertCommitIdentity, assertHeadIdentity, branchExists, changedPaths, commitStaged, configuredDrivers, configuredPromisors, deleteBranchAt,
   diffSinceBaseBytes, diffStat, dropLastCommit, git, indexLockPath, indexTree, isClean, isPlaceholderEmail, migrateObjects, projectRoot,
-  removeOwnedWorktree, resetHardHead, resetTo, revParse, stagedDiff, worktreeAddRunning, worktreeRoot,
+  removeOwnedWorktree, removeTree, resetHardHead, resetTo, revParse, stagedDiff, worktreeAddRunning, worktreeRoot,
 } from "../src/git.ts";
 import { diffSinceBase, temp as tempDir, tempHome, tempRepo } from "./helpers.ts";
 
@@ -583,6 +583,34 @@ test("dropLastCommit refuses when HEAD moved, when dirty, and when pushed", () =
   assert.equal(revParse(wt, "HEAD"), first);
   assert.equal(existsSync(join(wt, "HEAD~1")), false);
   assert.equal(isClean(repo, wt), true);
+});
+
+test("removeTree removes a tree a worker made read-only and immutable, and a link at its path without following it", () => {
+  const dir = owned();
+  const tree = join(dir, "tree");
+  mkdirSync(join(tree, "ro", "sub"), { recursive: true });
+  writeFileSync(join(tree, "ro", "sub", "f"), "x\n");
+  writeFileSync(join(tree, "ro", "sub", "g"), "y\n");
+  spawnSync("/usr/bin/chflags", ["uchg", join(tree, "ro", "sub", "f")]);
+  spawnSync("/usr/bin/chflags", ["uappnd", join(tree, "ro", "sub", "g")]);
+  chmodSync(join(tree, "ro", "sub"), 0o500);
+  chmodSync(join(tree, "ro"), 0o500);
+  removeTree(tree);
+  assert.equal(existsSync(tree), false);
+  // A link that a worker put at the path is removed, and what it leads to stays.
+  const precious = join(dir, "precious");
+  mkdirSync(precious);
+  writeFileSync(join(precious, "keep"), "keep\n");
+  symlinkSync(precious, join(dir, "link"));
+  removeTree(join(dir, "link"));
+  assert.equal(lstatSync(join(dir, "link"), { throwIfNoEntry: false }), undefined);
+  assert.equal(read(join(precious, "keep")), "keep\n");
+  // A home reached through a link is removed too, as the sandbox matches the real path.
+  const home = join(dir, "home");
+  mkdirSync(join(home, "inner"), { recursive: true });
+  symlinkSync(home, join(dir, "viahome"));
+  removeTree(join(dir, "viahome", "inner"));
+  assert.equal(existsSync(join(home, "inner")), false);
 });
 
 test("removeOwnedWorktree refuses a path outside the root and a non-wip branch", () => {
@@ -1658,15 +1686,17 @@ test("a tree that cannot be removed leaves the worktree registered, and says so"
   const wt = join(root, "stuck");
   plainAdd(repo, wt, "wip/stuck", base);
   mkdirSync(join(wt, "sealed"));
-  // rm names the file it could not remove, and the worker chose that name: a C1 introducer here.
-  writeFileSync(join(wt, "sealed", "a\u009b2Jb.txt"), "a\n");
-  chmodSync(join(wt, "sealed"), 0o555);
+  // rm names the file it could not remove, and the worker chose that name: a C1 introducer here. An ACL that denies the
+  // removal is what removeTree does not clear, as a mode or a flag it does.
+  const stuck = join(wt, "sealed", "a\u009b2Jb.txt");
+  writeFileSync(stuck, "a\n");
+  spawnSync("/bin/chmod", ["+a", "everyone deny delete", stuck]);
   try {
     assert.throws(() => removeOwnedWorktree(repo, wt, "wip/stuck", root), (e: Error) => /could not remove .*stuck: .*a\?2Jb\.txt/.test(e.message) && !/[\x00-\x1f\x7f-\x9f]/.test(e.message));
     assert.ok(existsSync(join(repo, ".git", "worktrees", "stuck")), "the admin dir stays with the tree");
     assert.ok(branches(repo).includes("wip/stuck"), "and so does the branch");
   } finally {
-    chmodSync(join(wt, "sealed"), 0o755);
+    spawnSync("/bin/chmod", ["-N", stuck]);
   }
   removeOwnedWorktree(repo, wt, "wip/stuck", root);
   assert.deepEqual([existsSync(wt), existsSync(join(repo, ".git", "worktrees", "stuck")), branches(repo).includes("wip/stuck")], [false, false, false]);

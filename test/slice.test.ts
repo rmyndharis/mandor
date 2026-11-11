@@ -1229,12 +1229,12 @@ test("a cleanup that fails after confirm is reported with exit 0, and the task s
   goalStart(s.repo, GOAL, null);
   const { worktree } = reviewable(s, "hello", { "hello.txt": "hello\n" });
   accept(s, "hello");
-  // rm cannot empty a directory that it may not write to, so the removal of the worktree fails.
+  // rm cannot remove a file whose ACL denies it, which the removal of a tree does not clear, so the worktree stays.
   const locked = join(worktree!, "locked");
   mkdirSync(locked);
   writeFileSync(join(locked, "kept"), "kept\n");
-  chmodSync(locked, 0o555);
-  t.after(() => chmodSync(locked, 0o755));
+  spawnSync("/bin/chmod", ["+a", "everyone deny delete", join(locked, "kept")]);
+  t.after(() => spawnSync("/bin/chmod", ["-N", join(locked, "kept")]));
   const before = ledgerSize(s.id);
   const r = cli(s, "confirm", "hello", "--evidence-file", s.file("c.md", "ok\n"));
   assert.equal(r.status, 0, r.stderr);

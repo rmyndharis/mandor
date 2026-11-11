@@ -1,12 +1,12 @@
 import type { ChildProcess, StdioOptions } from "node:child_process";
 import { spawn } from "node:child_process";
-import { appendFileSync, chmodSync, closeSync, existsSync, openSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { appendFileSync, chmodSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { REPORT_SCHEMA, saveRoundFile } from "./brief.ts";
 import { loadConfig } from "./config.ts";
 import type { Adapter, JobRecord, JobResult, JobStatus, ModelInfo, PreparedRun, ProjectState, StallReason, TaskRecord } from "./contracts.ts";
-import { confineProblem, worktreeRoot } from "./git.ts";
-import { jobDir, mandorHome, processAlive, processStart, projectDir } from "./home.ts";
+import { confineProblem, removeTree, worktreeRoot } from "./git.ts";
+import { jobDir, jobTmpDir, mandorHome, processAlive, processStart, projectDir } from "./home.ts";
 import { appendEvent, appendToolEvent, listProjects, loadState, loadToolState, now, readEvents } from "./ledger.ts";
 import { loadProjectConfig } from "./provision.ts";
 import { catalogGap, countActiveJobs, selectCandidate } from "./routing.ts";
@@ -116,7 +116,11 @@ export function pruneJobs(): void {
   try {
     for (const id of listJobIds()) {
       try {
-        if (prunable(id)) rmSync(jobDir(id), { recursive: true, force: true });
+        if (prunable(id)) {
+          // What a worker wrote there goes by a removal that a link swapped under it cannot steer out of the directory.
+          removeTree(jobTmpDir(id));
+          rmSync(jobDir(id), { recursive: true, force: true });
+        }
       } catch (e) {
         logRunner(`job ${id} not pruned: ${(e as Error).message}`);
       }
@@ -275,18 +279,41 @@ async function work(job: JobRecord, adapter: Adapter): Promise<JobResult> {
   // Verified before anything is built from it: a write boundary made from the path would name what a link at the root
   // leads to, and the start's own check, a moment later, could pass again.
   const root = worktreeRoot(job.worktree);
-  const run = adapter.prepare({ ...job, worktree: root }, files, { network: project.workerNetwork, addDirs: project.workerAddDirs });
-  // The prompt file is the worker's stdin: opened here, so the worker needs no path to it.
-  const input = run.stdinFile === undefined ? "ignore" : openSync(run.stdinFile, "r");
-  const out = openSync(join(dir, "raw.log"), "w", 0o600);
-  const err = openSync(join(dir, "stderr.log"), "w", 0o600);
+  // The worker's own temporary directory, which the adapters of Codex and ZCode open to it in place of the shared ones.
+  // One answer for the runner and the adapters: only a project that says so keeps the shared ones.
+  const sharedTemp = project.sharedTemp === true;
+  const ownTmp = !sharedTemp && job.candidate.tool !== "agy" ? jobTmpDir(job.id) : null;
+  const run = adapter.prepare({ ...job, worktree: root }, files, { network: project.workerNetwork, addDirs: project.workerAddDirs, sharedTemp });
+  // Of no use after the run: a resume gets a new one, and what a worker left in it would stay for the days that the job
+  // directory does. Made after prepare, which can refuse, and removed on every way out of here.
+  const dropTmp = (): void => {
+    if (ownTmp === null) return;
+    try {
+      removeTree(ownTmp);
+    } catch (e) {
+      logRunner(`job ${job.id}: could not remove its temporary directory: ${(e as Error).message}`);
+    }
+  };
+  if (ownTmp !== null) {
+    mkdirSync(ownTmp, { recursive: true, mode: 0o700 });
+    chmodSync(ownTmp, 0o700);
+  }
   let child: ChildProcess;
   try {
-    child = spawnInRoot(root, run, [input, out, err]);
-  } finally {
-    if (input !== "ignore") closeSync(input);
-    closeSync(out);
-    closeSync(err);
+    // The prompt file is the worker's stdin: opened here, so the worker needs no path to it.
+    const input = run.stdinFile === undefined ? "ignore" : openSync(run.stdinFile, "r");
+    const out = openSync(join(dir, "raw.log"), "w", 0o600);
+    const err = openSync(join(dir, "stderr.log"), "w", 0o600);
+    try {
+      child = spawnInRoot(root, run, [input, out, err]);
+    } finally {
+      if (input !== "ignore") closeSync(input);
+      closeSync(out);
+      closeSync(err);
+    }
+  } catch (e) {
+    dropTmp();
+    throw e;
   }
   const ended = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
     child.once("error", reject);
@@ -294,6 +321,7 @@ async function work(job: JobRecord, adapter: Adapter): Promise<JobResult> {
   });
   const pid = child.pid;
   if (pid === undefined) {
+    dropTmp();
     await ended; // a spawn error rejects
     throw new Error("worker did not start");
   }
@@ -344,6 +372,7 @@ async function work(job: JobRecord, adapter: Adapter): Promise<JobResult> {
     // SIGINT, and not the worker itself when a throw cut the run short.
     signalGroup(pid, "SIGKILL");
     if (exit === undefined) await ended.catch(() => {});
+    dropTmp();
   }
   let lastMessage: string | null = null;
   if (existsSync(files.lastMessagePath)) {
@@ -453,6 +482,12 @@ export function reconcileLocked(projectId: string, models: ModelInfo[]): string[
     else if (existsSync(resultFile(id))) completeJobLocked(id, readJson<JobResult>(resultFile(id)), models);
     else {
       stopOrphanedWorker(job);
+      // The runner that would have removed the worker's temporary directory is gone, and the worker no longer writes in it.
+      try {
+        removeTree(jobTmpDir(id));
+      } catch (e) {
+        logRunner(`job ${id}: could not remove its temporary directory: ${(e as Error).message}`);
+      }
       completeJobLocked(id, failedResult("runner died"), models, { stallReason: "runner-died" });
     }
     completed.push(id);

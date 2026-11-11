@@ -20,7 +20,7 @@ Fixes go into the latest release only.
 
 ## What counts
 
-- A worker whose commands or edits write outside its task worktree, the temporary directories, the cache directories the project opens and, for ZCode, its own home and the per-user cache directory, or whose commands reach the network in a project that has not allowed it. An Antigravity job is refused in such a project; where one runs, its sandbox's proxy decides what its commands reach, as the README says.
+- A worker whose commands or edits write outside its task worktree, the cache directories the project opens, its own home (ZCode) and its own temporary directory, which stands in place of the shared ones for Codex and ZCode unless the project keeps them open with `--shared-temp`, or whose commands reach the network in a project that has not allowed it. An Antigravity job is refused in such a project; where one runs, its sandbox's proxy decides what its commands reach, as the README says.
 - A credential, token or agent socket that reaches a worker's environment.
 - A change that is committed without the review that accept requires, or a tree that differs from the one the review showed.
 - A guard that can be bypassed: a denied path, a symlink to one, or a hostile git configuration that is not refused.
@@ -34,7 +34,7 @@ The README states these limits in its Safety model and under [Before you start](
 - A worker can read any file your account can read, and what its model reads reaches the worker's vendor. With `--worker-network` its commands can also send one out, for Antigravity at whatever its sandbox's proxy lets through.
 - Workers run on your own accounts at their tools, and a Codex worker inherits what Codex loads for you.
 - Your code reaches the vendor of every tool you have enabled, as tools are enabled per machine, not per project.
-- To check a result, the Claude Code session that leads the work runs the task's tests and builds on code a worker wrote, with your privileges and no sandbox. The temporary and cache directories a project opens are shared with those commands and with your own tools.
+- To check a result, the Claude Code session that leads the work runs the task's tests and builds on code a worker wrote, with your privileges and no sandbox. The cache directories a project opens, and the temporary directories an Antigravity worker may write, are shared with those commands and with your own tools, and so are the shared temporary directories in a project set up with `--shared-temp`.
 - The repository's own git hooks run with your privileges and no sandbox, and at accept they run over a change a worker wrote.
 - The guard that refuses credit to a tool has no override, and it refuses only the usual forms: a plain sentence that says an AI tool was used can pass it.
 - Paid usage is not always stopped: nothing switches it off for Codex or ZCode, and mandor looks for it only for Codex, after a finished run.
