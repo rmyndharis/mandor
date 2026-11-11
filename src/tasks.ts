@@ -556,6 +556,30 @@ export function acceptInDoubt(id: string, goal: GoalRecord): string | null {
   }
 }
 
+// An accept that was killed leaves its marker, and the next accept settles it. A wait and a status settle it too, so that a
+// task whose accept landed shows as integrating, and one whose accept did not as it was, with no marker left to explain.
+// What cannot be settled from here (a git index lock, a state that needs the user to decide) stays for the accept to
+// report, which says what to do; each complaint is written once by a process, as a wait comes back every few seconds.
+const settledAlready = new Set<string>();
+export function settleAcceptsLocked(projectId: string): void {
+  let root: string;
+  try {
+    root = recordedRoot(projectId);
+  } catch {
+    return; // a project the home keeps no root for has nothing to settle with
+  }
+  for (const goal of Object.values(loadState(projectId).goals)) {
+    if (acceptInDoubt(projectId, goal) === null) continue;
+    try {
+      recoverAcceptLocked(root, projectId, goal, false);
+    } catch (e) {
+      const complaint = `settle an earlier accept of ${goal.branch}: ${(e as Error).message}`;
+      if (!settledAlready.has(`${projectId} ${complaint}`)) logRunner(complaint);
+      settledAlready.add(`${projectId} ${complaint}`);
+    }
+  }
+}
+
 // The commit a killed accept may have made is adopted with the evidence of the round that accept ran in. A fix or a takeover
 // opens another round first, so the adoption would carry none, and a worker would go on changing a task that has landed.
 function refuseUnfinishedAccept(id: string, task: TaskRecord): void {

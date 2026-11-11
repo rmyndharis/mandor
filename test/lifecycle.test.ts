@@ -2399,15 +2399,63 @@ test("accept with a corrupt job.json of another task still returns its commit an
   rmSync(bad, { recursive: true, force: true });
 });
 
-test("a killed accept shows in status, and fix and takeover refuse its task until an accept settles it", async (t) => {
+test("status settles an accept that was killed: undone when nothing landed, adopted when its commit landed", async (t) => {
   const s = setup(t);
-  tasks.goalStart(s.repo, GOAL, null);
+  must(s.repo, "config", "user.email", "dev@host.test"); // a real identity: the commit of a killed accept is judged by the repository's
+  const { goal } = tasks.goalStart(s.repo, GOAL, null);
+  writeScenarios([{ ...DONE, writeFile: [{ path: "hello.txt", content: "hello\n" }] }]);
+  send(s, "hello");
+  await needsReview(s, "hello");
+  const tip = must(s.repo, "rev-parse", GOAL);
+  const marker = join(projectDir(s.id), "goals", "feat__lifecycle", "accept-intent.json");
+  writeJsonAtomic(marker, { slug: "hello", tip });
+  assert.doesNotMatch(plainStatus(s), /did not finish/);
+  assert.equal(existsSync(marker), false, "nothing landed, so the marker is undone");
+  assert.equal(task(s, "hello").status, "needs-review");
+  // Its commit landed.
+  const commit = moveGoal(goal, (dir) => writeFileSync(join(dir, "hello.txt"), "hello\n"), false);
+  writeJsonAtomic(marker, { slug: "hello", tip, tree: must(s.repo, "rev-parse", `${commit}^{tree}`) });
+  assert.doesNotMatch(plainStatus(s), /did not finish|did not record/);
+  assert.equal(existsSync(marker), false);
+  assert.deepEqual([task(s, "hello").status, task(s, "hello").integratedCommit], ["integrating", commit]);
+});
+
+test("an accept that status cannot settle stays for the accept to report, and is logged once a process", async (t) => {
+  const s = setup(t);
+  must(s.repo, "config", "user.email", "dev@host.test");
+  const { goal } = tasks.goalStart(s.repo, GOAL, null);
+  writeScenarios([{ ...DONE, writeFile: [{ path: "hello.txt", content: "hello\n" }] }]);
+  send(s, "hello");
+  await needsReview(s, "hello");
+  const tip = must(s.repo, "rev-parse", GOAL);
+  const marker = join(projectDir(s.id), "goals", "feat__lifecycle", "accept-intent.json");
+  writeJsonAtomic(marker, { slug: "hello", tip });
+  const lock = join(must(goal.integrationWorktree, "rev-parse", "--absolute-git-dir"), "index.lock");
+  writeFileSync(lock, "");
+  assert.match(plainStatus(s), /goal feat\/lifecycle: an accept of hello did not finish; run its accept again, which settles it/);
+  assert.equal(existsSync(marker), true);
+  withProjectLock(s.id, () => {
+    tasks.settleAcceptsLocked(s.id);
+    tasks.settleAcceptsLocked(s.id);
+  });
+  assert.equal(runnerLog().split("\n").filter((l) => l.includes("an earlier accept is still finishing")).length >= 1, true);
+  const before = runnerLog().length;
+  withProjectLock(s.id, () => tasks.settleAcceptsLocked(s.id));
+  assert.equal(runnerLog().length, before, "the same complaint is not written again by the same process");
+});
+
+test("a killed accept that status cannot settle shows in it, and fix and takeover refuse its task until an accept settles it", async (t) => {
+  const s = setup(t);
+  const { goal } = tasks.goalStart(s.repo, GOAL, null);
   writeScenarios([{ ...DONE, writeFile: [{ path: "hello.txt", content: "hello\n" }] }]);
   send(s, "hello");
   await needsReview(s, "hello");
   const statusJson = () => JSON.parse(spawnSync(LAUNCHER, ["status", "--json"], { cwd: s.repo, encoding: "utf8" }).stdout);
   assert.deepEqual(statusJson().unfinished, {});
   writeJsonAtomic(join(projectDir(s.id), "goals", "feat__lifecycle", "accept-intent.json"), { slug: "hello", tip: must(s.repo, "rev-parse", GOAL) });
+  // A lock that the killed command left in the integration worktree: status cannot settle the marker, so it names it.
+  const lock = join(must(goal.integrationWorktree, "rev-parse", "--absolute-git-dir"), "index.lock");
+  writeFileSync(lock, "");
   assert.match(plainStatus(s), /goal feat\/lifecycle: an accept of hello did not finish; run its accept again, which settles it/);
   assert.deepEqual(statusJson().unfinished, { [GOAL]: "hello" });
   const refused = /an earlier accept of task hello did not finish: run its accept again, which settles it/;
@@ -2416,7 +2464,8 @@ test("a killed accept shows in status, and fix and takeover refuse its task unti
   assert.throws(() => tasks.cancel(s.repo, "hello"), refused, "a cancel would leave the accept's commit with no task to adopt it");
   assert.equal(task(s, "hello").status, "needs-review");
   assert.equal(task(s, "hello").seq, 1, "no round was opened");
-  // Nothing landed, so the accept undoes the marker and goes on.
+  // Nothing landed, so the accept undoes the marker and goes on, once the lock is gone.
+  rmSync(lock);
   accept(s, "hello");
   assert.equal(task(s, "hello").status, "integrating");
   assert.deepEqual(statusJson().unfinished, {});

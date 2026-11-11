@@ -11,7 +11,7 @@ import { appendEvent, appendToolEvent, listProjects, loadState, loadToolState, n
 import { loadProjectConfig } from "./provision.ts";
 import { catalogGap, countActiveJobs, selectCandidate } from "./routing.ts";
 import { clampDetail, ensureDir, readJson, withProjectLock, withSlotsLock, writeFileAtomic, writeJsonAtomic } from "./store.ts";
-import { cancelStands, cancelStandsLocked, COULD_NOT_BUILD, handoffPrompt, pumpLocked, startJobLocked } from "./tasks.ts";
+import { cancelStands, cancelStandsLocked, COULD_NOT_BUILD, handoffPrompt, pumpLocked, settleAcceptsLocked, startJobLocked } from "./tasks.ts";
 
 const jobFile = (jobId: string) => join(jobDir(jobId), "job.json");
 const resultFile = (jobId: string) => join(jobDir(jobId), "result.json");
@@ -438,6 +438,7 @@ export async function runJob(jobId: string): Promise<void> {
 // Finishes what a dead runner or a crashed completion left undone. It reads recorded pids, and signals only the worker
 // of a job whose runner died, and only while its pid and start time still name that worker.
 export function reconcileLocked(projectId: string, models: ModelInfo[]): string[] {
+  settleAcceptsLocked(projectId);
   const completed: string[] = [];
   const state = loadState(projectId);
   const jobs = Object.values(state.jobs);

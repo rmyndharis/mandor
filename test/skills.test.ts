@@ -80,7 +80,7 @@ test("lead skill points at project show for the options a new setup must repeat"
 });
 
 test("lead skill says what to do with an accept that did not finish", () => {
-  assert.ok(read("lead").includes("When `mandor status` says that an accept of a task did not finish, run `verdict accept` for that task again, which settles it"));
+  assert.ok(read("lead").includes("When `mandor status` says that an accept of a task did not finish, which it does only when it could not settle that accept itself, run `verdict accept` for that task again"));
 });
 
 test("lead skill points at tiers for a tier with no candidate that can run", () => {
