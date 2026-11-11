@@ -1,0 +1,11 @@
+version: 2
+updates:
+  # The workflows pin each action to a commit, so something has to move the pins.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: monthly
