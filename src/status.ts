@@ -132,30 +132,39 @@ function statusReport(cwd: string, json: boolean): string {
   const models = loadCatalog();
   const nowMs = Date.now();
   // The cursor is taken before reconcile appends, so a wait from it still reports what reconcile found.
-  const { cursor, state, jobs, unrecorded } = withProjectLock(id, () => {
+  const { cursor, state, jobs, unrecorded, unfinished } = withProjectLock(id, () => {
     const cursor = ledgerSize(id);
     reconcileLocked(id, models);
     const state = loadState(id);
     // Under the lock, with the state it was read from, so an accept cannot land between them. A goal whose branch cannot
     // be read says nothing here, as the commands that need it say why they fail, and one with an accept that was killed
-    // says nothing until the next accept has settled it: the commit it made may not be on record yet.
+    // names that accept until the next one has settled it: the commit it made may not be on record yet.
     const unrecorded: Record<string, string[]> = {};
+    const unfinished: Record<string, string> = {};
     for (const goal of Object.values(state.goals)) {
-      if (acceptInDoubt(id, goal)) continue;
+      const inDoubt = acceptInDoubt(id, goal);
+      if (inDoubt !== null) {
+        unfinished[goal.branch] = inDoubt;
+        continue;
+      }
       try {
         const commits = unrecordedCommits(root, state, goal);
         if (commits.length > 0) unrecorded[goal.branch] = commits;
       } catch {}
     }
-    return { cursor, state, jobs: Object.keys(state.jobs).flatMap((j) => readJob(j) ?? []), unrecorded };
+    return { cursor, state, jobs: Object.keys(state.jobs).flatMap((j) => readJob(j) ?? []), unrecorded, unfinished };
   })!;
   const tools = loadToolState(Math.floor(nowMs / 1000));
   // A job's env is the worker's environment and never reaches output.
   const goals = Object.values(state.goals).map((g) => ({ branch: g.branch, integrationWorktree: g.integrationWorktree, description: g.description, plan: g.plan?.path ?? null }));
-  if (json) return JSON.stringify({ project: id, cursor, goals, tasks: Object.values(state.tasks), jobs: jobs.map(({ env, ...rest }) => rest), tools, unrecorded }, null, 2);
+  if (json) return JSON.stringify({ project: id, cursor, goals, tasks: Object.values(state.tasks), jobs: jobs.map(({ env, ...rest }) => rest), tools, unrecorded, unfinished }, null, 2);
   const notes = Object.entries(unrecorded).map(([branch, commits]) => `${unrecordedNote(branch, commits)}; accept refuses until the user removes them or runs mandor goal adopt ${branch}, which the lead does not run`);
+  // "?" is a marker that cannot be read, so no accept can settle it: only the user can.
+  const doubts = Object.entries(unfinished).map(([branch, slug]) => slug === "?"
+    ? `goal ${branch}: an accept did not finish and its marker cannot be read: tell the user`
+    : `goal ${branch}: an accept of ${slug} did not finish; run its accept again, which settles it`);
   const where = goals.map((g) => `goal ${g.branch}: ${g.integrationWorktree}`);
-  return `${[statusTable(state, jobs, tools, nowMs), ...where, ...notes].join("\n")}\ncursor: ${cursor}`;
+  return `${[statusTable(state, jobs, tools, nowMs), ...where, ...doubts, ...notes].join("\n")}\ncursor: ${cursor}`;
 }
 
 // argv is status [--json], show <slug> or logs <slug>. Prints, and returns the exit code.

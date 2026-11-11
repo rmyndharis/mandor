@@ -79,6 +79,10 @@ test("lead skill points at project show for the options a new setup must repeat"
   assert.ok(read("lead").includes("repeating every option that `mandor project show` prints"));
 });
 
+test("lead skill says what to do with an accept that did not finish", () => {
+  assert.ok(read("lead").includes("When `mandor status` says that an accept of a task did not finish, run `verdict accept` for that task again, which settles it"));
+});
+
 test("status skill runs mandor status", () => {
   assert.ok(read("status").includes("mandor status"));
 });

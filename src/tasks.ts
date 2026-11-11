@@ -544,8 +544,24 @@ function acceptedEvents(slug: string, seq: number, file: FileRef | null, commit:
 
 const intentFile = (id: string, goal: string) => join(projectDir(id), "goals", pathSlug(goal), "accept-intent.json");
 
-// A killed accept leaves its marker until the next accept settles it: the commit it made may not be on record yet.
-export const acceptInDoubt = (id: string, goal: GoalRecord): boolean => existsSync(intentFile(id, goal.branch));
+// A killed accept leaves its marker until the next accept settles it: the commit it made may not be on record yet. Gives the
+// task that accept was for, "?" when the marker cannot be read, and null when there is none.
+export function acceptInDoubt(id: string, goal: GoalRecord): string | null {
+  const file = intentFile(id, goal.branch);
+  if (!existsSync(file)) return null;
+  try {
+    return readJson<{ slug?: string }>(file).slug ?? "?";
+  } catch {
+    return "?";
+  }
+}
+
+// The commit a killed accept may have made is adopted with the evidence of the round that accept ran in. A fix or a takeover
+// opens another round first, so the adoption would carry none, and a worker would go on changing a task that has landed.
+function refuseUnfinishedAccept(id: string, task: TaskRecord): void {
+  const goal = loadState(id).goals[task.goalBranch];
+  if (goal !== undefined && acceptInDoubt(id, goal) === task.id) throw new Error(`an earlier accept of task ${task.id} did not finish: run its accept again, which settles it`);
+}
 
 // A killed accept leaves its marker. Under the project lock nothing else moves the goal, so what the marker and HEAD
 // say decides: nothing landed and it is undone, or one commit landed from the recorded tip and tree and it stands, or
@@ -925,6 +941,7 @@ export function verdictFix(cwd: string, slug: string, notesFile: string): { curs
     const task = taskOf(id, slug);
     recoverRebaseLocked(root, id, task);
     if (task.status !== "needs-review") throw new Error(`task ${slug} is ${task.status}, not needs-review`);
+    refuseUnfinishedAccept(id, task);
     refuseOpenJob(loadState(id), slug);
     startFixRoundLocked(id, task, renderFixMessage(readNonEmpty(notesFile, "notes")), true, models, "fix");
     return { cursor };
@@ -1101,11 +1118,12 @@ export function cancel(cwd: string, slug: string): { cursor: number; cleanup?: "
     const task = taskOf(id, slug);
     if (task.status === "integrating") throw new Error(`task ${slug} is integrating; drop it first`);
     if (!CANCELLABLE.includes(task.status)) throw new Error(`task ${slug} is ${task.status}`);
+    refuseUnfinishedAccept(id, task); // the commit that accept may have made would have no task left to adopt it
     return task;
   };
   const finished = withProjectLock(id, () => {
     const task = taskOf(id, slug);
-    return task.status === "cancelled" ? finishRemovalLocked(root, id, task) : null;
+    return task.status === "cancelled" ? finishCancelLocked(root, id, task) : null;
   })!;
   if (finished !== null) return finished;
   const cursor = withProjectLock(id, () => {
@@ -1154,6 +1172,7 @@ export function takeover(cwd: string, slug: string, approved: boolean): { cursor
     const task = taskOf(id, slug);
     recoverRebaseLocked(root, id, task);
     if (task.status !== "needs-review" && task.status !== "stalled") throw new Error(`task ${slug} is ${task.status}, not needs-review or stalled`);
+    refuseUnfinishedAccept(id, task);
     refuseOpenJob(loadState(id), slug);
     if ((task.stallReason === "all-exhausted" || task.stallReason === "fix-rounds-exceeded") && !approved) throw new Error(`task ${slug} needs the user's approval for a takeover: ask, then pass --approved`);
     // The lead's work is a round of its own, which the task moves to, so what the lead records (an accept's evidence, the

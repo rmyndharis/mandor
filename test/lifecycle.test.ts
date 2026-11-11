@@ -2290,6 +2290,33 @@ test("accept with a corrupt job.json of another task still returns its commit an
   rmSync(bad, { recursive: true, force: true });
 });
 
+test("a killed accept shows in status, and fix and takeover refuse its task until an accept settles it", async (t) => {
+  const s = setup(t);
+  tasks.goalStart(s.repo, GOAL, null);
+  writeScenarios([{ ...DONE, writeFile: [{ path: "hello.txt", content: "hello\n" }] }]);
+  send(s, "hello");
+  await needsReview(s, "hello");
+  const statusJson = () => JSON.parse(spawnSync(LAUNCHER, ["status", "--json"], { cwd: s.repo, encoding: "utf8" }).stdout);
+  assert.deepEqual(statusJson().unfinished, {});
+  writeJsonAtomic(join(projectDir(s.id), "goals", "feat__lifecycle", "accept-intent.json"), { slug: "hello", tip: must(s.repo, "rev-parse", GOAL) });
+  assert.match(plainStatus(s), /goal feat\/lifecycle: an accept of hello did not finish; run its accept again, which settles it/);
+  assert.deepEqual(statusJson().unfinished, { [GOAL]: "hello" });
+  const refused = /an earlier accept of task hello did not finish: run its accept again, which settles it/;
+  assert.throws(() => tasks.verdictFix(s.repo, "hello", s.file("notes.md", NOTES)), refused);
+  assert.throws(() => tasks.takeover(s.repo, "hello", false), refused);
+  assert.throws(() => tasks.cancel(s.repo, "hello"), refused, "a cancel would leave the accept's commit with no task to adopt it");
+  assert.equal(task(s, "hello").status, "needs-review");
+  assert.equal(task(s, "hello").seq, 1, "no round was opened");
+  // Nothing landed, so the accept undoes the marker and goes on.
+  accept(s, "hello");
+  assert.equal(task(s, "hello").status, "integrating");
+  assert.deepEqual(statusJson().unfinished, {});
+  // A marker that cannot be read is no accept that another accept can settle, and the line says to tell the user.
+  writeFileSync(join(projectDir(s.id), "goals", "feat__lifecycle", "accept-intent.json"), "{");
+  assert.match(plainStatus(s), /goal feat\/lifecycle: an accept did not finish and its marker cannot be read: tell the user/);
+  assert.deepEqual(statusJson().unfinished, { [GOAL]: "?" });
+});
+
 test("an accept that adopts a killed accept's commit keeps its result when the pump fails", async (t) => {
   const s = setup(t);
   const { goal } = tasks.goalStart(s.repo, GOAL, null);
