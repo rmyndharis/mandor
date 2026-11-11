@@ -205,11 +205,15 @@ function settleTaskLocked(job: JobRecord, status: JobStatus, result: JobResult, 
   if (result.report !== null) saveRoundFile(projectId, taskId, job.seq, "report.json", `${JSON.stringify(result.report, null, 2)}\n`);
   // A cancel leaves the task as it is, session id included: the cancel command settles it.
   if (status === "cancelled") return;
-  const sessionId = result.sessionId ?? job.sessionId;
+  // A resume that opened another session did not resume this one, and that one knows nothing of the task: the task keeps the
+  // session it asked for, whatever the run ended with.
+  const sessionId = job.kind === "resume" && job.sessionId !== null ? job.sessionId : result.sessionId ?? job.sessionId;
   if (sessionId !== null) update({ sessionId }, `job ${jobId} session`);
+  // Workspace credits paid for this run, a lost session's included, so the tool stays off until the user says it is ready.
+  if (result.creditFunded && (status === "done" || status === "account-mismatch")) {
+    appendToolEvent({ t: "tool.exhausted", at, key: tool, resetsAt: result.resetsAt, detail: "plan limit reached while workspace credits are available" });
+  }
   if (status === "done") {
-    // Workspace credits paid for this run, so the tool stays off until the user says it is ready.
-    if (result.creditFunded) appendToolEvent({ t: "tool.exhausted", at, key: tool, resetsAt: result.resetsAt, detail: "plan limit reached while workspace credits are available" });
     update({ status: "needs-review" }, `job ${jobId} done`);
   } else if (status === "quota" || status === "model-limit") {
     appendToolEvent({ t: "tool.exhausted", at, key: status === "quota" ? tool : `${tool}:${model}`, resetsAt: result.resetsAt, detail: result.detail });

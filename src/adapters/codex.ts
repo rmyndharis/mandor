@@ -9,7 +9,7 @@ import type { Adapter, JobRecord, JobResult, JobStatus, ModelInfo, RawRun } from
 import { workerEnv } from "../home.ts";
 import { CREDIT_OFF_SWITCH, CREDIT_SIGNAL, NETWORK_KEY, ROLLOUT_GLOB, STATE_DB } from "../spikes.ts";
 import { clampDetail } from "../store.ts";
-import { keepVendorStderr } from "./vendor.ts";
+import { keepVendorStderr, lostSession } from "./vendor.ts";
 
 export const TESTED_CODEX_VERSION = "0.166.0";
 
@@ -195,9 +195,11 @@ export function createCodexAdapter(cfg: Config, run: Run = runVendor): Adapter {
 
     // Best effort: an unreadable database, rollout or line leaves the result as classify left it.
     refine(result: JobResult, job: JobRecord): JobResult {
+      // Last, so a run that lost its session still has its credits judged: they paid for it.
+      const settled = (r: JobResult) => lostSession(r, job) ?? r;
       const codexHome = job.env.CODEX_HOME;
       const thread = result.sessionId ?? job.sessionId ?? "";
-      if (!codexHome || !UUID.test(thread) || job.startedAt === null) return result;
+      if (!codexHome || !UUID.test(thread) || job.startedAt === null) return settled(result);
       let out = result;
       try {
         if (out.status === "failed" && hitUsageLimit(codexHome, thread, job.startedAt)) out = { ...out, status: "quota" };
@@ -215,7 +217,7 @@ export function createCodexAdapter(cfg: Config, run: Run = runVendor): Adapter {
           };
         }
       } catch {}
-      return out;
+      return settled(out);
     },
   };
 }

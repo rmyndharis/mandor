@@ -131,6 +131,20 @@ test("start-ok fixture is done with its thread id", () => {
   assert.equal(r.exitCode, 0);
 });
 
+test("refine fails a resume that opened another session as an account mismatch, and leaves a start and an unnamed session alone", () => {
+  const a = codex();
+  const done = a.classify(raw(fixture("resume-ok.jsonl"), { lastMessage: fixture("schema-ok.last.json") }));
+  assert.equal(done.status, "done");
+  const asked = "00000000-0000-7000-8000-0000000000aa";
+  const resumed = (sessionId: string | null, kind: "start" | "resume" = "resume") => a.refine({ ...done, sessionId }, job({ kind, sessionId: asked }));
+  assert.equal(resumed(asked).status, "done", "the session that was asked for");
+  const lost = resumed("00000000-0000-7000-8000-0000000000bb");
+  assert.deepEqual([lost.status, lost.report, lost.detail], ["account-mismatch", null, "the session was not resumed, so the run started a new one"]);
+  assert.equal(resumed("00000000-0000-7000-8000-0000000000bb", "start").status, "done", "a start has no session to lose");
+  assert.equal(resumed(null).status, "done", "a run that names no session proves nothing");
+  assert.equal(a.refine({ ...done, status: "quota", sessionId: "00000000-0000-7000-8000-0000000000bb" }, job({ kind: "resume", sessionId: asked })).status, "quota", "a failure keeps its own reason");
+});
+
 test("resume-ok and schema-ok fixtures are done with their thread ids", () => {
   for (const [name, thread] of [["resume-ok.jsonl", "00000000-0000-7000-8000-000000000001"], ["schema-ok.jsonl", "00000000-0000-7000-8000-000000000002"]]) {
     const r = codex().classify(raw(fixture(name), { lastMessage: fixture("schema-ok.last.json") }));

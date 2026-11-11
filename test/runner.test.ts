@@ -572,6 +572,36 @@ test("a done run paid by workspace credits exhausts codex until the plan window 
   assert.deepEqual(tools.map((e) => [e.key, e.resetsAt, e.detail]), [["codex", resetsAt, "plan limit reached while workspace credits are available"]]);
 });
 
+const OTHER_THREAD = "00000000-0000-7000-8000-0000000000bb";
+
+// The tool opened a session of its own for a resume, which its worker never briefed: the task keeps the one it asked for,
+// whatever the run ended with, so that a later resume does not go on in a session that knows nothing of the task.
+test("a resume that opened another session leaves the task on the session it asked for, also when the run ends on a limit", async (t) => {
+  setup(t);
+  writeScenarios([{ stdout: "generated:quota", threadId: OTHER_THREAD }]);
+  const job = queueJob({ kind: "resume", sessionId: THREAD });
+  await runJob(job.id);
+  assert.equal(readResult(job.id).sessionId, OTHER_THREAD, "the run did name another session");
+  assert.equal(currentTask().sessionId, THREAD);
+});
+
+test("a resume that lost its session and was paid by workspace credits exhausts codex, as a done run does", async (t) => {
+  setup(t);
+  const resetsAt = Math.floor(Date.now() / 1000) + 3600;
+  const limits = { credits: { has_credits: true }, primary: { used_percent: 100, resets_at: resetsAt }, secondary: { used_percent: 40, resets_at: resetsAt + 86_400 } };
+  const event = { timestamp: new Date(Date.now() + 60_000).toISOString(), type: "event_msg", payload: { type: "token_count", rate_limits: limits } };
+  const sessions = join(process.env.CODEX_HOME!, "sessions", "2026", "11", "08");
+  mkdirSync(sessions, { recursive: true });
+  writeFileSync(join(sessions, `rollout-2026-11-08T10-00-00-${OTHER_THREAD}.jsonl`), `${JSON.stringify(event)}\n`);
+  writeScenarios([{ stdout: "generated:done", threadId: OTHER_THREAD }]);
+  const job = queueJob({ kind: "resume", sessionId: THREAD });
+  await runJob(job.id);
+  assert.equal(readResult(job.id).status, "account-mismatch");
+  assert.equal(readResult(job.id).creditFunded, true);
+  const tools = toolsText().trim().split("\n").map((l) => JSON.parse(l));
+  assert.deepEqual(tools.map((e) => e.key), ["codex"], "the tool stays off until the user says it is ready");
+});
+
 // Worker processes
 
 test("a worker that ignores SIGINT is killed 10 s after the stop", async (t) => {

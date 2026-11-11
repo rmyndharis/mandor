@@ -9,7 +9,7 @@ import { resolveBin } from "../config.ts";
 import type { Adapter, JobResult, JobStatus, ModelInfo, RawRun, WorkerReport } from "../contracts.ts";
 import { mandorHome, workerEnv } from "../home.ts";
 import { clampDetail, ensureDir, readJson, writeJsonAtomic } from "../store.ts";
-import { keepVendorStderr } from "./vendor.ts";
+import { keepVendorStderr, lostSession } from "./vendor.ts";
 
 export const TESTED_ZCODE_VERSION = "0.17.1";
 
@@ -281,6 +281,8 @@ export function createZcodeAdapter(cfg: Config): Adapter {
     // A model or a level the plan lacks does not fail: the CLI runs the sign-in's default model and says nothing, so a
     // light task would spend the heavy model's quota unseen.
     refine(result, job) {
+      const lost = lostSession(result, job);
+      if (lost !== null) return lost;
       if (result.status !== "done" || result.model === job.candidate.model) return result;
       return { ...result, status: "failed", report: null, detail: `ran on ${result.model ?? "an unnamed model"}, not on ${job.candidate.model}` };
     },

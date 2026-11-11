@@ -187,6 +187,19 @@ test("refine fails a finished run that ran on another model than the job's, whic
   assert.equal(a.refine(quota, job()).status, "quota");
 });
 
+test("refine fails a resume that opened another session as an account mismatch, and leaves a start and an unnamed session alone", () => {
+  const a = zcode();
+  const done = a.classify(raw(finished(JSON.stringify(REPORT))));
+  assert.equal(done.status, "done");
+  const asked = "00000000-0000-7000-8000-0000000000aa";
+  const resumed = (sessionId: string | null, kind: "start" | "resume" = "resume") => a.refine({ ...done, sessionId }, job({ kind, sessionId: asked }));
+  assert.equal(resumed(asked).status, "done", "the session that was asked for");
+  const lost = resumed("00000000-0000-7000-8000-0000000000bb");
+  assert.deepEqual([lost.status, lost.report, lost.detail], ["account-mismatch", null, "the session was not resumed, so the run started a new one"]);
+  assert.equal(resumed("00000000-0000-7000-8000-0000000000bb", "start").status, "done", "a start has no session to lose");
+  assert.equal(resumed(null).status, "done", "a run that names no session proves nothing");
+});
+
 function prepared(over: Partial<JobRecord> = {}, project = { network: true, addDirs: [] as string[] }) {
   const home = tempHome();
   zcodeSignIn();
