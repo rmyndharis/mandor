@@ -8,7 +8,7 @@ import type { Candidate, FileRef, GoalRecord, JobKind, JobRecord, LedgerEvent, M
 import {
   addWorktree, apply3way, applyCheck, applyToIndex, assertCommitIdentity, assertHeadIdentity, assertHomeOutsideRepos, assertRepoOutsideHome, branchExists, changedPaths, commitRunning, commitStaged, configuredDrivers, configuredPromisors,
   confineProblem, deleteBranchAt, diffSinceBaseBytes, diffStat, dropLastCommit, git, GitFailure, indexLockPath, indexTree, isClean, PARTIAL_CLONE, projectRoot,
-  removeOwnedWorktree, resetHardHead, resetTo, revParse, stagedDiff, worktreeAddRunning,
+  removeOwnedWorktree, resetHardHead, resetTo, revParse, stagedDiff, worktreeAddRunning, worktreeRoot,
 } from "./git.ts";
 import { checkCommitMessage, checkDiff, checkName } from "./guards.ts";
 import { assertOutsideRepos, jobDir, mandorHome, processAlive, processStart, projectDir, projectIdFor, roundDir, workerEnv, worktreesDir } from "./home.ts";
@@ -1026,7 +1026,16 @@ export function ready(tool: ToolName): { resumed: string[]; failed?: string[] } 
 const CANCEL_WAIT_MS = 20_000;
 const CANCELLABLE: readonly TaskStatus[] = ["waiting", "working", "needs-review", "stalled", "takeover"];
 
-export function cancel(cwd: string, slug: string): { cursor: number; cleanup?: "failed" } {
+const hasRoot = (worktree: string): boolean => {
+  try {
+    worktreeRoot(worktree);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+export function cancel(cwd: string, slug: string): { cursor: number; cleanup?: "failed"; patch?: "failed" } {
   const { root, id } = resolveProject(cwd);
   const models = loadCatalog();
   const marker = cancelMarker(id, slug);
@@ -1068,17 +1077,34 @@ export function cancel(cwd: string, slug: string): { cursor: number; cleanup?: "
         appendEvent(id, { t: "task.updated", at, taskId: t.id, patch: { status: "stalled", stallReason: "failed" }, reason: `dependency ${slug} was cancelled` });
       }
     }
-    clearRebase(id, slug); // the worktree it would restore goes now
+    // What the worker wrote goes with the worktree, so a copy is kept first: the lead may want it back. A rebase that was
+    // killed is undone first, as the worktree would hold the goal's tip and none of the worker's change. A copy that cannot
+    // be taken keeps the worktree, with the change in it, where the task is still cancelled.
+    let kept = false;
+    // A directory that is already gone, or a link that a worker put at the worktree's name, holds nothing to copy, and the
+    // removal still clears what git kept of it.
+    if (task.worktree !== null && task.base !== null && hasRoot(task.worktree)) {
+      try {
+        recoverRebaseLocked(root, id, task);
+        const { bytes } = stagedDiff(root, task.worktree, task.base);
+        if (bytes.length > 0) writeFileAtomic(join(roundDir(id, slug, task.seq), "cancelled.patch"), bytes);
+      } catch (e) {
+        logRunnerTail(`cancel of ${slug}`, (e as Error).message);
+        kept = true;
+      }
+    }
+    // The worktree it would restore goes now. One that stays keeps the marker and the patch, which may hold the change.
+    if (!kept) clearRebase(id, slug);
     // The task is cancelled now, so a worktree that will not go is reported, not a failure of the command.
     let failed = false;
     try {
-      if (task.worktree !== null) removeOwnedWorktree(root, task.worktree, task.branch, worktreesDir(id));
+      if (task.worktree !== null && !kept) removeOwnedWorktree(root, task.worktree, task.branch, worktreesDir(id));
     } catch (e) {
       logRunnerTail(`cancel of ${slug}`, (e as Error).message);
       failed = true;
     }
     pumpAfterCommand(id, models, `cancel of ${slug}`);
-    return failed ? { cursor, cleanup: "failed" as const } : { cursor };
+    return failed ? { cursor, cleanup: "failed" as const } : kept ? { cursor, patch: "failed" as const } : { cursor };
   })!;
 }
 

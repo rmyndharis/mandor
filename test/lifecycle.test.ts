@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import type { ChildProcess } from "node:child_process";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { randomInt } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TestContext } from "node:test";
@@ -11,7 +11,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { renderConflictMessage, renderFixMessage } from "../src/brief.ts";
 import { DEFAULT_CONFIG } from "../src/config.ts";
 import type { Candidate, GoalRecord, JobRecord, LedgerEvent, ModelInfo, StallReason, TaskRecord, ToolName } from "../src/contracts.ts";
-import { jobDir, processStart, projectDir, projectIdFor, scratchDir } from "../src/home.ts";
+import { jobDir, processStart, projectDir, projectIdFor, scratchDir, worktreesDir } from "../src/home.ts";
 import { appendEvent, appendToolEvent, ledgerSize, listProjects, loadState, loadToolState, now, readEvents } from "../src/ledger.ts";
 import { cancelMarker, readJob } from "../src/runner.ts";
 import { loadProjectConfig, saveProjectConfig } from "../src/provision.ts";
@@ -1053,6 +1053,52 @@ test("a rebase killed and then cancelled leaves no marker for a worktree that is
   assert.throws(() => tasks.takeover(s.repo, "hello", true), /task hello is cancelled, not needs-review or stalled/);
 });
 
+test("cancelling a task whose rebase was killed saves the worker's own change, not the goal's", async (t) => {
+  const s = setup(t);
+  must(s.repo, "config", "user.email", "dev@host.test");
+  const goal = tenLineGoal(s);
+  await reviewed(s, tenWith({ 3: "task" }));
+  onGoal(goal, tenWith({ 5: "goal" }));
+  await killRebase(s, t);
+  tasks.cancel(s.repo, "hello");
+  const patch = readFileSync(roundFile(s, "hello", task(s, "hello").seq, "cancelled.patch"), "utf8");
+  assert.ok(patch.includes("+task"), "the worker's change");
+  assert.ok(!patch.includes("+goal"), "not what the goal gained meanwhile");
+});
+
+test("a cancel whose restore of a killed rebase fails keeps the worktree, the marker and the patch that holds the change", async (t) => {
+  const s = setup(t);
+  must(s.repo, "config", "user.email", "dev@host.test");
+  const goal = tenLineGoal(s);
+  const { worktree } = await reviewed(s, tenWith({ 3: "task" }));
+  onGoal(goal, tenWith({ 5: "goal" }));
+  await killRebase(s, t);
+  shimGit(t, `*" diff --name-only "*|*" --index /"*`, "echo nope >&2; exit 128");
+  const out = tasks.cancel(s.repo, "hello");
+  assert.deepEqual([out.patch, task(s, "hello").status], ["failed", "cancelled"]);
+  assert.equal(existsSync(worktree!), true);
+  assert.equal(existsSync(rebaseFile(s, "rebase.json")), true, "the marker stays");
+  assert.ok(readFileSync(rebaseFile(s, "rebase.patch"), "utf8").includes("+task"), "the worker's change is still in the patch");
+});
+
+test("a cancel of a task whose worktree root is a link removes the link and what git kept, and leaves what it points at", async (t) => {
+  const s = setup(t);
+  tasks.goalStart(s.repo, GOAL, null);
+  writeScenarios([{ ...DONE, writeFile: [{ path: "hello.txt", content: "hello\n" }] }]);
+  send(s, "hello");
+  await needsReview(s, "hello");
+  const { worktree } = task(s, "hello");
+  const sibling = join(worktreesDir(s.id), "sibling");
+  mkdirSync(sibling, { recursive: true });
+  writeFileSync(join(sibling, "precious.txt"), "keep\n");
+  rmSync(worktree!, { recursive: true, force: true });
+  symlinkSync(sibling, worktree!);
+  assert.deepEqual(Object.keys(tasks.cancel(s.repo, "hello")), ["cursor"]);
+  assert.equal(existsSync(worktree!), false);
+  assert.equal(readFileSync(join(sibling, "precious.txt"), "utf8"), "keep\n");
+  assert.equal(must(s.repo, "branch", "--list", "wip/hello"), "");
+});
+
 for (const variant of ["conflict", "not applied"] as const) {
   test(`after a rebase-failed takeover, a second rebase in the round that ends ${variant} keeps conflict.patch, the only copy of the worker's change`, async (t) => {
     const s = setup(t);
@@ -1633,6 +1679,54 @@ test("cancel records cancelled and removes the worktree", async (t) => {
   assert.equal(loadState(s.id).jobs[sent.jobIds[0]].outcome?.status, "cancelled", "the job was stopped, and its completion waited for");
   assert.deepEqual(verdicts(s), ["hello:cancel"]);
   assert.deepEqual(await waitForNext(s.repo, { since: before, timeoutMs: 10_000 }), { kind: "idle", cursor: ledgerSize(s.id) });
+});
+
+test("cancel keeps the worker's change as a patch of the round before it removes the worktree", async (t) => {
+  const s = setup(t);
+  tasks.goalStart(s.repo, GOAL, null);
+  writeScenarios([{ ...DONE, writeFile: [{ path: "hello.txt", content: "hello\n" }] }, DONE]);
+  send(s, "hello");
+  await needsReview(s, "hello");
+  const worktree = task(s, "hello").worktree!;
+  tasks.cancel(s.repo, "hello");
+  const patch = roundFile(s, "hello", task(s, "hello").seq, "cancelled.patch");
+  assert.equal(existsSync(worktree), false);
+  assert.match(readFileSync(patch, "utf8"), /^diff --git a\/hello\.txt b\/hello\.txt\n[^]*\n\+hello\n/);
+  assert.match(showTask(s.id, "hello"), new RegExp(`round files:[^]*${patch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+  // A task that changed nothing has no patch to keep.
+  send(s, "empty");
+  await needsReview(s, "empty");
+  tasks.cancel(s.repo, "empty");
+  assert.equal(existsSync(roundFile(s, "empty", task(s, "empty").seq, "cancelled.patch")), false);
+});
+
+test("a cancel that cannot copy the worker's change keeps the worktree and says so, instead of removing it", async (t) => {
+  const s = setup(t);
+  tasks.goalStart(s.repo, GOAL, null);
+  writeScenarios([{ ...DONE, writeFile: [{ path: "hello.txt", content: "hello\n" }] }]);
+  send(s, "hello");
+  await needsReview(s, "hello");
+  const { worktree } = task(s, "hello");
+  shimGit(t, `*" write-tree "*`, `echo "INJECT: no" >&2; exit 128`);
+  const out = tasks.cancel(s.repo, "hello");
+  assert.deepEqual(Object.keys(out).sort(), ["cursor", "patch"]);
+  assert.equal(out.patch, "failed");
+  assert.equal(task(s, "hello").status, "cancelled");
+  assert.equal(existsSync(join(worktree!, "hello.txt")), true, "the change is still where the worker left it");
+  assert.match(must(s.repo, "branch", "--list", "wip/hello"), /wip\/hello/);
+  assert.equal(existsSync(roundFile(s, "hello", task(s, "hello").seq, "cancelled.patch")), false);
+  assert.match(runnerLog(), /cancel of hello: .*INJECT/);
+});
+
+test("a cancel of a task whose worktree directory is already gone has no change to copy, and still clears what git kept of it", async (t) => {
+  const s = setup(t);
+  tasks.goalStart(s.repo, GOAL, null);
+  writeScenarios([{ ...DONE, writeFile: [{ path: "hello.txt", content: "hello\n" }] }]);
+  send(s, "hello");
+  await needsReview(s, "hello");
+  rmSync(task(s, "hello").worktree!, { recursive: true, force: true });
+  assert.deepEqual(Object.keys(tasks.cancel(s.repo, "hello")), ["cursor"]);
+  assert.equal(must(s.repo, "branch", "--list", "wip/hello"), "");
 });
 
 test("cancel takes waiting, needs-review, stalled and takeover, clears pending, and refuses integrating, accepted and cancelled", async (t) => {

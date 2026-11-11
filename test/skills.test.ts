@@ -67,6 +67,14 @@ test("lead skill says how to read a fixed git failure, how to write an agy candi
   assert.doesNotMatch(lead, /agy:<model id>/);
 });
 
+test("lead skill says that cancel keeps the worker's change as a patch", () => {
+  assert.ok(read("lead").includes("saves the worker's change as `cancelled.patch`"));
+});
+
+test("lead skill says what a cancel that could not copy the change means", () => {
+  assert.ok(read("lead").includes('If `cancel` prints `patch: "failed"`, the change could not be copied, so the worktree was kept: tell the user.'));
+});
+
 test("status skill runs mandor status", () => {
   assert.ok(read("status").includes("mandor status"));
 });

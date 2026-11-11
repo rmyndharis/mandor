@@ -88,7 +88,7 @@ Run `mandor show <slug>` and read the outcome detail. Then decide between `mando
 
 `reassign` refuses a task stalled with `rebase-failed`; for that stall, after the look with `show`, ask the user to approve a takeover, then run `mandor verdict <slug> takeover` (without `--approved`). The worktree is reset to the goal tip. The change as the worktree held it, your own edits included, is in the newest round's `conflict.patch`, the last one `show` lists: reapply it by hand in the task worktree, then accept as in section 6.
 
-`reassign` also refuses a task whose dependency was cancelled: take it over, or stop it with `mandor cancel <slug>`. Cancel stops any running job and removes the worktree. If `cancel` prints `cleanup: "failed"`, the task is cancelled and only its worktree remains: tell the user. It refuses an `integrating` task, so drop that first. Tasks that depend on a cancelled one stall, and `wait` reports `inspect` for them.
+`reassign` also refuses a task whose dependency was cancelled: take it over, or stop it with `mandor cancel <slug>`. Cancel stops any running job and removes the worktree, after it saves the worker's change as `cancelled.patch` in the task's last round, which `mandor show <slug>` lists. If `cancel` prints `patch: "failed"`, the change could not be copied, so the worktree was kept: tell the user. If `cancel` prints `cleanup: "failed"`, the task is cancelled and only its worktree remains: tell the user. It refuses an `integrating` task, so drop that first. Tasks that depend on a cancelled one stall, and `wait` reports `inspect` for them.
 
 ## 10. On `fix-rounds-exceeded` or `offer-takeover`
 

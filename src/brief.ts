@@ -124,7 +124,7 @@ export function parseReport(text: string): WorkerReport | null {
   }
 }
 
-export const ROUND_FILES = ["notes.md", "report.json", "handoff.md", "conflict.patch", "evidence-accept.md", "evidence-confirm.md"] as const;
+export const ROUND_FILES = ["notes.md", "report.json", "handoff.md", "conflict.patch", "cancelled.patch", "evidence-accept.md", "evidence-confirm.md"] as const;
 export type RoundFileName = (typeof ROUND_FILES)[number];
 
 function inside(parent: string, child: string): boolean {

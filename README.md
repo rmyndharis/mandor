@@ -169,7 +169,7 @@ The lead's commands print JSON; `status`, `show` and `logs` print plain text.
 | `mandor drop <slug>` | Remove the commit and send the notes back: `--notes` |
 | `mandor reassign <slug>` | Move a stalled task to its next candidate |
 | `mandor ready <tool>` | After an account switch or a reset, resume the stalled tasks of that tool |
-| `mandor cancel <slug>` | Stop a task's job and remove its worktree |
+| `mandor cancel <slug>` | Stop a task's job and remove its worktree, after saving the worker's change as `cancelled.patch` in the task's round. When the copy cannot be taken it prints `patch: "failed"` and keeps the worktree |
 
 ## Before you start
 
