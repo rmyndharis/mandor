@@ -9,6 +9,7 @@ import { resolveBin } from "../config.ts";
 import type { Adapter, JobResult, JobStatus, ModelInfo, RawRun, WorkerReport } from "../contracts.ts";
 import { mandorHome, workerEnv } from "../home.ts";
 import { clampDetail, ensureDir, readJson, writeJsonAtomic } from "../store.ts";
+import { keepVendorStderr } from "./vendor.ts";
 
 export const TESTED_ZCODE_VERSION = "0.17.1";
 
@@ -186,7 +187,8 @@ export function createZcodeAdapter(cfg: Config): Adapter {
 
     version() {
       const b = bin();
-      const r = spawnSync(zcodeStart(b)[0], [...zcodeStart(b).slice(1), "--version"], { env: zcodeEnv(b, { PATH: process.env.PATH ?? "" }), encoding: "utf8", timeout: 30_000, killSignal: "SIGKILL", stdio: ["ignore", "pipe", "ignore"] });
+      const r = spawnSync(zcodeStart(b)[0], [...zcodeStart(b).slice(1), "--version"], { env: zcodeEnv(b, { PATH: process.env.PATH ?? "" }), encoding: "utf8", timeout: 30_000, killSignal: "SIGKILL", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] });
+      keepVendorStderr("zcode", ["--version"], r);
       if (r.status !== 0) throw new Error(`zcode --version failed (exit ${r.status ?? r.signal})`);
       const v = /\d+\.\d+\.\d+\S*/.exec(r.stdout)?.[0];
       if (v === undefined) throw new Error("zcode --version printed no version number");

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, readdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { TestContext } from "node:test";
 import { test } from "node:test";
@@ -304,6 +304,24 @@ test("the catalog holds agy's models next to codex's, and the report says what u
   assert.ok(modelsReport(cfg, false).warnings.includes(`agy 1.6.0 is not the tested version ${TESTED_AGY_VERSION}`));
   cfg.tools.agy.enabled = false;
   assert.ok(!modelsReport(cfg, true).warnings.some((w) => w.startsWith("agy")), "a tool that is off has nothing to say");
+});
+
+test("what agy's version and models calls print on stderr goes to a private log and nowhere else", () => {
+  const home = tempHome();
+  writeAgyConfig(home);
+  writeFileSync(join(home, "agy", "home", "fake", "stderr"), `refreshing auth ${SECRET}\n`);
+  const cfg = JSON.parse(readFileSync(join(home, "config.json"), "utf8"));
+  refreshModels(cfg);
+  const log = join(home, "logs", "vendor.stderr");
+  const text = readFileSync(log, "utf8");
+  assert.match(text, new RegExp(`^\\S+ agy .*--version\\nrefreshing auth ${SECRET}\\n`, "m"));
+  assert.match(text, new RegExp(`^\\S+ agy .* models\\nrefreshing auth ${SECRET}\\n`, "m"));
+  assert.equal(statSync(log).mode & 0o777, 0o600);
+  for (const name of readdirSync(home, { recursive: true, encoding: "utf8" })) {
+    const file = join(home, name);
+    if (file === log || name.split("/").includes("fake") || !statSync(file).isFile()) continue;
+    assert.ok(!readFileSync(file, "utf8").includes(SECRET), name);
+  }
 });
 
 test("a refresh stores each enabled tool's warnings, and only an enabled tool has any to say", () => {

@@ -72,6 +72,7 @@ async function run() {
 
 async function main() {
   if (args[0] === "--version") {
+    if (read("stderr") !== null) process.stderr.write(read("stderr"));
     process.stdout.write(`${read("version")?.trim() ?? "0.17.1"}\n`);
     return 0;
   }

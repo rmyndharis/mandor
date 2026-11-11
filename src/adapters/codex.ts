@@ -1,14 +1,15 @@
 import { spawnSync } from "node:child_process";
-import { appendFileSync, existsSync, globSync, readFileSync } from "node:fs";
+import { existsSync, globSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { zstdDecompressSync } from "node:zlib";
 import { parseReport } from "../brief.ts";
 import type { Config } from "../config.ts";
 import { resolveCodexBin } from "../config.ts";
 import type { Adapter, JobRecord, JobResult, JobStatus, ModelInfo, RawRun } from "../contracts.ts";
-import { mandorHome, workerEnv } from "../home.ts";
+import { workerEnv } from "../home.ts";
 import { CREDIT_OFF_SWITCH, CREDIT_SIGNAL, NETWORK_KEY, ROLLOUT_GLOB, STATE_DB } from "../spikes.ts";
-import { clampDetail, ensureDir } from "../store.ts";
+import { clampDetail } from "../store.ts";
+import { keepVendorStderr } from "./vendor.ts";
 
 export const TESTED_CODEX_VERSION = "0.166.0";
 
@@ -19,18 +20,12 @@ const IDS = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|(?<![A
 const QUOTA = ["hit your usage limit", "reached your usage limit", "usage limit reached", "out of credits", "credit limit", "spend cap", "quota exceeded", "to use codex with your chatgpt plan"];
 const MISMATCH = ["invalid_encrypted_content", "organization_id did not match"];
 
-// Vendor CLIs have printed OAuth tokens on stderr, so it goes only to a private log, never to output.
 // The worker environment keeps an API key in the lead's environment from changing the catalog.
 function runVendor(bin: string, args: string[]): { code: number; stdout: string } {
   const r = spawnSync(bin, args, {
     stdio: ["ignore", "pipe", "pipe"], timeout: 30000, killSignal: "SIGKILL", maxBuffer: 64 * 1024 * 1024, encoding: "utf8", env: workerEnv(null),
   });
-  if (r.stderr || r.error) {
-    const logs = join(mandorHome(), "logs");
-    ensureDir(logs);
-    const head = `${new Date().toISOString()} codex ${args.join(" ")}${r.error ? `: ${r.error.message}` : ""}`;
-    appendFileSync(join(logs, "vendor.stderr"), `${head}\n${(r.stderr ?? "").replace(/\n?$/, "\n")}`, { mode: 0o600 });
-  }
+  keepVendorStderr("codex", args, r);
   return { code: r.status ?? -1, stdout: r.stdout ?? "" };
 }
 

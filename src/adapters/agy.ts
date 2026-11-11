@@ -7,6 +7,7 @@ import { resolveBin } from "../config.ts";
 import type { Adapter, JobResult, JobStatus, ModelInfo, RawRun, WorkerReport } from "../contracts.ts";
 import { mandorHome, workerEnv } from "../home.ts";
 import { clampDetail, ensureDir } from "../store.ts";
+import { keepVendorStderr } from "./vendor.ts";
 import { fitsReport, lastJsonObject } from "./zcode.ts";
 
 export const TESTED_AGY_VERSION = "1.5.2";
@@ -32,9 +33,9 @@ const home = (): string[] => {
   return [`--gemini_dir=${agyHome()}`];
 };
 
-// stderr is dropped: vendor CLIs have printed tokens there.
 function run(bin: string, args: string[]): { code: number; stdout: string } {
-  const r = spawnSync(bin, args, { stdio: ["ignore", "pipe", "ignore"], timeout: 30_000, killSignal: "SIGKILL", maxBuffer: 64 * 1024 * 1024, encoding: "utf8", env: { ...workerEnv(null), ...NO_UPDATE } });
+  const r = spawnSync(bin, args, { stdio: ["ignore", "pipe", "pipe"], timeout: 30_000, killSignal: "SIGKILL", maxBuffer: 64 * 1024 * 1024, encoding: "utf8", env: { ...workerEnv(null), ...NO_UPDATE } });
+  keepVendorStderr("agy", args, r);
   return { code: r.status ?? -1, stdout: r.stdout ?? "" };
 }
 

@@ -307,6 +307,16 @@ test("detectModels lists the signed-in plan's enabled models with the levels the
   assert.throws(() => zcode().detectModels(), /the zcode catalog lists no model for account:no-such-plan/);
 });
 
+test("what zcode's version call prints on stderr goes to a private log and nowhere else", () => {
+  const home = tempHome();
+  mkdirSync(join(home, "zcode", "home", "fake"), { recursive: true });
+  writeFileSync(join(home, "zcode", "home", "fake", "stderr"), "refreshing auth SECRET_TOKEN_123\n");
+  assert.equal(zcode().version(), TESTED_ZCODE_VERSION);
+  const log = join(home, "logs", "vendor.stderr");
+  assert.match(readFileSync(log, "utf8"), /^\S+ zcode .*--version\nrefreshing auth SECRET_TOKEN_123\n/m);
+  assert.equal(statSync(log).mode & 0o777, 0o600);
+});
+
 test("version asks the CLI, and resolveBin gives each tool its own binary", () => {
   tempHome();
   assert.equal(zcode().version(), TESTED_ZCODE_VERSION);

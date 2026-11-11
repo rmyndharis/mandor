@@ -3,6 +3,7 @@
 //   scenarios.json  -p runs; each run claims one entry by creating claims/<index>
 //   models.json     the ids `models` lists, instead of the default ones
 //   version         the --version number, 1.5.2 without it
+//   stderr          text that --version and `models` write to stderr
 //   log.jsonl       appended: the argv, environment and working directory of every invocation
 // A scenario: { kind?: "done" | "denied" | "quota" | "model-limit" | "no-result", report?, response?, model?, usage?,
 // forgetConversation?, writeFile?: [{path, content}], commands?: [string], exitCode?, delayMs?, stderr? }.
@@ -77,6 +78,7 @@ async function run() {
 
 async function main() {
   if (args.includes("--version")) {
+    if (read("stderr") !== null) process.stderr.write(read("stderr"));
     process.stdout.write(`${read("version")?.trim() ?? "1.5.2"}\n`);
     return 0;
   }
@@ -87,6 +89,7 @@ async function main() {
   }
   appendFileSync(join(control, "log.jsonl"), `${JSON.stringify({ argv: args, env: process.env, cwd: process.cwd() })}\n`);
   if (args.includes("models") && !args.includes("-p")) {
+    if (read("stderr") !== null) process.stderr.write(read("stderr"));
     const ids = JSON.parse(read("models.json") ?? JSON.stringify(MODELS));
     process.stdout.write(`${JSON.stringify({ conversation_id: "", status: "SUCCESS", response: null, num_turns: 0, usage: NO_USAGE, command: { name: "models", data: { models: ids.map((id) => ({ id, label: id })) } } })}\n`);
     return 0;
