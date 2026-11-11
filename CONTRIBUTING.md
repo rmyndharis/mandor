@@ -44,7 +44,7 @@ Branch from `main`, and give the branch a short name in lower case with hyphens 
 - The title has the form of a commit subject, `type: summary`. With one commit, use that commit's subject.
 - The description says what was wrong or missing, what changed, anything a reviewer should look at closely, and how you verified it. Keep it short and complete; delete any part of the template that would be empty.
 - Add a test for any change in what a guard refuses or what a worker may do.
-- A change that gives workers more reach than they have today (a wider environment, a writable path, a weaker guard) explains in the description why it is safe.
+- A change that gives workers more reach than they have today (a wider environment, a writable path, a weaker guard) explains in the description why it is safe, and adds two tests: one that shows the new reach works, and one that shows the next thing beyond it is still refused.
 - Add a line to `CHANGELOG.md` when a user would notice the change (see below).
 - Every check must pass. Pull requests land on `main` as a fast-forward, so your commits arrive as you wrote them.
 

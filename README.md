@@ -277,7 +277,7 @@ Load your working copy into a session with `claude --plugin-dir .`.
 
 Issues and pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) says how to file an issue, what a commit and a pull request should look like, and how a release is cut. Keep changes small, add a test for any change in what a guard refuses or what a worker may do, and run `npm run typecheck` and `npm test` before you open a pull request.
 
-A change that gives workers more reach than they have today (a wider environment, a writable path, a weaker guard) should explain in the pull request why it is safe.
+A change that gives workers more reach than they have today (a wider environment, a writable path, a weaker guard) explains in the pull request why it is safe, and adds two tests: one that shows the new reach works, and one that shows the next thing beyond it is still refused.
 
 Report a security problem privately, as [SECURITY.md](SECURITY.md) describes. Releases and what changed in each are listed in the [changelog](CHANGELOG.md).
 
