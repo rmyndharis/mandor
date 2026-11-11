@@ -33,6 +33,10 @@ All notable changes to mandor are recorded here. The format follows [Keep a Chan
 - A Codex or ZCode resume that opened another session is treated as an account mismatch, as an Antigravity resume already was, instead of being recorded as done.
 - A resume that opened another session leaves the task on the session it asked for, whatever the run ended with.
 - `cancel` saves the staged change as `cancelled.patch` in the task's round before it removes the worktree, and `show` lists it. When the copy cannot be taken it keeps the worktree and prints `patch: "failed"`.
+- `wait` and `status` stop the worker of a job whose runner died, as they settle it, where it ran on with no timeout and could still write.
+- Staging, in a review or an accept, names the git index lock that a killed staging left and what to do about it, instead of the fixed sentence and a log pointer.
+- `confirm` and `cancel`, run again after the task was accepted or cancelled, remove the worktree and branch that a kill or a failed removal left. A `cancel` run again takes the copy of the change first, if none was saved. They record nothing, and still refuse when nothing is left.
+- `status` names a goal whose accept was killed before it finished, also as `unfinished` in `--json`, and `fix`, `takeover` and `cancel` refuse that task until an accept settles it.
 
 ### Security
 
