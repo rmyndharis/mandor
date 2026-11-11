@@ -1,6 +1,7 @@
 import type { SpawnSyncOptions } from "node:child_process";
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
+import type { Dirent } from "node:fs";
 import { closeSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { basename, delimiter, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { inflateSync } from "node:zlib";
@@ -593,6 +594,70 @@ export function ignoredChanged(repo: string, worktree: string, sinceMs: number):
     found.set(key, (found.get(key) ?? 0) + 1);
   }
   return [...found].map(([path, files]) => ({ path, files })).sort((a, b) => b.files - a.files || (a.path < b.path ? -1 : 1));
+}
+
+// What the worktree holds under the named root entries that the base commit does not hold as it is, as paths. An entry the base
+// lacks is named by itself: what git lists of it says nothing of what a tool opens by name (a directory that can be searched and
+// not listed, a pipe). Under an entry the base holds, it is a file the base lacks, ignored or not, a tracked one that differs in
+// type or content (a removed one is no such file, and nor is a change of the executable bit), and a directory that cannot be
+// read, which is counted as holding something. It reads the worktree against an index of its own made from the base, which
+// holds nothing of what a worker told its own git to skip or to add, and compares a file as the repository's rules for line
+// endings read it. Nothing is written but that index, which goes at the end.
+export function pathsAwayFromBase(repo: string, worktree: string, base: string, names: string[]): string[] {
+  if (names.length === 0) return [];
+  const g = bind(repo, worktree);
+  const held = new Map<string, { mode: string; type: string; oid: string }>();
+  for (const rec of g.okBytes(["ls-tree", "-z", "--full-tree", base, "--", ...names]).toString().split("\0").filter(Boolean)) {
+    const tab = rec.indexOf("\t");
+    const [mode, type, oid] = rec.slice(0, tab).split(" ");
+    held.set(rec.slice(tab + 1), { mode, type, oid });
+  }
+  const found = new Set(names.filter((n) => !held.has(n) && lstatSync(join(g.worktree, n), { throwIfNoEntry: false }) !== undefined));
+  const known = names.filter((n) => held.has(n));
+  if (known.length === 0) return [...found];
+  const dir = mkdtempSync(join(stagesDir(), "b-"));
+  try {
+    const at = g.with({ GIT_INDEX_FILE: join(dir, "index") });
+    // Only the entries under the names, so that the refresh below reads those few files and not the whole tree. A directory
+    // goes in as a tree and a file as one entry, so that no command line grows with the number of files.
+    for (const n of known) {
+      const { mode, type, oid } = held.get(n)!;
+      if (type === "tree") at.ok(["read-tree", `--prefix=${n}/`, `${base}:${n}`]);
+      else if (type === "blob") at.ok(["update-index", "--add", "--cacheinfo", `${mode},${oid},${n}`]);
+    }
+    // Without it every entry reads as changed, as the index holds no stat data. Exits 1 for a file that differs, which is the answer.
+    // The executable bit is left out of every read: a tool takes no content from it, and a lead that is told to restore a file
+    // has no way to set it, as it runs no git in the worktree.
+    const quiet = ["-c", "core.fileMode=false"];
+    at.run([...quiet, "update-index", "-q", "--refresh"]);
+    // Literal, so that a name holding a glob character names that file and no other.
+    const spec = known.map((n) => `:(literal)${n}`);
+    for (const out of [
+      at.okBytes([...quiet, "ls-files", "-z", "--others", "--", ...spec]),
+      at.okBytes([...quiet, "diff-files", "-z", "--name-only", "--diff-filter=ACMRTUXB", "--", ...spec]),
+    ]) for (const path of out.toString().split("\0")) if (path !== "") found.add(path);
+    for (const n of known) for (const path of unreadableUnder(g.worktree, n)) found.add(path);
+    return [...found];
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// The directories under a path, itself included, that cannot be read: what is in them is unknown. Links are not followed.
+function unreadableUnder(root: string, rel: string): string[] {
+  const out: string[] = [];
+  const walk = (dir: string): void => {
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(join(root, dir), { withFileTypes: true });
+    } catch {
+      out.push(dir);
+      return;
+    }
+    for (const e of entries) if (e.isDirectory()) walk(join(dir, e.name));
+  };
+  if (lstatSync(join(root, rel), { throwIfNoEntry: false })?.isDirectory()) walk(rel);
+  return out;
 }
 
 // The exact patch bytes: a text file that is not UTF-8 would not survive a decode and re-encode.

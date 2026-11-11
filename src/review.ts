@@ -6,7 +6,7 @@ import { attributionHints, checkDiff, matchesGlob, type Violation } from "./guar
 import { jobDir } from "./home.ts";
 import { loadState, now } from "./ledger.ts";
 import { loadProjectConfig } from "./provision.ts";
-import { clampDetail, withProjectLock, writeJsonAtomic } from "./store.ts";
+import { clampDetail, maskControls, withProjectLock, writeJsonAtomic } from "./store.ts";
 import { diffDeny, diffExact, gitStep, recoverRebaseLocked, refuseOpenJob, refuseUnsupported, resolveProject, reviewedFile } from "./tasks.ts";
 
 export interface ReviewPack {
@@ -107,9 +107,6 @@ function unrunClaims(claims: string[], rawLog: string): { kind: string; detail: 
   });
 }
 
-// The control bytes of a worker's file, written as \xNN: printed raw they could rewrite lines already shown on a screen. A
-// tab and a line end stay, and so does the carriage return of a CRLF.
-const maskControls = (text: string): string => text.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]|\r(?!\n)/g, (c) => `\\x${c.charCodeAt(0).toString(16).padStart(2, "0")}`);
 
 // The task's change as the patch text the review reads. A lead that wants to see it would run git by hand in the task
 // worktree, where the git pointer and the attribute files are the worker's, so this runs the review's own bound,

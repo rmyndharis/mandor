@@ -490,7 +490,7 @@ test("half a cancel that stays as it is is judged once, not on every check of th
   const job = queueJob();
   const ledger = join(projectDir(PROJECT), "ledger.jsonl");
   const realRead = fs.readFileSync;
-  let [reads, counting] = [0, true];
+  let [reads, counting] = [0, false];
   const spy = t.mock.method(fs, "readFileSync", ((...args: unknown[]) => {
     if (counting && String(args[0]) === ledger) reads++;
     return Reflect.apply(realRead, fs, args);
@@ -499,6 +499,7 @@ test("half a cancel that stays as it is is judged once, not on every check of th
   try {
     const run = runJob(job.id);
     assert.ok(await until(() => readJob(job.id).workerPid !== null, 10_000), "the worker starts");
+    counting = true; // what the start itself read of the ledger is not the marker's
     deadCancel();
     await sleep(3200); // three checks of the marker, which judging reads the ledger for
     counting = false;

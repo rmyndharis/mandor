@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, posix, sep } from "node:path";
 import { askOf, loadRounds, renderAnswerMessage, renderBrief, renderConflictMessage, renderFixMessage, renderHandoff, roundReport, saveRoundFile } from "./brief.ts";
@@ -8,9 +8,9 @@ import type { Candidate, FileRef, GoalRecord, JobKind, JobRecord, LedgerEvent, M
 import {
   addWorktree, apply3way, applyCheck, applyToIndex, assertCommitIdentity, assertHeadIdentity, assertHomeOutsideRepos, assertRepoOutsideHome, branchExists, changedPaths, commitRunning, commitStaged, configuredDrivers, configuredPromisors,
   confineProblem, deleteBranchAt, diffSinceBaseBytes, diffStat, dropLastCommit, git, GitFailure, indexLockPath, indexTree, isClean, PARTIAL_CLONE, projectRoot,
-  removeOwnedWorktree, resetHardHead, resetTo, revParse, stagedDiff, stopOverdueCommit, worktreeAddRunning, worktreeLeft, worktreeRoot,
+  pathsAwayFromBase, removeOwnedWorktree, resetHardHead, resetTo, revParse, stagedDiff, stopOverdueCommit, worktreeAddRunning, worktreeLeft, worktreeRoot,
 } from "./git.ts";
-import { checkCommitMessage, checkDiff, checkName } from "./guards.ts";
+import { checkCommitMessage, checkDiff, checkName, isAgentPath } from "./guards.ts";
 import { assertOutsideRepos, jobDir, mandorHome, processAlive, processStart, projectDir, projectIdFor, roundDir, workerEnv, worktreesDir } from "./home.ts";
 import { appendEvent, appendToolEvent, ledgerSize, listProjects, loadState, loadToolState, now, readEvents } from "./ledger.ts";
 import { cachedWarnings } from "./modelcache.ts";
@@ -18,7 +18,7 @@ import { DEFAULT_DENY, loadProjectConfig, provisionWorktree, type ProjectConfig 
 import { catalogGap, countActiveJobs, hasUsableModel, selectCandidate } from "./routing.ts";
 import { cancelMarker, completeJobLocked, failedResult, gitLogPath, logGit, logRunner, logRunnerTail, readJob, runnerLogPath } from "./runner.ts";
 import { spawnRunner } from "./spawn.ts";
-import { clampDetail, ensureDir, fileRef, readJson, withProjectLock, withSlotsLock, writeFileAtomic, writeJsonAtomic } from "./store.ts";
+import { clampDetail, ensureDir, fileRef, maskControls, readJson, withProjectLock, withSlotsLock, writeFileAtomic, writeJsonAtomic } from "./store.ts";
 
 // The directory is created exclusively, so two jobs started in the same second never share one.
 function newJobId(): string {
@@ -702,6 +702,33 @@ export function unrecordedNote(branch: string, commits: string[]): string {
   return `goal ${branch} holds ${commits.length} commit${commits.length === 1 ? "" : "s"} that mandor did not record (${commits.slice(0, 5).map((c) => c.slice(0, 12)).join(", ")}${more})`;
 }
 
+// A tool starts in the worktree's root and reads what it finds there: a Codex session starts the MCP server that a
+// .codex/config.toml names, outside its sandbox, and takes an AGENTS.md as instructions. So an agent path of the root
+// that the base commit does not hold as it is, which an earlier round wrote whether git ignores it or not, would steer
+// the next job. Named by the entry of the root, as printed text of a worker's own choosing stays short.
+export function plantedAgentPaths(id: string, task: TaskRecord, root: string): string[] {
+  if (task.base === null) return [];
+  const away = pathsAwayFromBase(recordedRoot(id), root, task.base, readdirSync(root).filter(isAgentPath));
+  const entries = away.map((path) => {
+    const first = path.split("/")[0];
+    return lstatSync(join(root, first), { throwIfNoEntry: false })?.isDirectory() ? `${first}/` : first;
+  });
+  return [...new Set(entries)].sort();
+}
+
+// What the lead is told. The names come last, so that a text clamped for its length loses names and keeps the next step.
+export function plantedMessage(slug: string, planted: string[], then: string): string {
+  const shown = planted.slice(0, 5).map((name) => maskControls(name).trim().slice(0, 40)).join(", ") + (planted.length > 5 ? `, and ${planted.length - 5} more` : "");
+  return `the worktree holds agent paths that the repository does not hold as they are; restore or delete them in the task worktree, then ${then}: ${shown}`;
+}
+
+// Before a command records a round or queues a job: nothing is counted or reset for a job that would not start.
+function refusePlantedAgentPaths(id: string, task: TaskRecord, then: string): void {
+  if (task.worktree === null) return;
+  const planted = plantedAgentPaths(id, task, worktreeRoot(task.worktree));
+  if (planted.length > 0) throw new Error(plantedMessage(task.id, planted, then));
+}
+
 export function refuseOpenJob(state: ProjectState, slug: string): void {
   if (Object.values(state.jobs).some((j) => j.taskId === slug && j.outcome === null)) throw new Error(`task ${slug} has a queued or running job`);
 }
@@ -998,6 +1025,7 @@ function resumeWithNotes(cwd: string, slug: string, notesFile: string, verdict: 
     if (task.status !== "needs-review") throw new Error(`task ${slug} is ${task.status}, not needs-review`);
     refuseUnfinishedAccept(id, task);
     refuseOpenJob(loadState(id), slug);
+    refusePlantedAgentPaths(id, task, "run the command again");
     const notes = readNonEmpty(notesFile, "notes");
     if (verdict === "fix") startFixRoundLocked(id, task, renderFixMessage(notes), true, models, "fix");
     else {
@@ -1025,6 +1053,8 @@ export function drop(cwd: string, slug: string, notesFile: string): { cursor: nu
     const task = taskOf(id, slug);
     if (task.status !== "integrating") throw new Error(`task ${slug} is ${task.status}, not integrating`);
     const notes = readNonEmpty(notesFile, "notes");
+    // The drop resets the goal first, which nothing undoes, so a worker that would not start is found out before it.
+    refusePlantedAgentPaths(id, task, "run the command again");
     const { branch, integrationWorktree: integration } = state.goals[task.goalBranch];
     const commit = task.integratedCommit;
     // Elsewhere the reset would move another ref, and a HEAD that sits at the commit's parent would read as a drop done.
@@ -1072,6 +1102,7 @@ export function reassign(cwd: string, slug: string): { task: TaskRecord; cursor:
     const dependency = task.after === null ? undefined : state.tasks[task.after];
     if (dependency !== undefined && dependency.status !== "accepted") throw new Error(`task ${slug} depends on ${dependency.id}, which is ${dependency.status}; cancel it or take it over`);
     refuseOpenJob(state, slug);
+    refusePlantedAgentPaths(id, task, `run mandor reassign ${slug} again`);
     // All-exhausted says candidates exist and their limits stopped them, so a catalog holding none of them must not reach it.
     if (!hasUsableModel(models)) throw new Error("no model catalog; run mandor models --refresh");
     const config = loadConfig();

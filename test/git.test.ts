@@ -8,7 +8,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import {
   addWorktree, apply3way, applyCheck, applyToIndex, assertCommitIdentity, assertHeadIdentity, branchExists, changedPaths, commitStaged, configuredDrivers, configuredPromisors, deleteBranchAt,
   diffSinceBaseBytes, diffStat, dropLastCommit, git, ignoredChanged, indexLockPath, indexTree, isClean, isPlaceholderEmail, migrateObjects, projectRoot,
-  removeOwnedWorktree, removeTree, resetHardHead, resetTo, revParse, stagedDiff, worktreeAddRunning, worktreeRoot,
+  pathsAwayFromBase, removeOwnedWorktree, removeTree, resetHardHead, resetTo, revParse, stagedDiff, worktreeAddRunning, worktreeRoot,
 } from "../src/git.ts";
 import { diffSinceBase, temp as tempDir, tempHome, tempRepo } from "./helpers.ts";
 
@@ -54,6 +54,7 @@ const bound: ((repo: string, worktree: string, arg: string) => unknown)[] = [
   isClean, resetTo, resetHardHead, diffSinceBaseBytes, stagedDiff, diffStat, indexTree, indexLockPath,
   applyCheck, applyToIndex, apply3way, (repo, worktree) => commitStaged(repo, worktree, [], "Add", true), dropLastCommit,
   (repo, worktree) => assertCommitIdentity(repo, worktree, true), (repo, worktree) => assertHeadIdentity(repo, worktree, true),
+  (repo, worktree, base) => pathsAwayFromBase(repo, worktree, base, ["AGENTS.md"]),
 ];
 
 // A temp repo plus a linked worktree on wip/task at the repo's first commit.
@@ -1000,6 +1001,148 @@ test("ignoredChanged goes by a link's own status time and not by the file it lea
   await sleep(60);
   symlinkSync(target, join(wt, "cache", "link"));
   assert.deepEqual(ignoredChanged(repo, wt, since), [{ path: "cache/", files: 1 }]);
+});
+
+// A repository that holds agent files of its own, and a task worktree at its first commit.
+function withAgentFiles(attributes = ""): { repo: string; wt: string; base: string } {
+  const repo = tempRepo();
+  mkdirSync(join(repo, ".codex"), { recursive: true });
+  writeFileSync(join(repo, "AGENTS.md"), "rules\n");
+  writeFileSync(join(repo, ".codex", "config.toml"), "model = \"x\"\n");
+  const tracked = ["AGENTS.md", ".codex/config.toml"];
+  if (attributes !== "") {
+    writeFileSync(join(repo, ".gitattributes"), attributes);
+    tracked.push(".gitattributes");
+  }
+  must(repo, "add", "--", ...tracked);
+  must(repo, "commit", "-q", "-m", "Add agent files");
+  const base = revParse(repo, "HEAD");
+  const wt = join(owned(), "task");
+  addWorktree(repo, wt, "wip/task", base);
+  return { repo, wt, base };
+}
+
+const NAMES = [".codex", "AGENTS.md", "CLAUDE.md", ".agents", "GEMINI.md"];
+
+test("pathsAwayFromBase lists what a worktree holds under the named entries that its base commit does not hold as it is", () => {
+  const { repo, wt, base } = withAgentFiles();
+  const away = () => pathsAwayFromBase(repo, wt, base, NAMES).sort();
+  assert.deepEqual(away(), [], "the repository's own files, as they are");
+  assert.deepEqual(pathsAwayFromBase(repo, wt, base, []), [], "no entry named");
+  writeFileSync(join(wt, ".codex", "extra.toml"), "x\n");
+  writeFileSync(join(wt, "CLAUDE.md"), "x\n");
+  assert.deepEqual(away(), [".codex/extra.toml", "CLAUDE.md"], "a file the base lacks, in a directory it has or beside it");
+  // A path git ignores is as much in the way: the next tool reads it all the same.
+  writeFileSync(join(wt, ".gitignore"), ".agents/\nGEMINI.md\n");
+  mkdirSync(join(wt, ".agents"));
+  writeFileSync(join(wt, ".agents", "s.md"), "x\n");
+  writeFileSync(join(wt, "GEMINI.md"), "x\n");
+  assert.deepEqual(away(), [".agents", ".codex/extra.toml", "CLAUDE.md", "GEMINI.md"], "an entry the base lacks is named by itself");
+  rmSync(join(wt, ".codex", "extra.toml"));
+  rmSync(join(wt, "CLAUDE.md"));
+  rmSync(join(wt, ".agents"), { recursive: true });
+  rmSync(join(wt, "GEMINI.md"));
+  assert.deepEqual(away(), []);
+  // A tracked file that was changed is no longer the repository's own, and one that was removed plants nothing.
+  writeFileSync(join(wt, "AGENTS.md"), "new rules\n");
+  assert.deepEqual(away(), ["AGENTS.md"]);
+  writeFileSync(join(wt, "AGENTS.md"), "rules\n");
+  assert.deepEqual(away(), []);
+  unlinkSync(join(wt, ".codex", "config.toml"));
+  assert.deepEqual(away(), [], "a removed file is not planted");
+});
+
+test("pathsAwayFromBase sees a tracked file that became a link, and a change that the worker's own index hides", () => {
+  const { repo, wt, base } = withAgentFiles();
+  const away = () => pathsAwayFromBase(repo, wt, base, NAMES).sort();
+  unlinkSync(join(wt, "AGENTS.md"));
+  symlinkSync("/etc/hosts", join(wt, "AGENTS.md"));
+  assert.deepEqual(away(), ["AGENTS.md"], "a link in place of the file");
+  unlinkSync(join(wt, "AGENTS.md"));
+  writeFileSync(join(wt, "AGENTS.md"), "rules\n");
+  assert.deepEqual(away(), []);
+  // The worker can tell its own git to stop looking at a file, or at its place in the tree.
+  writeFileSync(join(wt, "AGENTS.md"), "steer\n");
+  must(wt, "update-index", "--assume-unchanged", "AGENTS.md");
+  writeFileSync(join(wt, ".codex", "config.toml"), "mcp\n");
+  must(wt, "update-index", "--skip-worktree", ".codex/config.toml");
+  assert.deepEqual(must(wt, "status", "--porcelain"), "", "the worker's own git shows nothing");
+  assert.deepEqual(away(), [".codex/config.toml", "AGENTS.md"]);
+});
+
+test("pathsAwayFromBase names an entry the base lacks by its name alone, whatever its contents let git list, and fails closed on a directory it cannot read", () => {
+  const { repo, wt, base } = withAgentFiles();
+  const away = () => pathsAwayFromBase(repo, wt, base, NAMES).sort();
+  // A directory the base lacks, that can be searched and not listed: git lists nothing, and the file is still opened by name.
+  mkdirSync(join(wt, ".agents"));
+  writeFileSync(join(wt, ".agents", "hooks.json"), "{}\n");
+  chmodSync(join(wt, ".agents"), 0o311);
+  try {
+    assert.deepEqual(away(), [".agents"]);
+  } finally {
+    chmodSync(join(wt, ".agents"), 0o755);
+  }
+  rmSync(join(wt, ".agents"), { recursive: true });
+  // A file that git does not list at all, a pipe.
+  spawnSync("/usr/bin/mkfifo", [join(wt, "GEMINI.md")]);
+  assert.deepEqual(away(), ["GEMINI.md"]);
+  unlinkSync(join(wt, "GEMINI.md"));
+  // A directory the base holds, with an unreadable one inside it that holds a new file.
+  mkdirSync(join(wt, ".codex", "sub"));
+  writeFileSync(join(wt, ".codex", "sub", "hooks.json"), "{}\n");
+  chmodSync(join(wt, ".codex", "sub"), 0o311);
+  try {
+    assert.deepEqual(away(), [".codex/sub"]);
+  } finally {
+    chmodSync(join(wt, ".codex", "sub"), 0o755);
+  }
+  rmSync(join(wt, ".codex", "sub"), { recursive: true });
+  assert.deepEqual(away(), []);
+});
+
+test("pathsAwayFromBase ignores the executable bit, reads names as they are, and sees a file the worker staged in its own index", () => {
+  const { repo, wt, base } = withAgentFiles();
+  chmodSync(join(wt, "AGENTS.md"), 0o755);
+  assert.deepEqual(pathsAwayFromBase(repo, wt, base, NAMES), [], "a mode alone is no content a tool reads");
+  chmodSync(join(wt, "AGENTS.md"), 0o644);
+  // A name that holds a glob character names that file and no other: the base tracks claude.*.md, and a file the glob would
+  // match lies untracked beside it.
+  const globbed = tempRepo();
+  writeFileSync(join(globbed, "claude.*.md"), "rules\n");
+  must(globbed, "add", "--", ":(literal)claude.*.md");
+  must(globbed, "commit", "-q", "-m", "Add a name with a glob");
+  const globBase = revParse(globbed, "HEAD");
+  const globWt = join(owned(), "task");
+  addWorktree(globbed, globWt, "wip/task", globBase);
+  writeFileSync(join(globWt, "claude.x.md"), "x\n");
+  assert.deepEqual(pathsAwayFromBase(globbed, globWt, globBase, ["claude.*.md"]), []);
+  // The worker's own git is told to hold what it added, and it is still away from the base.
+  writeFileSync(join(wt, ".codex", "extra.toml"), "x\n");
+  must(wt, "add", "-f", ".codex/extra.toml");
+  assert.deepEqual(pathsAwayFromBase(repo, wt, base, NAMES), [".codex/extra.toml"]);
+});
+
+test("pathsAwayFromBase reads a base with thousands of tracked files under an agent directory", () => {
+  const repo = tempRepo();
+  mkdirSync(join(repo, ".claude"));
+  const long = "x".repeat(100);
+  for (let i = 0; i < 7000; i++) writeFileSync(join(repo, ".claude", `${String(i).padStart(5, "0")}${long}`), "a\n");
+  must(repo, "add", ".claude");
+  must(repo, "commit", "-q", "-m", "Add many");
+  const base = revParse(repo, "HEAD");
+  const wt = join(owned(), "task");
+  addWorktree(repo, wt, "wip/task", base);
+  assert.deepEqual(pathsAwayFromBase(repo, wt, base, [".claude"]), []);
+  writeFileSync(join(wt, ".claude", `00042${long}`), "changed\n");
+  assert.deepEqual(pathsAwayFromBase(repo, wt, base, [".claude"]), [`.claude/00042${long}`]);
+});
+
+test("pathsAwayFromBase reads a file as the repository's own rules for line endings do, so a checkout with them is not a change", () => {
+  const { repo, wt, base } = withAgentFiles("AGENTS.md text eol=crlf\n");
+  assert.equal(readFileSync(join(wt, "AGENTS.md"), "utf8"), "rules\r\n", "the checkout converted it");
+  assert.deepEqual(pathsAwayFromBase(repo, wt, base, NAMES), []);
+  writeFileSync(join(wt, "AGENTS.md"), "other\r\n");
+  assert.deepEqual(pathsAwayFromBase(repo, wt, base, NAMES), ["AGENTS.md"]);
 });
 
 const objectIds = (repo: string): string[] =>

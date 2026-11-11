@@ -11,7 +11,7 @@ import { appendEvent, appendToolEvent, listProjects, loadState, loadToolState, n
 import { loadProjectConfig } from "./provision.ts";
 import { catalogGap, countActiveJobs, selectCandidate } from "./routing.ts";
 import { clampDetail, ensureDir, readJson, withProjectLock, withSlotsLock, writeFileAtomic, writeJsonAtomic } from "./store.ts";
-import { cancelStands, cancelStandsLocked, COULD_NOT_BUILD, handoffPrompt, pumpLocked, settleAcceptsLocked, startJobLocked } from "./tasks.ts";
+import { cancelStands, cancelStandsLocked, COULD_NOT_BUILD, handoffPrompt, plantedAgentPaths, plantedMessage, pumpLocked, settleAcceptsLocked, startJobLocked } from "./tasks.ts";
 
 const jobFile = (jobId: string) => join(jobDir(jobId), "job.json");
 const resultFile = (jobId: string) => join(jobDir(jobId), "result.json");
@@ -279,6 +279,10 @@ async function work(job: JobRecord, adapter: Adapter): Promise<JobResult> {
   // Verified before anything is built from it: a write boundary made from the path would name what a link at the root
   // leads to, and the start's own check, a moment later, could pass again.
   const root = worktreeRoot(job.worktree);
+  // The commands that start a job look first, so that a refusal here is for what a process left behind wrote after that look.
+  const task = loadState(job.projectId).tasks[job.taskId];
+  const planted = task === undefined ? [] : plantedAgentPaths(job.projectId, task, root);
+  if (planted.length > 0) return failedResult(clampDetail(plantedMessage(job.taskId, planted, `run mandor reassign ${job.taskId}`)));
   // The worker's own temporary directory, which the adapters of Codex and ZCode open to it in place of the shared ones.
   // One answer for the runner and the adapters: only a project that says so keeps the shared ones.
   const sharedTemp = project.sharedTemp === true;

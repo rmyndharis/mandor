@@ -53,6 +53,17 @@ test("lead skill has the lead answer a report that is blocked, partial or asks, 
   }
 });
 
+test("lead skill has the lead clear the agent paths that stopped a job, from the repository and not with git in the worktree", () => {
+  const lead = read("lead");
+  for (const term of [
+    "whose detail says that the worktree holds agent paths did not start", "which records nothing", "Delete what the repository lacks", "`git show <base>:<path>`",
+    "run in the repository and not in the worktree", "`ls -A` in the task worktree", "`mandor diff <slug>` shows how a tracked file differs",
+    "Then run the command again, or `mandor reassign <slug>` for a job that failed",
+  ]) {
+    assert.ok(lead.includes(term), term);
+  }
+});
+
 test("lead skill tells a new conversation to handle integrating and takeover tasks before it waits", () => {
   const lead = read("lead");
   assert.ok(lead.includes("(needs-review, stalled, integrating or takeover), then wait from the summary's cursor"));

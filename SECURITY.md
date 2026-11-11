@@ -22,6 +22,7 @@ Fixes go into the latest release only.
 
 - A worker whose commands or edits write outside its task worktree, the cache directories the project opens, its own home (ZCode) and its own temporary directory, which stands in place of the shared ones for Codex and ZCode unless the project keeps them open with `--shared-temp`, or whose commands reach the network in a project that has not allowed it. An Antigravity job is refused in such a project; where one runs, its sandbox's proxy decides what its commands reach, as the README says.
 - A credential, token or agent socket that reaches a worker's environment.
+- A file that one round of a worker leaves in the root of its worktree, such as a tool's settings or an instruction file, and that the next job's tool runs or follows, where mandor starts that job. Before a command records a round or queues a job, and again before each job starts, the root is checked against the base commit, for Codex, ZCode and Antigravity alike. A process that an earlier round left running can still write after the check.
 - A change that is committed without the review that accept requires, or a tree that differs from the one the review showed.
 - A guard that can be bypassed: a denied path, a symlink to one, or a hostile git configuration that is not refused.
 - A hook that runs a command it should not, or breaks a session.

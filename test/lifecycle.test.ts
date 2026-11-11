@@ -461,6 +461,101 @@ test("an answer is taken at the fix round limit, where a fix stalls the task, an
   assert.deepEqual([task(s, "hello").stallReason, task(s, "hello").fixRounds], [null, 3]);
 });
 
+test("a job does not start where the worktree holds an agent path that the repository does not, and runs again once the path is removed", async (t) => {
+  const s = setup(t);
+  tasks.goalStart(s.repo, GOAL, null);
+  writeScenarios([{ ...DONE, threadId: THREAD }, DONE]);
+  send(s, "hello");
+  await needsReview(s, "hello");
+  // The fix waits for a slot, and what a process left behind from an earlier round writes meanwhile is where the next tool reads it.
+  const slots = occupy(2);
+  tasks.verdictFix(s.repo, "hello", s.file("notes.md", NOTES));
+  const wt = task(s, "hello").worktree!;
+  mkdirSync(join(wt, ".codex"));
+  writeFileSync(join(wt, ".codex", "config.toml"), "[mcp_servers.x]\ncommand = \"/usr/bin/touch\"\n");
+  writeFileSync(join(wt, "claude.\u001b[31mred.md"), "x\n");
+  slots.forEach(release);
+  pump(s);
+  await stalled(s, "hello", "failed");
+  const detail = Object.values(loadState(s.id).jobs).findLast((j) => j.taskId === "hello")!.outcome!.detail;
+  assert.equal(detail, "the worktree holds agent paths that the repository does not hold as they are; restore or delete them in the task worktree, then run mandor reassign hello: .codex/, claude.\\x1b[31mred.md");
+  assert.equal(execs().length, 1, "the worker did not start");
+  rmSync(join(wt, ".codex"), { recursive: true });
+  rmSync(join(wt, "claude.\u001b[31mred.md"));
+  tasks.reassign(s.repo, "hello");
+  await needsReview(s, "hello");
+  assert.equal(execs().length, 2);
+});
+
+test("a fix, an answer, a drop and a reassign are refused at once over a planted agent path, with nothing recorded and no round counted", async (t) => {
+  const s = setup(t);
+  must(s.repo, "config", "user.email", "dev@host.test");
+  tasks.goalStart(s.repo, GOAL, null);
+  writeScenarios([{ ...ASKS({ status: "blocked" }), writeFile: [{ path: "hello.txt", content: "hello\n" }] }, DONE, DONE]);
+  send(s, "hello");
+  await needsReview(s, "hello");
+  const wt = task(s, "hello").worktree!;
+  mkdirSync(join(wt, ".codex"));
+  writeFileSync(join(wt, ".codex", "config.toml"), "[mcp_servers.x]\n");
+  const refusal = (then: string) => new RegExp(`^Error: the worktree holds agent paths that the repository does not hold as they are; restore or delete them in the task worktree, then ${then}: \\.codex/$`);
+  assert.throws(() => tasks.verdictFix(s.repo, "hello", s.file("n.md", NOTES)), refusal("run the command again"));
+  assert.throws(() => tasks.verdictAnswer(s.repo, "hello", s.file("a.md", "Yes.\n")), refusal("run the command again"));
+  assert.deepEqual([task(s, "hello").status, task(s, "hello").fixRounds, task(s, "hello").jobIds.length, verdicts(s)], ["needs-review", 0, 1, []]);
+  // A stalled task is reassigned over nothing planted.
+  setTask(s, "hello", { status: "stalled", stallReason: "failed" });
+  assert.throws(() => tasks.reassign(s.repo, "hello"), refusal("run mandor reassign hello again"));
+  assert.equal(task(s, "hello").status, "stalled");
+  // A drop resets the goal first, so it asks before it does.
+  setTask(s, "hello", { status: "needs-review", stallReason: null });
+  rmSync(join(wt, ".codex"), { recursive: true });
+  accept(s, "hello");
+  const tip = must(s.repo, "rev-parse", GOAL);
+  mkdirSync(join(wt, ".codex"));
+  assert.throws(() => tasks.drop(s.repo, "hello", s.file("d.md", "Redo it.\n")), refusal("run the command again"));
+  assert.equal(must(s.repo, "rev-parse", GOAL), tip, "the commit is still there");
+  assert.equal(task(s, "hello").status, "integrating");
+});
+
+test("an ordinary untracked file and an ignored one do not stop a job, and the names a refusal shows are few, short and plain", async (t) => {
+  const s = setup(t);
+  tasks.goalStart(s.repo, GOAL, null);
+  writeScenarios([{ ...DONE, threadId: THREAD }, DONE]);
+  send(s, "hello");
+  await needsReview(s, "hello");
+  const wt = task(s, "hello").worktree!;
+  writeFileSync(join(wt, "notes.txt"), "x\n");
+  writeFileSync(join(wt, ".gitignore"), "build/\n");
+  mkdirSync(join(wt, "build"));
+  writeFileSync(join(wt, "build", "out.js"), "x\n");
+  tasks.verdictFix(s.repo, "hello", s.file("n.md", NOTES));
+  await needsReview(s, "hello");
+  assert.equal(execs().length, 2, "the job ran");
+  const names = Array.from({ length: 7 }, (_, i) => `claude.${i}.md`);
+  assert.equal(tasks.plantedMessage("hello", names, "run X"), `the worktree holds agent paths that the repository does not hold as they are; restore or delete them in the task worktree, then run X: ${names.slice(0, 5).join(", ")}, and 2 more`);
+  assert.ok(tasks.plantedMessage("hello", [`claude.${"a".repeat(80)}.md`], "run X").endsWith(`: claude.${"a".repeat(33)}`), "a name is cut at forty characters");
+  assert.ok(tasks.plantedMessage("hello", ["claude.\u202eevil.md", " claude.x.md "], "run X").endsWith(": claude.\\u202eevil.md, claude.x.md"), "a bidirectional override is shown, not obeyed, and a name is trimmed");
+});
+
+test("the agent files that the repository holds do not stop a job, until one of them is changed", async (t) => {
+  const s = setup(t);
+  writeFileSync(join(s.repo, "AGENTS.md"), "rules\n");
+  must(s.repo, "add", "--", "AGENTS.md");
+  must(s.repo, "commit", "-q", "-m", "Add the agent file");
+  tasks.goalStart(s.repo, GOAL, null);
+  writeScenarios([{ ...DONE, threadId: THREAD }, DONE]);
+  send(s, "hello");
+  await needsReview(s, "hello");
+  assert.equal(execs().length, 1, "the repository's own AGENTS.md is no reason to stop");
+  const wt = task(s, "hello").worktree!;
+  writeFileSync(join(wt, "AGENTS.md"), "steer\n");
+  assert.throws(() => tasks.verdictFix(s.repo, "hello", s.file("notes.md", NOTES)), /agent paths that the repository does not hold as they are; restore or delete them in the task worktree, then run the command again: AGENTS\.md$/);
+  assert.equal(execs().length, 1);
+  writeFileSync(join(wt, "AGENTS.md"), "rules\n");
+  tasks.verdictFix(s.repo, "hello", s.file("notes.md", NOTES));
+  await needsReview(s, "hello");
+  assert.equal(execs().length, 2, "restored, the job runs");
+});
+
 test("a fix at the tool's limit waits, and the pump starts it when a slot frees", async (t) => {
   const s = setup(t);
   tasks.goalStart(s.repo, GOAL, null);

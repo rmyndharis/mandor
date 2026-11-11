@@ -7,7 +7,7 @@ import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { test, type TestContext } from "node:test";
 import { assertOutsideRepos, mandorHome, processAlive, processStart, projectDir, scratchDir, workerEnv, worktreesDir } from "../src/home.ts";
-import { appendJsonl, clampDetail, ensureDir, fileRef, readJson, readJsonl, withProjectLock, withSlotsLock, writeJsonAtomic } from "../src/store.ts";
+import { appendJsonl, clampDetail, ensureDir, fileRef, maskControls, readJson, readJsonl, withProjectLock, withSlotsLock, writeJsonAtomic } from "../src/store.ts";
 import { temp, tempHome, tempRepo } from "./helpers.ts";
 
 const procs = join(import.meta.dirname, "procs");
@@ -385,6 +385,13 @@ test("a temp name a killed holder left linked to the lock never changes it", () 
   assert.equal(readFileSync(leftover, "utf8"), planted);
   assert.deepEqual(readdirSync(projectDir("p-leftover")), [basename(leftover)]);
   assert.equal(breakLines(home).length, 1);
+});
+
+test("maskControls writes the control bytes and the marks that turn text around as escapes, and leaves a tab, a line end and a CRLF alone", () => {
+  assert.equal(maskControls("a\u001b[31mb\u0000c\u009bd"), "a\\x1b[31mb\\x00c\\x9bd");
+  assert.equal(maskControls("a\u202eb\u2066c\u2069d\u202ae"), "a\\u202eb\\u2066c\\u2069d\\u202ae");
+  assert.equal(maskControls("a\tb\nc\r\nd"), "a\tb\nc\r\nd");
+  assert.equal(maskControls("a\rb"), "a\\x0db");
 });
 
 test("a dangling symlink at the lock path counts as held without spinning", () => {
