@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { TestContext } from "node:test";
 import { test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { getAdapter, loadModels, modelsReport, readModelCache, refreshModels } from "../src/adapters/index.ts";
-import { createZcodeAdapter, lastJsonObject, REPORT_FORMAT, TESTED_ZCODE_VERSION, zcodeHome } from "../src/adapters/zcode.ts";
+import { createZcodeAdapter, lastJsonObject, REPORT_FORMAT, TESTED_ZCODE_VERSION, zcodeEnv, zcodeHome } from "../src/adapters/zcode.ts";
 import { REPORT_SCHEMA } from "../src/brief.ts";
 import { DEFAULT_CONFIG, resolveBin } from "../src/config.ts";
 import type { Candidate, JobRecord, RawRun } from "../src/contracts.ts";
@@ -268,6 +268,19 @@ test("an app bundle is started as Node with its script, and its catalog is the b
   assert.deepEqual(run.args.slice(at, at + 3), [j.bin, join(app, "Resources", "glm", "zcode.cjs"), "-p"]);
   assert.equal(run.env.ELECTRON_RUN_AS_NODE, "1");
   assert.equal(readFileSync(join(home, "zcode", "home", "zcode-builtin.json"), "utf8"), readFileSync(join(app, "Resources", "config", "provider", "zcode-builtin.json"), "utf8"));
+});
+
+test("the catalog copy in the worker home is readable by the user only, and stays so when it is copied again", () => {
+  tempHome();
+  const dir = temp("mandor-zcatalog-");
+  mkdirSync(join(dir, "provider"));
+  const catalog = join(dir, "provider", "zcode-builtin.json");
+  writeFileSync(catalog, "{}");
+  chmodSync(catalog, 0o644);
+  for (const call of ["first", "second"]) {
+    zcodeEnv(join(dir, "bin"), {});
+    assert.equal(statSync(join(zcodeHome(), "zcode-builtin.json")).mode & 0o777, 0o600, `after the ${call} copy`);
+  }
 });
 
 test("detectModels lists the signed-in plan's enabled models with the levels the catalog's last matching rule gives", () => {

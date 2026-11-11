@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, readFileSync, realpathSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { parseReport, REPORT_SCHEMA } from "../brief.ts";
@@ -52,6 +52,8 @@ export function zcodeEnv(bin: string, base: Record<string, string>): Record<stri
   const { catalog, electron } = layout(bin);
   const copy = join(home, "zcode-builtin.json");
   copyFileSync(catalog, copy);
+  // A copy takes the mode of its source each time, and the app's catalog is readable by everyone.
+  chmodSync(copy, 0o600);
   return { ...base, HOME: home, ZCODE_BUILTIN_PROVIDER_CONFIG_FILE: copy, ...(electron ? { ELECTRON_RUN_AS_NODE: "1" } : {}) };
 }
 
