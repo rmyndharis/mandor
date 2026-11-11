@@ -151,25 +151,34 @@ export const WORKER_TOOLS: readonly ToolName[] = ["codex", "zcode", "agy"];
 
 const ZCODE_APP_BIN = "/Applications/ZCode.app/Contents/MacOS/ZCode";
 
+// A name with a slash is a path and is never searched on PATH, as in a shell. A relative one would resolve against the
+// directory of the command that starts the job, which can be a task worktree, where a file a worker wrote would then be
+// started as the tool, so it is refused. A "~" is not expanded here, so a path that starts with one is relative.
+function pathBin(value: string, source: string, alternative = ""): string {
+  if (!isAbsolute(value)) throw new Error(`refusing ${source} "${value}": a relative path; use an absolute path${alternative}`);
+  return resolve(value);
+}
+
+const OR_BARE = ", or a bare name that is looked up on PATH";
+
 // The binary a job of the tool starts, always absolute. zcode ships inside its app, so a bare name means the app's
 // own executable and a path names another one.
 export function resolveBin(tool: ToolName, cfg: Config): string {
   if (tool === "codex") return resolveCodexBin(cfg);
-  if (tool === "zcode") return cfg.tools.zcode.bin.includes("/") ? resolve(cfg.tools.zcode.bin) : ZCODE_APP_BIN;
   const { bin } = cfg.tools[tool];
-  if (bin.includes("/")) return resolve(bin);
+  if (bin.includes("/")) return pathBin(bin, `tools.${tool}.bin`, tool === "zcode" ? ", or a bare name for the app's own executable" : OR_BARE);
+  if (tool === "zcode") return ZCODE_APP_BIN;
   const found = onPath(bin);
   if (found === null) throw new Error(`${tool} not found on PATH`);
   return found;
 }
 
 // The env override is not checked for existence: tests point it at a fake that may not be written yet.
-// A name with a slash is a path, never searched on PATH, as in a shell; the result is always absolute.
 export function resolveCodexBin(cfg: Config): string {
   const override = process.env.MANDOR_CODEX_BIN;
-  if (override) return resolve(override);
+  if (override) return pathBin(override, "MANDOR_CODEX_BIN");
   const bin = cfg.tools.codex.bin;
-  if (bin.includes("/")) return resolve(bin);
+  if (bin.includes("/")) return pathBin(bin, "tools.codex.bin", OR_BARE);
   const found = onPath(bin);
   if (found === null) throw new Error("codex not found on PATH");
   return found;

@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { basename, isAbsolute, join, resolve } from "node:path";
+import { basename, isAbsolute, join } from "node:path";
 import { test, type TestContext } from "node:test";
 import type { Candidate } from "../src/contracts.ts";
-import { DEFAULT_CONFIG, formatCandidate, loadConfig, parseCandidate, resolveCodexBin, validateConfig } from "../src/config.ts";
+import { DEFAULT_CONFIG, formatCandidate, loadConfig, parseCandidate, resolveBin, resolveCodexBin, validateConfig, WORKER_TOOLS } from "../src/config.ts";
 import { IGNORE_USER_CONFIG } from "../src/spikes.ts";
 import { temp, tempHome } from "./helpers.ts";
 
@@ -220,9 +220,15 @@ test("resolveCodexBin prefers MANDOR_CODEX_BIN", () => {
   assert.equal(resolveCodexBin(cfg), FAKE); // the file does not have to exist
 });
 
-test("resolveCodexBin makes a relative MANDOR_CODEX_BIN absolute", (t) => {
-  setEnv(t, "MANDOR_CODEX_BIN", "rel/codex");
-  assert.equal(resolveCodexBin(clone()), resolve("rel/codex"));
+// A relative path resolves against the directory of the command that starts the job, which can be a task worktree,
+// where a file a worker wrote would then be started as the tool.
+const RELATIVE = ["rel/codex", "./codex", "../codex", "bin/codex", "sub/../codex", "~/codex"];
+
+test("resolveCodexBin refuses a relative MANDOR_CODEX_BIN, a bare name included", (t) => {
+  for (const value of [...RELATIVE, "codex", "~"]) {
+    setEnv(t, "MANDOR_CODEX_BIN", value);
+    assert.throws(() => resolveCodexBin(clone()), new RegExp(`^Error: refusing MANDOR_CODEX_BIN "${value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}": a relative path`), value);
+  }
 });
 
 test("resolveCodexBin returns an absolute configured bin as is", (t) => {
@@ -263,19 +269,23 @@ test("resolveCodexBin never searches the working directory through an empty or r
   assert.ok(isAbsolute(got));
 });
 
-test("a configured bin with a slash is resolved against the working directory and never searched on PATH", (t) => {
+test("a configured bin that is a relative path is refused for every tool and never searched on PATH", (t) => {
   setEnv(t, "MANDOR_CODEX_BIN", undefined);
   const onPath = tempDir();
-  binIn(onPath, "codex", 0o755);
+  for (const tool of ["codex", "zcode", "agy"]) binIn(onPath, tool, 0o755);
   setEnv(t, "PATH", onPath);
-  for (const bin of ["./codex", "../codex", "bin/codex", "sub/../codex"]) {
-    const cfg = clone();
-    cfg.tools.codex.bin = bin;
-    const got = resolveCodexBin(cfg);
-    assert.equal(got, resolve(bin), bin);
-    assert.notEqual(got, join(onPath, "codex"), bin);
-    assert.ok(isAbsolute(got), bin);
+  for (const tool of WORKER_TOOLS) {
+    for (const bin of RELATIVE) {
+      const cfg = clone();
+      cfg.tools[tool].bin = bin;
+      assert.throws(() => resolveBin(tool, cfg), new RegExp(`^Error: refusing tools\\.${tool}\\.bin "[^"]*": a relative path`), `${tool} ${bin}`);
+    }
   }
+  const cfg = clone();
+  cfg.tools.codex.bin = "/no/such/dir/codex";
+  assert.equal(resolveBin("codex", cfg), "/no/such/dir/codex", "an absolute path still passes");
+  cfg.tools.zcode.bin = "/no/such/dir/zcode";
+  assert.equal(resolveBin("zcode", cfg), "/no/such/dir/zcode");
 });
 
 test("resolveCodexBin throws when the name is not on PATH", (t) => {

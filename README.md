@@ -206,12 +206,12 @@ The lead's commands print JSON; `status`, `show` and `logs` print plain text.
 }
 ```
 
-Each tier lists its candidates as `tool:model@effort`, in order of preference; `mandor models` shows what each enabled tool offers. A candidate the model list cannot run (a model your plan lacks, or one that was renamed) is passed over, and `mandor init` and `mandor models` warn about it. `maxParallel` caps the workers a tool runs at once, `jobTimeoutMinutes` ends a job that runs too long, and `maxFixRounds` is how many fix rounds a worker gets before the task needs a takeover. The Indonesian tier names `ringan`, `sedang` and `berat` are still read as `light`, `medium` and `heavy`, in `config.json` and for `--tier`.
+Each tier lists its candidates as `tool:model@effort`, in order of preference; `mandor models` shows what each enabled tool offers. A candidate the model list cannot run (a model your plan lacks, or one that was renamed) is passed over, and `mandor init` and `mandor models` warn about it. `maxParallel` caps the workers a tool runs at once, `jobTimeoutMinutes` ends a job that runs too long, and `maxFixRounds` is how many fix rounds a worker gets before the task needs a takeover. A `bin` is an absolute path or a bare name, which is looked up on `PATH` (for ZCode it means the app's own executable): a relative path is refused, as it would resolve in the directory of whichever command starts the job. The Indonesian tier names `ringan`, `sedang` and `berat` are still read as `light`, `medium` and `heavy`, in `config.json` and for `--tier`.
 
 | Variable | Effect |
 | --- | --- |
 | `MANDOR_HOME` | The state directory. Must be an absolute path. Defaults to `~/.mandor` |
-| `MANDOR_CODEX_BIN` | The Codex binary. Overrides `tools.codex.bin` and the `PATH` lookup |
+| `MANDOR_CODEX_BIN` | The Codex binary, as an absolute path. Overrides `tools.codex.bin` and the `PATH` lookup |
 | `MANDOR_JOB` | Set by mandor in a worker's environment to the job id. You do not set it |
 
 ## ZCode workers
