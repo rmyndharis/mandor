@@ -4,6 +4,10 @@ All notable changes to mandor are recorded here. The format follows [Keep a Chan
 
 ## [Unreleased]
 
+### Changed
+
+- A task slug or a goal branch made only of digits is refused.
+
 ### Fixed
 
 - A ZCode or Antigravity report followed by text that holds braces is read as the report, not as a failed run.

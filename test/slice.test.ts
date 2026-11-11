@@ -2109,6 +2109,28 @@ test("assertRepoOutsideHome refuses a repository under the home however the home
   }
 });
 
+test("a task slug or a goal branch of digits only is refused", (t) => {
+  const s = setup(t);
+  fillSlots();
+  // Records are keyed by slug and by branch, and an object lists whole-number keys first, in numeric order.
+  for (const branch of ["2026", "007", "0"]) {
+    assert.throws(() => goalStart(s.repo, branch, null), /digits only/, branch);
+    assert.equal(must(s.repo, "branch", "--list", branch), "", branch);
+  }
+  assert.equal(ledgerSize(s.id), 0);
+  goalStart(s.repo, GOAL, null);
+  for (const slug of ["2026", "007", "0"]) {
+    assert.throws(() => send(s, slug), /digits only/, slug);
+    assert.equal(task(s, slug), undefined, slug);
+    assert.equal(existsSync(join(worktreesDir(s.id), `task-${slug}`)), false, slug);
+  }
+  for (const slug of ["1a", "a1"]) {
+    send(s, slug);
+    assert.ok(task(s, slug), slug);
+  }
+  goalStart(s.repo, "feat/2026", null);
+});
+
 // CLI
 
 test("the CLI prints JSON for scratch, goal start, plan set, dispatch, wait, verdict and confirm", async (t) => {

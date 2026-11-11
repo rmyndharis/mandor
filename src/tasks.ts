@@ -326,6 +326,8 @@ export function goalStart(cwd: string, branch: string, from: string | null): { g
   refuseNames(checkName(branch).map((v) => v.detail));
   // wip/ holds the disposable task branches: no accept can commit on one, and a branch named wip blocks them all.
   if (branch === "wip" || branch.startsWith("wip/")) throw new Error(`refusing goal branch ${branch}: wip/ is for task branches`);
+  // Goals are keyed by branch, and a name of digits only reorders them as it would a task slug.
+  if (/^\d+$/.test(branch)) throw new Error(`refusing goal branch ${branch}: a name of digits only is not allowed`);
   refuseDrivers(root);
   assertRepoOutsideHome(root);
   const config = loadProjectConfig(id);
@@ -399,7 +401,9 @@ function checkUse(use: Candidate, tier: Tier, models: ModelInfo[]): Candidate {
   return (checked as { candidate: Candidate }).candidate;
 }
 
-const SLUG = /^[a-z0-9][a-z0-9-]*$/;
+// Not digits only: records are keyed by slug, and an object lists whole-number keys first, in numeric order, so such a
+// name would reorder the tasks that wait for a slot and the session summary.
+const SLUG = /^(?!\d+$)[a-z0-9][a-z0-9-]*$/;
 
 // Three phases, so git and provisioning run without the project lock: reserve the slug, build the worktree, record.
 export function dispatch(cwd: string, o: { goal: string; slug: string; tier: Tier; briefFile: string;
@@ -409,7 +413,7 @@ export function dispatch(cwd: string, o: { goal: string; slug: string; tier: Tie
   const models = loadCatalog();
   assertOutsideRepos(o.briefFile, projectRoot);
   const { slug } = o;
-  refuseNames([...(SLUG.test(slug) ? [] : [`invalid task slug "${slug}": use lowercase letters, digits and -`]), ...checkName(slug).map((v) => v.detail)]);
+  refuseNames([...(SLUG.test(slug) ? [] : [`invalid task slug "${slug}": use lowercase letters, digits and -, and not digits only`]), ...checkName(slug).map((v) => v.detail)]);
   // Every start needs its tool's binary, so nothing is recorded while an enabled tool lacks one, and it comes first
   // because its absence also empties the catalog. Resolving searches PATH but takes a configured path on trust.
   const config = loadConfig();
