@@ -26,9 +26,19 @@ function gitEnv(location: Location): Record<string, string | undefined> {
   return { ...env, ...location };
 }
 
-function run(args: string[], cwd: string, location: Location = {}): Result {
+// limitMs: a command whose hooks can run for as long as they like gets a limit. It starts in a process group of its own, so
+// that what is left of its hooks, a child that outlives git, goes with it when the time is up.
+function run(args: string[], cwd: string, location: Location = {}, limitMs?: number): Result {
   // Node's default 1 MiB buffer kills git and truncates large ignored-file listings and diffs.
-  const r = spawnSync("git", args, { cwd, env: gitEnv(location), maxBuffer: 64 * 1024 * 1024 });
+  const r = spawnSync("git", args, { cwd, env: gitEnv(location), maxBuffer: 64 * 1024 * 1024, ...(limitMs === undefined ? {} : { timeout: limitMs, killSignal: "SIGKILL", detached: true }) });
+  if (limitMs !== undefined && (r.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT") {
+    if (r.pid !== undefined) {
+      try {
+        process.kill(-r.pid, "SIGKILL");
+      } catch {} // the group is gone already
+    }
+    return { code: 1, stdout: Buffer.alloc(0), stderr: `git ${args.find((a) => !a.startsWith("-") && !a.includes("=")) ?? ""} did not end within ${Math.round(limitMs / 1000)} s and was stopped, with what it started` };
+  }
   if (r.error === undefined && typeof r.status === "number") return { code: r.status, stdout: r.stdout, stderr: r.stderr.toString() };
   // A spawn error or a kill is a failure, and its partial output is never handed on.
   return { code: 1, stdout: Buffer.alloc(0), stderr: r.error ? r.error.message : `git ${args[0]} killed by ${r.signal}` };
@@ -38,14 +48,14 @@ function run(args: string[], cwd: string, location: Location = {}): Result {
 // printed, so a command that shows an error to the lead keeps them out of the output.
 export class GitFailure extends Error {}
 
-function okBytes(args: string[], cwd: string, location: Location = {}): Buffer {
-  const r = run(args, cwd, location);
+function okBytes(args: string[], cwd: string, location: Location = {}, limitMs?: number): Buffer {
+  const r = run(args, cwd, location, limitMs);
   if (r.code !== 0) throw new GitFailure(`git ${args.join(" ")} failed in ${cwd}: ${r.stderr.trim()}`);
   return r.stdout;
 }
 
-function ok(args: string[], cwd: string, location: Location = {}): string {
-  return okBytes(args, cwd, location).toString();
+function ok(args: string[], cwd: string, location: Location = {}, limitMs?: number): string {
+  return okBytes(args, cwd, location, limitMs).toString();
 }
 
 export function git(args: string[], cwd: string): { code: number; stdout: string; stderr: string } {
@@ -277,6 +287,8 @@ interface Bound {
   run(args: string[]): Result;
   ok(args: string[]): string;
   okBytes(args: string[]): Buffer;
+  // As ok, with a limit on how long the command may run (see run).
+  okWithin(limitMs: number, args: string[]): string;
   confined(allow: [string, string][], args: string[], extra?: Location): Result;
   // The same binding with more git environment, as a staging that keeps its index and objects of its own needs.
   with(extra: Location): Bound;
@@ -419,6 +431,7 @@ function bind(repo: string, worktree: string, userConfig = false): Bound {
     run: (a) => run([...pre, ...a], real, e),
     ok: (a) => ok([...pre, ...a], real, e),
     okBytes: (a) => okBytes([...pre, ...a], real, e),
+    okWithin: (limitMs, a) => ok([...pre, ...a], real, e, limitMs),
     confined: (allow, a, extra = {}) => confinedRun(real, { ...e, ...extra }, pre, allow, a),
     with: (extra) => make({ ...e, ...extra }),
   });
@@ -738,7 +751,12 @@ function commitHeader(raw: string, key: string): string | undefined {
   return found.length === 1 ? found[0].slice(key.length + 1) : undefined;
 }
 
-export function commitStaged(repo: string, worktree: string, expectedPaths: string[], message: string, allowTestIdentity: boolean): string {
+// How long the commit of an accept may run, the repository's own hooks included. A hook that never returned would hold the
+// project lock, which every other command waits for, so the commit is stopped at the limit, with what it started, and the
+// accept is undone as for any other failure of the commit.
+export const COMMIT_LIMIT_MS = 10 * 60_000;
+
+export function commitStaged(repo: string, worktree: string, expectedPaths: string[], message: string, allowTestIdentity: boolean, limitMs = COMMIT_LIMIT_MS): string {
   // Keep the user's hooks and config: this commit is the reviewed patch on the goal tip, in an integration worktree.
   const g = bind(repo, worktree, true);
   const branch = lines(g.run(["symbolic-ref", "-q", "HEAD"]).stdout.toString())[0]; // empty when HEAD is detached
@@ -767,7 +785,7 @@ export function commitStaged(repo: string, worktree: string, expectedPaths: stri
   const tip = g.ok(["rev-parse", "--verify", "HEAD"]).trim();
   const tree = g.ok(["write-tree"]).trim();
   // Hooks still run, so HEAD must then name exactly the commit asked for. Verbatim keeps git's cleanup off the message.
-  g.ok([...IDENTITY, "-c", pathTag("commit", worktree), "commit", "--cleanup=verbatim", "-m", message]);
+  g.okWithin(limitMs, [...IDENTITY, "-c", pathTag("commit", worktree), "commit", "--cleanup=verbatim", "-m", message]);
   const raw = g.ok(["cat-file", "commit", "HEAD"]); // the raw object, which no log config can decorate
   const end = raw.indexOf("\n\n");
   if (end < 0 || commitHeader(raw, "tree") !== tree || commitHeader(raw, "parent") !== tip || emailOf(commitHeader(raw, "author")) !== author

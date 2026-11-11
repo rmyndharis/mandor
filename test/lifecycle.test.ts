@@ -1853,6 +1853,31 @@ test("a cancel that cannot copy the worker's change keeps the worktree and says 
   assert.match(runnerLog(), /cancel of hello: .*INJECT/);
 });
 
+test("a commit hook that never returns is stopped at the limit with what it started, the accept is undone, and it can be run again", async (t) => {
+  const s = setup(t);
+  tasks.goalStart(s.repo, GOAL, null);
+  writeScenarios([{ ...DONE, writeFile: [{ path: "hello.txt", content: "hello\n" }] }]);
+  send(s, "hello");
+  await needsReview(s, "hello");
+  reviewPack(s.repo, "hello");
+  const tip = must(s.repo, "rev-parse", GOAL);
+  const stop = stopPoint();
+  const unshim = shimGit(t, `*" commit --cleanup=verbatim "*`, stop.action);
+  const evidence = s.file("evidence.md", "node --test: 1 passed\n");
+  const message = s.file("message.txt", MESSAGE);
+  const started = Date.now();
+  assert.throws(() => tasks.verdictAccept(s.repo, "hello", evidence, message, { allowTestIdentity: true, commitLimitMs: 800 }), /could not commit the change of hello; see .*git\.stderr$/);
+  assert.ok(Date.now() - started < 20_000, "it did not wait for the hook");
+  assert.equal(stop.reached(), false, "what the hook started is stopped too");
+  assert.match(readFileSync(join(s.home, "logs", "git.stderr"), "utf8"), /did not end within 1 s and was stopped/);
+  assert.equal(must(s.repo, "rev-parse", GOAL), tip, "nothing landed");
+  assert.deepEqual([task(s, "hello").status, tasks.acceptInDoubt(s.id, loadState(s.id).goals[GOAL])], ["needs-review", null], "the marker went with the attempt");
+  unshim();
+  assert.equal(task(s, "hello").status, "needs-review");
+  accept(s, "hello");
+  assert.equal(task(s, "hello").status, "integrating");
+});
+
 test("a cancel of a task whose worktree directory is already gone has no change to copy, and still clears what git kept of it", async (t) => {
   const s = setup(t);
   tasks.goalStart(s.repo, GOAL, null);

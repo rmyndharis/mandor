@@ -834,13 +834,20 @@ test("an accept killed with its whole group during a slow pre-commit hook is res
   reviewable(s, "hello", { "hello.txt": "hello\n" });
   const tip = must(s.repo, "rev-parse", GOAL);
   const entered = join(s.home, "hook-entered");
-  hook(s.repo, "pre-commit", `touch "${entered}"; exec sleep 30`);
+  const sleeper = `sleep 30.${Math.floor(Math.random() * 1e9)}`;
+  hook(s.repo, "pre-commit", `touch "${entered}"; exec ${sleeper}`);
   reviewPack(s.repo, "hello");
   const args = ["verdict", "hello", "accept", "--evidence-file", s.file("e.md", "ok\n"), "--message-file", s.file("m.txt", MESSAGE)];
   const c = detached(s, t, args);
   assert.ok(await until(() => existsSync(entered)), "the commit reaches its hook");
   kill(-c.pid!);
   await ended(c);
+  // The commit runs in a group of its own, so that it can be stopped with its hooks at the limit, and a kill of the
+  // command's group leaves it: it goes now, with its hook, as when everything the session started is stopped.
+  const hooked = () => execFileSync("/bin/ps", ["-axww", "-o", "pgid=,command="], { encoding: "utf8" }).split("\n").find((l) => l.trim().endsWith(sleeper));
+  assert.ok(hooked() !== undefined, "the hook is still there");
+  kill(-Number(hooked()!.trim().split(/\s+/)[0]));
+  assert.ok(await until(() => hooked() === undefined), "the hook is gone");
   assert.equal(must(goal.integrationWorktree, "status", "--porcelain"), "A  hello.txt", "the change stays staged");
   unhook(s.repo, "pre-commit");
   const again = cli(s, ...args);

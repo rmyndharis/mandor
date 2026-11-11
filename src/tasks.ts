@@ -782,7 +782,7 @@ function rebaseLocked(root: string, id: string, task: TaskRecord, tip: string, b
 }
 
 export function verdictAccept(cwd: string, slug: string, evidenceFile: string, messageFile: string,
-  opts: { allowTestIdentity?: boolean } = {}): { commit: string; cursor: number } | RebaseResult {
+  opts: { allowTestIdentity?: boolean; commitLimitMs?: number } = {}): { commit: string; cursor: number } | RebaseResult {
   const { root, id } = resolveProject(cwd);
   const models = loadCatalog();
   for (const f of [evidenceFile, messageFile]) assertOutsideRepos(f, projectRoot);
@@ -855,7 +855,7 @@ export function verdictAccept(cwd: string, slug: string, evidenceFile: string, m
     try {
       applyToIndex(root, integration, patch);
       writeJsonAtomic(intent, { slug, tip, tree: indexTree(root, integration) });
-      commit = commitStaged(root, integration, changedPaths(text).map((c) => c.path), message, allowTestIdentity);
+      commit = commitStaged(root, integration, changedPaths(text).map((c) => c.path), message, allowTestIdentity, opts.commitLimitMs);
     } catch (e) {
       // The marker goes only with nothing of this attempt left, so the next accept recovers a commit that landed anyway.
       try {
