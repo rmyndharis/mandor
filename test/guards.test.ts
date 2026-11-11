@@ -679,6 +679,31 @@ test("the bare name and near misses of the tool's forms pass in an added line, a
   assert.equal(toolTrace(tool), null);
 });
 
+// Where the repository's own subject uses the name, a foreman's status, plan or review is ordinary prose. What only the
+// tool writes stays a trace: its home, its variables, its skill ids, a command no sentence holds, a path to the
+// launcher, and any command with an option after it.
+test("with the name a word of the repository's own, the name before an ordinary word passes and an invocation does not", () => {
+  const prose = [`update ${tool} status when the shift ends`, `// ${tool} review harian`, `const label = "${tool} project";`, `the ${tool} goal for this week`,
+    `${tool} dispatch jadwal`, `${tool} ready codex`];
+  for (const text of prose) {
+    assert.ok(flagged(text), text);
+    assert.deepEqual(checkDiff(added("NOTES.md", [text]), [], true), [], text);
+    assert.deepEqual(checkCommitMessage(`Fix it\n\n${text}\n`, [], true), [], text);
+  }
+  const invoked: [string, string][] = [
+    [`${tool} status --json`, `${tool} status`], [`run ${tool} wait --since 120`, `${tool} wait`], [`bin/${tool} status`, `${tool} status`],
+    [`${tool} verdict x accept`, `${tool} verdict`], [`${tool} reassign t`, `${tool} reassign`], [`${tool} scratch`, `${tool} scratch`],
+    [`${tool} --help`, `${tool} --help`], [`cd ~/.${tool}`, `.${tool}`], [`export ${TOOL}_JOB=1`, `${TOOL}_JOB`], [`/${tool}:lead`, `/${tool}:lead`],
+  ];
+  for (const [text, form] of invoked) {
+    assert.deepEqual(checkDiff(added("NOTES.md", [text]), [], true), [{ kind: "attribution", detail: `NOTES.md: names the tool (${form})` }], text);
+    assert.deepEqual(checkCommitMessage(`Fix it\n\n${text}\n`, [], true), [{ kind: "message", detail: `names the tool (${form})` }], text);
+  }
+  // A command split over two added lines counts only for a command no sentence holds.
+  assert.deepEqual(checkDiff(added("run.sh", [`run ${tool}`, "status now"]), [], true), []);
+  assert.deepEqual(kinds(checkDiff(added("run.sh", [`run ${tool}`, "verdict x accept"]), [], true)), ["attribution"]);
+});
+
 // A shell variable is case-sensitive, and a foreman's job (mandor_job) is an ordinary column or table name.
 test("the tool's variables count in upper case only, a fullwidth spelling included", () => {
   const wide = (t: string) => [...t].map((c) => String.fromCharCode(c.charCodeAt(0) + 0xfee0)).join("");

@@ -158,7 +158,9 @@ const NUL = String.fromCharCode(0);
 
 // Hunk lines only: a content line can itself start with +++ or ---, and header lines (binary patch data
 // included) never count. Dashes are summed over the whole diff, so a --no-renames rename stays balanced.
-export function checkDiff(diff: string, deny: string[]): Violation[] {
+// nameIsWord: the repository's own subject uses the tool's name as a word, so the name before an ordinary word is no
+// trace of the tool there.
+export function checkDiff(diff: string, deny: string[], nameIsWord = false): Violation[] {
   const out: Violation[] = [];
   const flag = (kind: Violation["kind"], detail: string) => out.push({ kind, detail: clampDetail(detail) });
   const checkPath = (p: string, detail: string) => {
@@ -170,7 +172,7 @@ export function checkDiff(diff: string, deny: string[]): Violation[] {
   // the tool, reading it as cased, unified once per line.
   const credit = (text: string, path: string, cased = unify(text)) => {
     for (const m of attribution(text, cased)) flag("attribution", `${path}: ${m}`);
-    const trace = toolTrace(cased);
+    const trace = toolTrace(cased, nameIsWord);
     if (trace !== null) flag("attribution", `${path}: names the tool (${trace})`);
     return trace !== null;
   };
@@ -220,7 +222,7 @@ export function checkDiff(diff: string, deny: string[]): Violation[] {
         const named = credit(text, path, cased);
         const pair = prev === null ? null : wrappedCredit(prev, cased);
         if (pair !== null) flag("attribution", `${path}: ${pair}`);
-        const split = prev === null || prevNamed || named ? null : splitCommand(prev, cased);
+        const split = prev === null || prevNamed || named ? null : splitCommand(prev, cased, nameIsWord);
         if (split !== null) flag("attribution", `${path}: names the tool (${split})`);
         [prev, prevNamed] = [cased, named];
       }
@@ -272,12 +274,12 @@ function trimEnd(word: string): string {
 
 // Per word, so prose is not matched against globs; only words that look like paths (holding / or .) are checked,
 // once quotes, brackets, emphasis marks, trailing punctuation and a possessive 's are stripped.
-export function checkCommitMessage(msg: string, deny: string[]): Violation[] {
+export function checkCommitMessage(msg: string, deny: string[], nameIsWord = false): Violation[] {
   const text = fold(msg);
   const named = deny.filter((g) => !SECRET_FILE_GLOBS.includes(g));
   const found = attribution(msg).map((m) => `attribution: ${m}`);
   DASHES.forEach((d, k) => { if (msg.includes(d)) found.push(`dash: ${dashName(k)}`); });
-  const trace = toolTrace(unify(msg));
+  const trace = toolTrace(unify(msg), nameIsWord);
   if (trace !== null) found.push(`names the tool (${trace})`);
   for (const p of AGENT_PATHS) if (text.includes(fold(p))) found.push(`agent path: ${fold(p)}`);
   for (const word of text.split(/\s+/)) {

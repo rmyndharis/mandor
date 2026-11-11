@@ -400,11 +400,11 @@ test("project setup writes project.json", () => {
   assert.deepEqual(loadProjectConfig(projectIdFor(repo)), emptyProjectConfig()); // before any setup
   const r = cli(repo, "--generator", "build/=scripts/build.sh", "--clone", "build/", "--clone", "android/local.properties",
     "--setup", "make stubs", "--shared", "CHANGELOG.md", "--shared", "docs/", "--deny", "**/*.p12", "--generator", "build=scripts/*.py",
-    "--worker-network");
+    "--worker-network", "--name-is-a-word");
   assert.equal(r.status, 0, r.stderr);
   const want: ProjectConfig = {
     clone: ["build", "android/local.properties"], setup: "make stubs", shared: ["CHANGELOG.md", "docs/"], deny: ["**/*.p12"],
-    generators: { build: ["scripts/build.sh", "scripts/*.py"] }, workerNetwork: true, workerAddDirs: [],
+    generators: { build: ["scripts/build.sh", "scripts/*.py"] }, workerNetwork: true, workerAddDirs: [], nameIsWord: true,
   };
   assert.deepEqual(JSON.parse(r.stdout), want);
   assert.deepEqual(loadProjectConfig(projectIdFor(repo)), want);

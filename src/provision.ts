@@ -16,12 +16,13 @@ export interface ProjectConfig {
   generators: Record<string, string[]>; // clone path -> globs of the scripts that produce it
   workerNetwork: boolean;
   workerAddDirs: string[];
+  nameIsWord: boolean; // the repository's own subject uses the tool's name as a word; see checkDiff
 }
 
 export const DEFAULT_DENY: readonly string[] = [...SECRET_FILE_GLOBS, "**/CLAUDE.md", "**/AGENTS.md", "**/GEMINI.md", "**/.claude/**", "**/_docs/**"];
 
 export const emptyProjectConfig = (): ProjectConfig =>
-  ({ clone: [], setup: null, shared: [], deny: [], generators: {}, workerNetwork: false, workerAddDirs: [] });
+  ({ clone: [], setup: null, shared: [], deny: [], generators: {}, workerNetwork: false, workerAddDirs: [], nameIsWord: false });
 
 const configFile = (projectId: string) => join(projectDir(projectId), "project.json");
 

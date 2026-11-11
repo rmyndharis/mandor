@@ -26,6 +26,10 @@ function projectSetup(id: string, args: string[]): ProjectConfig {
       c.workerNetwork = true;
       continue;
     }
+    if (flag === "--name-is-a-word") {
+      c.nameIsWord = true;
+      continue;
+    }
     const value = args[++i];
     if (value === undefined) throw new Error(`${flag} needs a value`);
     if (flag === "--clone") c.clone.push(value);
@@ -152,6 +156,7 @@ You run:
                                 Coding Plan API key piped in
   project setup [--clone <path>]... [--setup <command>] [--shared <glob>]... [--deny <glob>]...
                 [--generator <clone path>=<glob>]... [--worker-network] [--worker-add-dir <dir>]...
+                [--name-is-a-word]
   status [--json]               goals, tasks, jobs and exhausted tools of this repository
   show <slug>                   a task's outcome, its jobs with the usage of each run, and its round files
   logs <slug>                   the paths of a task's job logs

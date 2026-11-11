@@ -173,7 +173,7 @@ export function reviewPack(cwd: string, slug: string): ReviewPack {
     for (const h of attributionHints(text)) flag("attribution-hint", `${h.path}: ${h.detail}`);
 
     return {
-      diffStat: stat, files, redFlags: flags, violations: checkDiff(text, diffDeny(project)),
+      diffStat: stat, files, redFlags: flags, violations: checkDiff(text, diffDeny(project), project.nameIsWord),
       worktree: task.worktree, reportPath: round === undefined ? null : join(round.dir, "report.json"),
     };
   })!;

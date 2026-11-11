@@ -531,7 +531,8 @@ function recoverAcceptLocked(root: string, id: string, goal: GoalRecord, allowTe
     if (task?.status !== "needs-review" && task?.status !== "takeover") throw stop(`task ${slug} is ${task?.status ?? "unknown"}`);
     // The hooks ran in the killed command, whose check of the commit they might have changed never came.
     const raw = git(["cat-file", "commit", "HEAD"], integration).stdout;
-    const bad = checkCommitMessage(raw.slice(raw.indexOf("\n\n") + 2), [...DEFAULT_DENY, ...loadProjectConfig(id).deny]);
+    const project = loadProjectConfig(id);
+    const bad = checkCommitMessage(raw.slice(raw.indexOf("\n\n") + 2), [...DEFAULT_DENY, ...project.deny], project.nameIsWord);
     if (bad.length > 0) throw stop(bad.map((v) => v.detail).join("; "));
     try {
       assertHeadIdentity(root, integration, allowTestIdentity);
@@ -720,8 +721,15 @@ export function verdictAccept(cwd: string, slug: string, evidenceFile: string, m
     writeFileAtomic(patch, bytes);
     const project = loadProjectConfig(id);
     const deny = [...DEFAULT_DENY, ...project.deny];
-    const violations = [...checkDiff(text, diffDeny(project)), ...checkCommitMessage(message, deny)];
-    if (violations.length > 0) throw new Error(`accept refused:\n${violations.map((v) => `- ${v.kind}: ${v.detail}`).join("\n")}`);
+    const guarded = (nameIsWord: boolean) => [...checkDiff(text, diffDeny(project), nameIsWord), ...checkCommitMessage(message, deny, nameIsWord)];
+    const violations = guarded(project.nameIsWord);
+    if (violations.length > 0) {
+      // Where the repository's own subject uses the name, such prose is no trace, and only the user can say so.
+      const hint = !project.nameIsWord && guarded(true).length < violations.length
+        ? "\nIf this repository uses that name as a word of its own subject, the user allows it with project setup --name-is-a-word; do not run it yourself."
+        : "";
+      throw new Error(`accept refused:\n${violations.map((v) => `- ${v.kind}: ${v.detail}`).join("\n")}${hint}`);
+    }
     // Sized before anything changes, and saved only once the accept is to commit: a rebase records no accept.
     const sized: FileRef = { path: join(roundDir(id, slug, task.seq), "evidence-accept.md"), sha256: "0".repeat(64), excerpt: clampDetail(evidence) };
     for (const ev of acceptedEvents(slug, task.seq, sized, "0".repeat(64))) assertFits(ev);

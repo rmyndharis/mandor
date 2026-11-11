@@ -7,6 +7,9 @@ export const TOOL_VARS: readonly string[] = ["HOME", "CODEX_BIN", "JOB"].map((v)
 // The top-level commands src/cli.ts and src/status.ts dispatch on.
 export const TOOL_COMMANDS: readonly string[] = ["_run", "--help", "--version", "cancel", "confirm", "dispatch", "drop", "goal", "hook", "init",
   "login", "logs", "models", "plan", "project", "ready", "reassign", "review", "scratch", "show", "status", "verdict", "wait"];
+// The commands no sentence about a foreman holds. Every other one is an ordinary word after the name (a foreman's
+// status, plan or review), so in a repository whose own subject uses the name it is a trace only as a real invocation.
+const DISTINCT_COMMANDS: readonly string[] = ["_run", "--help", "--version", "reassign", "scratch", "verdict"];
 const SKILLS = ["lead", "status"];
 
 // A letter, a digit, an underscore or a hyphen next to a command or a skill id makes it part of another word.
@@ -28,27 +31,36 @@ const ROW_END = `(?!${WORD}|${QUOTE}?\\s*[:=,])`;
 const LAUNCHER_QUOTE = `(?:(?<=[/\\\\]${NAME})\\\\?${QUOTE})?`;
 // Whitespace between the name and the command, a line break or its escape too, and an opening quote before a quoted
 // command word, which a shell runs as the word. A path to the launcher (bin/, ./) runs it as well.
-const command = (commands: readonly string[]) =>
-  `${after(WORD_CHARS, NAME)}${LAUNCHER_QUOTE}(?:\\s|\\\\[nrt])+${QUOTE}?(?:${commands.join("|")})${COMMAND_END}`;
-const TRACE = [
+const GAP = "(?:\\s|\\\\[nrt])+";
+const command = (commands: readonly string[], name = after(WORD_CHARS, NAME), end = COMMAND_END) =>
+  `${name}${LAUNCHER_QUOTE}${GAP}${QUOTE}?(?:${commands.join("|")})${end}`;
+// What makes an ordinary word after the name an invocation all the same: the name at the end of a path to the
+// launcher, or an option after the command.
+const LAUNCHED = `${NAME}(?<=[/\\\\]${NAME})`;
+const OPTION_NEXT = `(?!${WORD})(?=${QUOTE}?${GAP}--[A-Za-z])`;
+const trace = (commands: string[]) => [
   // The home directory is a path component, so a separator sits next to it: after one, it ends the path or the
   // component (a full stop may end the sentence); or it opens a relative path. A property, a selector or a file name
   // (foo., .json) is none.
   `\\.${NAME}(?<=[/\\\\]\\.${NAME})(?![\\p{L}\\p{N}_-]|\\.[\\p{L}\\p{N}])`,
   `${after("\\p{L}\\p{N}", `\\.${NAME}`)}(?=[/\\\\])`,
-  command(TOOL_COMMANDS),
+  ...commands,
   `(?:${after(WORD_CHARS, `/${NAME}`)}|${after(WORD_CHARS, NAME)}):(?:${SKILLS.join("|")})(?!${WORD})`,
 ].join("|");
+const TRACE = trace([command(TOOL_COMMANDS)]);
+// The forms left where the name is a word of the repository's own subject.
+const TRACE_AS_WORD = trace([command(DISTINCT_COMMANDS), command(TOOL_COMMANDS, LAUNCHED), command(TOOL_COMMANDS, undefined, OPTION_NEXT)]);
 // The variables count in upper case only: a shell variable is case-sensitive, and the name with a suffix in lower case
 // (a foreman's job) is an ordinary identifier. Every other form counts in any case.
 const VARS = `${after("\\p{L}\\p{N}_", `(?:${TOOL_VARS.join("|")})`)}(?![\\p{L}\\p{N}_])`;
 const FIRST = [new RegExp(TRACE, "iu"), new RegExp(VARS, "u")];
+const FIRST_AS_WORD = [new RegExp(TRACE_AS_WORD, "iu"), new RegExp(VARS, "u")];
 const EVERY = [new RegExp(TRACE, "giu"), new RegExp(VARS, "gu")];
 
 // The first trace, as written, in text read as the guards read it (invisible characters dropped, NFKC, not
-// lowercased), or null.
-export function toolTrace(text: string): string | null {
-  const found = FIRST.map((re) => re.exec(text)).filter((m) => m !== null);
+// lowercased), or null. With asWord, the name followed by an ordinary word is a trace only as an invocation.
+export function toolTrace(text: string, asWord = false): string | null {
+  const found = (asWord ? FIRST_AS_WORD : FIRST).map((re) => re.exec(text)).filter((m) => m !== null);
   return found.length === 0 ? null : found.reduce((a, b) => (b.index < a.index ? b : a))[0];
 }
 
@@ -59,11 +71,13 @@ export const replaceTraces = (text: string, by: string): string => EVERY.reduce(
 // of a launcher path and a line continuation after it, and a command opens the second, maybe after an opening quote.
 // The name and the command as written, or null. A list marker or any other word between them is no command.
 const ENDS = new RegExp(`${after(WORD_CHARS, `(${NAME})`, NAME)}${LAUNCHER_QUOTE}$`, "iu");
-const OPENS = new RegExp(`^\\s*${QUOTE}?(${TOOL_COMMANDS.join("|")})${ROW_END}`, "iu");
-export function splitCommand(first: string, second: string): string | null {
+const opens = (commands: readonly string[]) => new RegExp(`^\\s*${QUOTE}?(${commands.join("|")})${ROW_END}`, "iu");
+const OPENS = opens(TOOL_COMMANDS);
+const OPENS_AS_WORD = opens(DISTINCT_COMMANDS);
+export function splitCommand(first: string, second: string, asWord = false): string | null {
   const end = first.trimEnd();
   const name = ENDS.exec(end.endsWith("\\") ? end.slice(0, -1).trimEnd() : end);
-  const open = name === null ? null : OPENS.exec(second);
+  const open = name === null ? null : (asWord ? OPENS_AS_WORD : OPENS).exec(second);
   return open === null ? null : `${name![1]} ${open[1]}`;
 }
 

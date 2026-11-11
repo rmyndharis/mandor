@@ -14,6 +14,7 @@ import type { Candidate, GoalRecord, JobRecord, LedgerEvent, ModelInfo, StallRea
 import { jobDir, processStart, projectDir, projectIdFor, scratchDir } from "../src/home.ts";
 import { appendEvent, appendToolEvent, ledgerSize, loadState, loadToolState, now, readEvents } from "../src/ledger.ts";
 import { cancelMarker, readJob } from "../src/runner.ts";
+import { loadProjectConfig, saveProjectConfig } from "../src/provision.ts";
 import { reviewPack } from "../src/review.ts";
 import { showTask } from "../src/status.ts";
 import { withProjectLock, writeFileAtomic, writeJsonAtomic } from "../src/store.ts";
@@ -1447,6 +1448,26 @@ test("cancelling a task stalls its chain of dependents, wait reports inspect, an
   assert.equal(task(s, "late"), undefined);
   assert.equal(tasks.takeover(s.repo, "mid", false).cursor > 0, true);
   assert.equal(task(s, "mid").status, "takeover");
+});
+
+test("prose that puts the name before an ordinary word is refused with the way out, and accepted once the user allows it", async (t) => {
+  const s = setup(t);
+  tasks.goalStart(s.repo, GOAL, null);
+  const name = ["man", "dor"].join("");
+  writeScenarios([{ ...DONE, writeFile: [{ path: "shift.md", content: `Update the ${name} status when the shift ends.\n` }] }]);
+  send(s, "shift");
+  await needsReview(s, "shift");
+  assert.throws(() => accept(s, "shift"), new RegExp(`accept refused:\\n- attribution: shift\\.md: names the tool \\(${name} status\\)\\nIf this repository uses that name as a word of its own subject, the user allows it with project setup --name-is-a-word; do not run it yourself\\.$`));
+  assert.equal(task(s, "shift").status, "needs-review");
+  saveProjectConfig(s.id, { ...loadProjectConfig(s.id), nameIsWord: true });
+  assert.deepEqual(reviewPack(s.repo, "shift").violations, []);
+  assert.match(committed(s, "shift"), /^[0-9a-f]{40}$/);
+  confirmed(s, "shift");
+  // An invocation is a trace all the same, and its refusal names no way out.
+  writeScenarios([{ ...DONE, writeFile: [{ path: "run.md", content: `Then run ${name} status --json.\n` }] }]);
+  send(s, "run");
+  await needsReview(s, "run");
+  assert.throws(() => accept(s, "run"), new RegExp(`accept refused:\\n- attribution: run\\.md: names the tool \\(${name} status\\)$`));
 });
 
 // Takeover
