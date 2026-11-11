@@ -31,7 +31,7 @@ Each task brief has these sections: goal, scope, constraints, proof commands wit
 
 Run `mandor dispatch --goal <branch> --task <slug> --tier <tier> --brief <file> [--scope <glob>]... [--use <tool:model@effort>] [--after <slug>]`. Use `--after` for a task that depends on another. Then run `mandor wait --since <cursor>` with `run_in_background`.
 
-Cursor rule: pass the cursor printed by the last `wait` you ran. With no wait yet in this conversation, pass the cursor of the earliest mandor command you ran in it. In a new conversation that opens with a session-start summary, first handle every task the summary lists as needs-review or stalled, then wait from the summary's cursor. A newer cursor from another command can skip events of other tasks.
+Cursor rule: pass the cursor printed by the last `wait` you ran. With no wait yet in this conversation, pass the cursor of the earliest mandor command you ran in it. In a new conversation that opens with a session-start summary, first handle every task whose line gives a next action (needs-review, stalled, integrating or takeover), then wait from the summary's cursor. An `integrating` task is confirmed or dropped (section 7), and a `takeover` task is finished in its worktree and accepted (section 10); the summary gives each goal's integration worktree. A newer cursor from another command can skip events of other tasks.
 
 When `wait` returns:
 

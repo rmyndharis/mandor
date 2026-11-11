@@ -42,6 +42,11 @@ test("lead skill leaves the user's settings, git identity and sign-ins to the us
   }
 });
 
+test("lead skill tells a new conversation to handle integrating and takeover tasks before it waits", () => {
+  const lead = read("lead");
+  assert.ok(lead.includes("(needs-review, stalled, integrating or takeover), then wait from the summary's cursor"));
+});
+
 test("status skill runs mandor status", () => {
   assert.ok(read("status").includes("mandor status"));
 });

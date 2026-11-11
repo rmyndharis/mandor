@@ -136,8 +136,8 @@ function taskRecord(slug: string, status: TaskStatus, over: Partial<TaskRecord> 
 }
 
 const finalLines = (cursor: number) => [
-  "mandor is active in this project. Run `mandor status` for details.",
-  `If you are leading this work and a job is queued or running, run \`mandor wait --since ${cursor}\` in the background.`,
+  "mandor is active in this project. Run `mandor status` for details. If you are leading this work, load the `mandor:lead` skill, then handle every task above that gives a next action.",
+  `After that, if a job is queued or running, run \`mandor wait --since ${cursor}\` in the background.`,
 ];
 
 // Outside a project a hook costs the session nothing, whatever the environment.
@@ -336,7 +336,7 @@ test("summary under 9000 chars with 200 tasks, including descriptions and the cu
   assert.equal(r.status, 0, r.stderr);
   assert.ok(r.stdout.length < 9000, `${r.stdout.length} chars`);
   const lines = r.stdout.trimEnd().split("\n");
-  assert.ok(lines.includes(`- ${GOAL}: Make the hooks quiet; plan /plans/hooks.md`), r.stdout);
+  assert.ok(lines.includes(`- ${GOAL}: Make the hooks quiet; plan /plans/hooks.md; worktree /nowhere`), r.stdout);
   const tasks = lines.filter((l) => /^- (done|active)-/.test(l));
   assert.equal(tasks.length, 30);
   assert.deepEqual(tasks.slice(0, 15).map((l) => l.split(":")[0]), Array.from({ length: 15 }, (_, i) => `- active-${i}`));
@@ -400,11 +400,40 @@ test("the summary lists exhausted keys, and no detail, excerpt or reason", () =>
   assert.ok(lines.includes("- a: stalled, no candidate, seq 1, fix rounds 0"), r.stdout);
 });
 
+test("the summary gives a task that needs the lead its stall reason and next action, integrating and takeover included", () => {
+  const s = project();
+  const add = (slug: string, status: TaskStatus, over: Partial<TaskRecord> = {}) => appendEvent(s.id, { t: "task.created", at: now(), task: taskRecord(slug, status, over) });
+  add("busy", "working");
+  add("reviewing", "needs-review");
+  add("limit", "stalled", { stallReason: "quota" });
+  add("spent", "stalled", { stallReason: "all-exhausted" });
+  add("rounds", "stalled", { stallReason: "fix-rounds-exceeded" });
+  add("broken", "stalled", { stallReason: "rebase-failed" });
+  add("merging", "integrating");
+  add("hands-on", "takeover");
+  add("done", "accepted");
+  const r = hook("session-start", { cwd: s.repo });
+  assert.equal(r.status, 0, r.stderr);
+  const lines = r.stdout.trimEnd().split("\n");
+  const line = (slug: string) => lines.find((l) => l.startsWith(`- ${slug}:`));
+  const tail = ", codex:gpt-6-luna@medium, seq 1, fix rounds 0";
+  assert.equal(line("busy"), `- busy: working${tail}`);
+  assert.equal(line("reviewing"), `- reviewing: needs-review${tail}; next: review`);
+  assert.equal(line("limit"), `- limit: stalled (quota)${tail}; next: reassign-or-ready`);
+  assert.equal(line("spent"), `- spent: stalled (all-exhausted)${tail}; next: offer-takeover`);
+  assert.equal(line("rounds"), `- rounds: stalled (fix-rounds-exceeded)${tail}; next: fix-rounds-exceeded`);
+  assert.equal(line("broken"), `- broken: stalled (rebase-failed)${tail}; next: inspect`);
+  assert.equal(line("merging"), `- merging: integrating${tail}; next: confirm or drop`);
+  assert.equal(line("hands-on"), `- hands-on: takeover${tail}; next: finish the takeover, then accept`);
+  assert.equal(line("done"), `- done: accepted${tail}`);
+  assert.deepEqual(lines.slice(-2), finalLines(ledgerSize(s.id)));
+});
+
 test("a goal with no plan yet is listed, and a cut description never splits a character", () => {
   const s = project();
   const r = hook("session-start", { cwd: s.repo });
   assert.equal(r.status, 0, r.stderr);
-  assert.ok(r.stdout.trimEnd().split("\n").includes(`- ${GOAL}: no description; plan none`), r.stdout);
+  assert.ok(r.stdout.trimEnd().split("\n").includes(`- ${GOAL}: no description; plan none; worktree /nowhere`), r.stdout);
   const emoji = String.fromCodePoint(0x1f600);
   appendEvent(s.id, { t: "plan.set", at: now(), goal: GOAL, description: `${"x".repeat(299)}${emoji}`, plan: { path: "/p.md", sha256: "0".repeat(64), excerpt: "" } });
   const cut = hook("session-start", { cwd: s.repo });
@@ -428,7 +457,7 @@ test("a real goal start arms the hooks, in the checkout and in its worktree", ()
   for (const cwd of [repo, goal.integrationWorktree]) {
     const r = hook("session-start", { cwd });
     assert.equal(r.status, 0, r.stderr);
-    assert.ok(r.stdout.includes(`- ${GOAL}: Make the hooks quiet; plan ${join(projectDir(id), "goals", "feat__hooks", "plan.md")}\n`), r.stdout);
+    assert.ok(r.stdout.includes(`- ${GOAL}: Make the hooks quiet; plan ${join(projectDir(id), "goals", "feat__hooks", "plan.md")}; worktree ${goal.integrationWorktree}\n`), r.stdout);
     assert.deepEqual(r.stdout.trimEnd().split("\n").slice(-2), finalLines(ledgerSize(id)));
   }
   assert.deepEqual(hookLog(home), []);
@@ -534,7 +563,7 @@ test("stop allows a non-lead transcript", () => {
   const own = join(plainDir(), "session.jsonl");
   writeFileSync(own, `${JSON.stringify({ context: summary, reason: BLOCK.reason })}\n`);
   silent(hook("stop", { ...s.input, transcript_path: own }));
-  assert.ok(summary.includes(`- ${GOAL}: Run the tool now, then the tool; a mandor confirmation step and commandor dispatch; plan /plans/a.md\n`), summary);
+  assert.ok(summary.includes(`- ${GOAL}: Run the tool now, then the tool; a mandor confirmation step and commandor dispatch; plan /plans/a.md; worktree /nowhere\n`), summary);
   assert.deepEqual(hookLog(s.home), []);
 });
 
@@ -565,7 +594,7 @@ test("no goal description makes the summary read as a lead's transcript, and its
   for (const [description, shown] of shapes) {
     appendEvent(s.id, { t: "plan.set", at: now(), goal: GOAL, description, plan: { path: "/plans/a.md", sha256: "0".repeat(64), excerpt: "" } });
     const summary = sessionStartText({ cwd: s.repo });
-    assert.ok(summary.includes(`- ${GOAL}: ${shown}; plan /plans/a.md\n`), JSON.stringify(description));
+    assert.ok(summary.includes(`- ${GOAL}: ${shown}; plan /plans/a.md; worktree /nowhere\n`), JSON.stringify(description));
     const own = join(plainDir(), "session.jsonl");
     writeFileSync(own, `${JSON.stringify({ type: "attachment", content: summary })}\n`);
     assert.equal(stopDecision({ cwd: s.repo, transcript_path: own }), null, JSON.stringify(description));
@@ -734,11 +763,11 @@ test("a goal description reaches the summary with each of the tool's forms repla
   appendEvent(s.id, { t: "plan.set", at: now(), goal: GOAL, description, plan: { path: "/plans/a.md", sha256: "0".repeat(64), excerpt: "" } });
   const summary = sessionStartText({ cwd: s.repo });
   assert.ok(summary.includes(`- ${GOAL}: Read ~/the tool/logs, set the tool, the tool and the tool, run bin/the tool and the tool a, open the tool and the tool. `
-    + "Keep foo.mandor, commandor wait, mandor_id, MANDOR_ID, mandor:other and mandor memeriksa laporan.; plan /plans/a.md\n"), summary);
+    + "Keep foo.mandor, commandor wait, mandor_id, MANDOR_ID, mandor:other and mandor memeriksa laporan.; plan /plans/a.md; worktree /nowhere\n"), summary);
   // Fullwidth forms are unified first, so they are replaced as the forms they stand for.
   const wide = (t: string) => [...t].map((c) => String.fromCharCode(c.charCodeAt(0) + 0xfee0)).join("");
   appendEvent(s.id, { t: "plan.set", at: now(), goal: GOAL, description: `run ${wide("mandor")} ${wide("wait")} and ${wide("~/.mandor")}/x, keep ${wide("mandor")}`, plan: { path: "/plans/a.md", sha256: "0".repeat(64), excerpt: "" } });
-  assert.ok(sessionStartText({ cwd: s.repo }).includes(`- ${GOAL}: run the tool and ~/the tool/x, keep mandor; plan /plans/a.md\n`));
+  assert.ok(sessionStartText({ cwd: s.repo }).includes(`- ${GOAL}: run the tool and ~/the tool/x, keep mandor; plan /plans/a.md; worktree /nowhere\n`));
 });
 
 test("every command that can start or change a job marks a lead's transcript", () => {

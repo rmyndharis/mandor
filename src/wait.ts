@@ -27,7 +27,7 @@ const NEXT: Record<StallReason, WaitItem["next"]> = {
 };
 
 // What the lead does next about a task in this state; null when it has nothing to do.
-function nextFor(t: TaskRecord): WaitItem["next"] | null {
+export function nextFor(t: TaskRecord): WaitItem["next"] | null {
   if (t.status === "needs-review") return "review";
   return t.status === "stalled" && t.stallReason !== null ? NEXT[t.stallReason] : null;
 }

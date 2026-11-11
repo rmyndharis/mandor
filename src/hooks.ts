@@ -10,6 +10,7 @@ import { isRunnerAlive, neverStarted, readJob } from "./runner.ts";
 import { clampDetail, readJson } from "./store.ts";
 import { resolveProject } from "./tasks.ts";
 import { commandAt, commandIn, endsOpen, looseCommand, mayStart, replaceTraces } from "./toolname.ts";
+import { nextFor } from "./wait.ts";
 
 // With the other lines of the summary, two lists of this size stay under its limit of 9,000 characters.
 const LIST_CHARS = 4000;
@@ -69,6 +70,11 @@ function fit(items: string[], maxChars: number, maxItems = Infinity): string[] {
 
 const isSettled = (t: TaskRecord) => t.status === "accepted" || t.status === "cancelled";
 
+// What the lead does next about a task. A wait reports the first two kinds; a session that starts meets the other two as
+// well, which no wait would ever report.
+const nextAction = (t: TaskRecord): string | null =>
+  nextFor(t) ?? (t.status === "integrating" ? "confirm or drop" : t.status === "takeover" ? "finish the takeover, then accept" : null);
+
 const list = (title: string, lines: string[]) => (lines.length > 0 ? [title, ...lines] : []);
 
 // Empty outside a project. Hook output never carries a run's free text, so an exhausted tool shows its key only and a
@@ -80,17 +86,20 @@ export function sessionStartText(input: { cwd: string }): string {
   const { items, endByte: cursor } = readEvents(id);
   const { goals, tasks } = replay(items);
   // Newest first, since a long-lived project's older goals are the ones to leave out.
-  const goalLines = Object.values(goals).reverse().map((g) => `- ${g.branch}: ${g.description === null ? "no description" : neutral(g.description)}; plan ${g.plan?.path ?? "none"}`);
-  const taskLines = Object.values(tasks).toSorted((a, b) => Number(isSettled(a)) - Number(isSettled(b))).map((t) =>
-    `- ${t.id}: ${t.status}, ${t.candidate === null ? "no candidate" : formatCandidate(t.candidate)}, seq ${t.seq}, fix rounds ${t.fixRounds}`);
+  const goalLines = Object.values(goals).reverse().map((g) =>
+    `- ${g.branch}: ${g.description === null ? "no description" : neutral(g.description)}; plan ${g.plan?.path ?? "none"}; worktree ${g.integrationWorktree}`);
+  const taskLines = Object.values(tasks).toSorted((a, b) => Number(isSettled(a)) - Number(isSettled(b))).map((t) => {
+    const next = nextAction(t);
+    return `- ${t.id}: ${t.status}${t.stallReason === null ? "" : ` (${t.stallReason})`}, ${t.candidate === null ? "no candidate" : formatCandidate(t.candidate)}, seq ${t.seq}, fix rounds ${t.fixRounds}${next === null ? "" : `; next: ${next}`}`;
+  });
   const exhausted = Object.keys(loadToolState(Date.now() / 1000));
   return [
     ...list("Goals:", fit(goalLines, LIST_CHARS)),
     ...list("Tasks:", fit(taskLines, LIST_CHARS, MAX_TASKS)),
     ...(exhausted.length > 0 ? [`Exhausted: ${clampDetail(fit(exhausted, KEY_CHARS).join(", "))}`] : []),
     `Cursor: ${cursor}`,
-    "mandor is active in this project. Run `mandor status` for details.",
-    `If you are leading this work and a job is queued or running, run \`mandor wait --since ${cursor}\` in the background.`,
+    "mandor is active in this project. Run `mandor status` for details. If you are leading this work, load the `mandor:lead` skill, then handle every task above that gives a next action.",
+    `After that, if a job is queued or running, run \`mandor wait --since ${cursor}\` in the background.`,
   ].join("\n");
 }
 
