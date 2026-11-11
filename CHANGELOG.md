@@ -41,6 +41,7 @@ All notable changes to mandor are recorded here. The format follows [Keep a Chan
 - `confirm` and `cancel`, run again after the task was accepted or cancelled, remove the worktree and branch that a kill or a failed removal left. A `cancel` run again takes the copy of the change first, if none was saved. They record nothing, and still refuse when nothing is left.
 - `status` names a goal whose accept was killed before it finished, also as `unfinished` in `--json`, and `fix`, `takeover` and `cancel` refuse that task until an accept settles it.
 - A model refresh that no tool answered is not repeated for five minutes, where every command that needed the list asked each tool again.
+- Staging a task worktree for a review, a diff, a handoff or a cancel no longer writes the worker's files into the repository's object store, where they stayed until git pruned them, nor changes the worker's own index. It runs on a copy of the index with an object directory of its own, which it removes.
 
 ### Security
 
@@ -53,6 +54,7 @@ All notable changes to mandor are recorded here. The format follows [Keep a Chan
 - The worktree root is verified before the Antigravity settings or the ZCode profile are built from it.
 - Accept refuses while a goal branch ends in a commit that mandor did not record. `mandor goal adopt <branch>` keeps such commits as the user's own.
 - A Codex or ZCode worker gets a temporary directory of its own for each job, as its `TMPDIR`, `TMPPREFIX` (zsh) and clang's module cache, removed when the run ends. `/tmp`, `/var/folders` and the shared `TMPDIR` are closed to it, as the lead's proofs and your own tools keep caches and compiled files there. A build that names `/tmp` itself, runs `mktemp` or needs the per-user cache directory fails in the sandbox; `mandor project setup --shared-temp` keeps them open. Antigravity's temporary directories are its sandbox's own.
+- The review pack names the ignored paths whose files changed since the task's first job began, such as `build/` or `node_modules/`, which the staged tree leaves out and the lead's proof commands may still run.
 
 ## [0.2.0] - 2026-11-11
 
