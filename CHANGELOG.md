@@ -12,12 +12,16 @@ All notable changes to mandor are recorded here. The format follows [Keep a Chan
 - The lead's playbook covers a task that stalls on a filter or merge driver, as it covers a command that refuses one.
 - An Antigravity job is refused in a project without `--worker-network`, as a ZCode job is. Run `mandor project setup --worker-network` to allow it.
 - `init`, `models`, `project setup`, `goal start` and `dispatch` refuse a `MANDOR_HOME` inside a git working tree.
+- `status` ends each exhausted line with the reason, the paid-credit mark included, and lists the commits of a goal branch that mandor did not record.
+- The Stop hook also blocks while a task waits to start, and the lead's playbook says what is the user's to change.
+- The session summary gives each task its stall reason and next action, each goal its integration worktree, and names the lead skill. It also lists the warnings of the tools that are switched on, and so does `dispatch`. `init` and `models` no longer print Codex's warnings while Codex is off.
 
 ### Fixed
 
 - A new worktree, a reset of a task worktree and a drop no longer fail when the configuration sets `submodule.recurse` and the repository has an initialized submodule.
 - A task stalled because the handoff after an account mismatch could not be built says so in `wait` and `show`, and names the runner log, instead of repeating the account mismatch.
 - `reassign`, `ready`, a fix round and `drop` refuse to start work where `sandbox-exec` cannot confine, and a runner there fails its job before the worker starts, with the cause in the runner log.
+- `wait` and `status` settle a task whose job a cancel stopped before the cancel died, which now stalls with `failed`, and a task that waits for a cancelled dependency, which now stalls too.
 
 ### Security
 
@@ -28,6 +32,7 @@ All notable changes to mandor are recorded here. The format follows [Keep a Chan
 - A partial clone is refused, as git would fetch missing objects from its remote by itself.
 - A `--deny` entry that names a directory covers everything under it in a commit, as a glob that matches a directory already did in a clone. An entry that ends in a slash names a directory in both.
 - The worktree root is verified before the Antigravity settings or the ZCode profile are built from it.
+- Accept refuses while a goal branch ends in a commit that mandor did not record. `mandor goal adopt <branch>` keeps such commits as the user's own.
 
 ## [0.2.0] - 2026-11-11
 
