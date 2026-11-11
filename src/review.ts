@@ -7,7 +7,7 @@ import { jobDir } from "./home.ts";
 import { loadState, now } from "./ledger.ts";
 import { loadProjectConfig } from "./provision.ts";
 import { clampDetail, withProjectLock, writeJsonAtomic } from "./store.ts";
-import { diffDeny, recoverRebaseLocked, refuseUnsupported, resolveProject, reviewedFile } from "./tasks.ts";
+import { diffDeny, diffExact, recoverRebaseLocked, refuseUnsupported, resolveProject, reviewedFile } from "./tasks.ts";
 
 export interface ReviewPack {
   diffStat: string;
@@ -173,7 +173,7 @@ export function reviewPack(cwd: string, slug: string): ReviewPack {
     for (const h of attributionHints(text)) flag("attribution-hint", `${h.path}: ${h.detail}`);
 
     return {
-      diffStat: stat, files, redFlags: flags, violations: checkDiff(text, diffDeny(project), project.nameIsWord),
+      diffStat: stat, files, redFlags: flags, violations: checkDiff(text, diffDeny(project), project.nameIsWord, diffExact(project)),
       worktree: task.worktree, reportPath: round === undefined ? null : join(round.dir, "report.json"),
     };
   })!;

@@ -138,6 +138,9 @@ test("clone paths are normalized, and refused outside the repository, in .git, o
     ".github/instructions", "zcode.json", "gemini.local.md"];
   for (const p of refused) assert.throws(() => checkClonePath(p, []), /^Error: refusing clone path /, p);
   assert.throws(() => checkClonePath("certs/x.P12", ["**/*.p12"]), /^Error: refusing clone path certs\/x\.P12: /);
+  // An entry that names a directory, with or without a trailing slash, keeps the directory and everything under it out.
+  for (const entry of ["certs", "certs/"]) for (const p of ["certs", "certs/x.pem", "certs/a/b.pem"]) assert.throws(() => checkClonePath(p, [entry]), /^Error: refusing clone path /, `${entry} ${p}`);
+  assert.equal(checkClonePath("certsx/y.pem", ["certs/"]), "certsx/y.pem");
 });
 
 test("a directory with tracked files refused", () => {

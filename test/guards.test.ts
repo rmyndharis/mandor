@@ -7,7 +7,8 @@ import {
   AGENT_PATHS, ATTRIBUTION_VENDORS, attributionHints, checkCommitMessage, checkDiff, checkName, foldPath, isAgentPath, matchesGlob,
   NAME_TOKENS, type Violation,
 } from "../src/guards.ts";
-import { DEFAULT_DENY } from "../src/provision.ts";
+import { DEFAULT_DENY, emptyProjectConfig } from "../src/provision.ts";
+import { diffDeny, diffExact } from "../src/tasks.ts";
 import { TOOL_COMMANDS, TOOL_VARS, toolTrace } from "../src/toolname.ts";
 import { tempRepo } from "./helpers.ts";
 
@@ -220,6 +221,37 @@ test("the templates of a .env file pass the default deny list, every other .env 
   // Another glob that matches a template still denies it.
   assert.deepEqual(checkDiff(added("secret/.env.example", ["KEY="]), [...deny, "secret/**"]), [{ kind: "denied-path", detail: "secret/.env.example" }]);
   assert.deepEqual(checkDiff(added(".env.example", ["KEY="]), [...deny, "**/.env.example"]), [{ kind: "denied-path", detail: ".env.example" }]);
+});
+
+test("a deny entry that names a directory covers every file under it in a diff, and a trailing slash names the same directory", () => {
+  for (const entry of ["secret", "secret/", "src/gen", "src/gen//"]) {
+    const dir = entry.replace(/\/+$/, "");
+    for (const p of [`${dir}/key.txt`, `${dir}/deep/er/key.txt`]) {
+      assert.deepEqual(checkDiff(added(p, ["x"]), [entry]), [{ kind: "denied-path", detail: p }], `${entry} ${p}`);
+    }
+    assert.deepEqual(checkDiff(added(`${dir}s/key.txt`, ["x"]), [entry]), [], `${entry}: a sibling that starts alike`);
+    assert.deepEqual(checkDiff(added(`lib/${dir}/key.txt`, ["x"]), [entry]), [], `${entry}: an entry is relative to the root`);
+  }
+  // A link to a file under it is as denied as the file.
+  assert.deepEqual(checkDiff(added("l", ["secret/key.txt"], "120000"), ["secret"]), [{ kind: "denied-path", detail: "l -> secret/key.txt" }]);
+});
+
+test("a commit message is held to a deny entry by the path it names, not by the directories above it", () => {
+  assert.deepEqual(checkCommitMessage("Split client/server code", ["client"]), []);
+  assert.deepEqual(checkCommitMessage("Describe secret/notes.md", ["secret/**"]), [{ kind: "message", detail: "denied path: secret/notes.md" }]);
+});
+
+test("an exact entry denies the path itself and nothing under it, so a link cannot take a directory's place and its tracked files stay committable", () => {
+  assert.deepEqual(checkDiff(added("android/build.gradle", ["x"]), [], false, ["android"]), []);
+  assert.deepEqual(kinds(checkDiff(added("android", ["app"], "120000"), [], false, ["android"])), ["denied-path"]);
+  // The directories above a clone path are such entries, and the clone path itself covers what is under it.
+  const project = { ...emptyProjectConfig(), clone: ["android/app/local.properties"], deny: [] };
+  const check = (diff: string) => checkDiff(diff, diffDeny(project), false, diffExact(project));
+  assert.deepEqual(check(added("android/build.gradle", ["x"])), []);
+  assert.deepEqual(check(added("android/app/src/Main.kt", ["x"])), []);
+  assert.deepEqual(kinds(check(added("android/app/local.properties", ["x"]))), ["denied-path"]);
+  assert.deepEqual(kinds(check(added("android/app", ["x"], "120000"))), ["denied-path"]);
+  assert.deepEqual(kinds(check(added("android", ["x"], "120000"))), ["denied-path"]);
 });
 
 test("a basename starting with claude., agents. or gemini. is an agent path only when it ends in .md", () => {
@@ -966,8 +998,10 @@ test("a symlink target is judged where it leads, from the directory that holds t
   assert.deepEqual(denied("l", "a/b//"), [{ kind: "denied-path", detail: "l -> a/b//" }]);
   assert.deepEqual(denied("l", "./"), []);
   assert.deepEqual(denied("l", "/"), []);
-  // Only a directory on the way is exact: its other files stay linkable, and a same-named target elsewhere is not it.
-  assert.deepEqual(denied("sub/l", "../a/other.txt"), []);
+  // An entry that names a directory covers the files under it too; a file elsewhere stays linkable, and a same-named
+  // target elsewhere is not it.
+  assert.deepEqual(denied("sub/l", "../a/other.txt"), [{ kind: "denied-path", detail: "sub/l -> ../a/other.txt" }]);
+  assert.deepEqual(denied("sub/l", "../z/other.txt"), []);
   assert.deepEqual(denied("sub/l", "a/b/c/gen.txt"), []);
   assert.deepEqual(denied("l", "/elsewhere/a/b/c"), []);
 });

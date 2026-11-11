@@ -126,7 +126,7 @@ This repository does not ship a marketplace listing yet, so `--plugin-dir` is ho
    - `--clone <path>`: an ignored path copied from the main checkout into each worktree (build caches, downloaded SDKs). Denied and agent paths inside it are skipped. The copy is an APFS clone, so `~/.mandor` (or `MANDOR_HOME`) must be on the same volume as the repository.
    - `--setup "<command>"`: run once in each new worktree, with the worker's environment variables but without a sandbox, so it can write and reach the network like any command you run yourself. Give it only a command you trust.
    - `--shared <path or glob>`: paths more than one task touches (a changelog, a lockfile). The review flags changes to them.
-   - `--deny <glob>`: paths no task may change, on top of the defaults.
+   - `--deny <glob>`: paths no task may change, on top of the defaults. An entry that names a directory, with or without a trailing slash, covers everything under it.
    - `--generator <clone path>=<glob>`: scripts whose change makes a cloned path stale.
    - `--worker-network`: lets workers reach the network. Off by default. A worker can read any file your account can read, so with the network on it can also send one out: see [Before you start](#before-you-start).
    - `--worker-add-dir <dir>`: a Gradle or Android cache directory workers may write.

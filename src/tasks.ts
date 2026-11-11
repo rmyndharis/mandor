@@ -494,18 +494,21 @@ export function dispatch(cwd: string, o: { goal: string; slug: string; tier: Tie
 }
 
 // Each clone path, as itself and with everything under it, so a cloned file is never committed even after the worker
-// edits .gitignore; and each directory on the way to one, so nothing (a link included) takes the place of that
-// directory. Only the directory itself: tracked files inside it stay committable.
-function cloneDeny(clone: string[]): string[] {
-  return clone.flatMap((p) => {
-    const deny = [p, `${p}/**`];
-    for (let d = posix.dirname(p); d !== "."; d = posix.dirname(d)) deny.push(d);
-    return deny;
-  });
-}
+// edits .gitignore.
+const cloneDeny = (clone: string[]): string[] => clone.flatMap((p) => [p, `${p}/**`]);
 
-// What accept refuses in a diff, and what the review pack reports as violations.
+// What accept refuses in a diff, and what the review pack reports as violations. A glob that matches a directory covers
+// what is under it.
 export const diffDeny = (project: ProjectConfig): string[] => [...DEFAULT_DENY, ...project.deny, ...cloneDeny(project.clone)];
+
+// The directories on the way to a clone path, as exact entries: nothing (a link included) takes the place of one, while
+// the tracked files inside it stay committable.
+export const diffExact = (project: ProjectConfig): string[] =>
+  project.clone.flatMap((p) => {
+    const dirs: string[] = [];
+    for (let d = posix.dirname(p); d !== "."; d = posix.dirname(d)) dirs.push(d);
+    return dirs;
+  });
 
 function acceptedEvents(slug: string, seq: number, file: FileRef | null, commit: string): [LedgerEvent, LedgerEvent] {
   const at = now();
@@ -737,7 +740,7 @@ export function verdictAccept(cwd: string, slug: string, evidenceFile: string, m
     writeFileAtomic(patch, bytes);
     const project = loadProjectConfig(id);
     const deny = [...DEFAULT_DENY, ...project.deny];
-    const guarded = (nameIsWord: boolean) => [...checkDiff(text, diffDeny(project), nameIsWord), ...checkCommitMessage(message, deny, nameIsWord)];
+    const guarded = (nameIsWord: boolean) => [...checkDiff(text, diffDeny(project), nameIsWord, diffExact(project)), ...checkCommitMessage(message, deny, nameIsWord)];
     const violations = guarded(project.nameIsWord);
     if (violations.length > 0) {
       // Where the repository's own subject uses the name, such prose is no trace, and only the user can say so.

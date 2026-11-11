@@ -57,9 +57,15 @@ export function matchesGlob(path: string, glob: string): boolean {
 // secrets, so that glob alone leaves them alone; any other deny glob that matches one still denies it.
 export const ENV_GLOB = "**/.env.*";
 const ENV_TEMPLATE = /(?:^|\/)\.env\.(?:example|sample|template|dist)$/;
+// An entry that ends in a slash names a directory, as in an ignore file.
 export function isDenied(path: string, deny: readonly string[]): boolean {
-  return deny.some((g) => matchesGlob(path, g) && !(g === ENV_GLOB && ENV_TEMPLATE.test(fold(path))));
+  return deny.some((g) => matchesGlob(path, g.replace(/\/+$/, "")) && !(g === ENV_GLOB && ENV_TEMPLATE.test(fold(path))));
 }
+
+// A glob that matches a directory covers everything under it, as an ignore pattern would: the path itself and each
+// directory above it are tried.
+export const isCovered = (path: string, deny: readonly string[]): boolean =>
+  path.split("/").some((_, i, parts) => isDenied(parts.slice(0, i + 1).join("/"), deny));
 
 // The files that hold secrets. A commit message that only names one (a note about .env variables) gives nothing away, so
 // these bind diffs and clone paths alone. Every other deny glob, a private directory such as _docs/ and a project's own
@@ -160,12 +166,13 @@ const NUL = String.fromCharCode(0);
 // included) never count. Dashes are summed over the whole diff, so a --no-renames rename stays balanced.
 // nameIsWord: the repository's own subject uses the tool's name as a word, so the name before an ordinary word is no
 // trace of the tool there.
-export function checkDiff(diff: string, deny: string[], nameIsWord = false): Violation[] {
+// deny covers a directory and what is under it; exact names only the path itself.
+export function checkDiff(diff: string, deny: string[], nameIsWord = false, exact: string[] = []): Violation[] {
   const out: Violation[] = [];
   const flag = (kind: Violation["kind"], detail: string) => out.push({ kind, detail: clampDetail(detail) });
   const checkPath = (p: string, detail: string) => {
     if (isAgentPath(p)) flag("agent-path", detail);
-    else if (isDenied(p, deny)) flag("denied-path", detail);
+    else if (isCovered(p, deny) || isDenied(p, exact)) flag("denied-path", detail);
   };
   // A worker that writes a worktree path under the default home, a variable or a command of the tool names the tool,
   // which counts as attribution too. The bare name is an ordinary word and passes. It returns whether the text names
