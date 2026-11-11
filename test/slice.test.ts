@@ -1227,9 +1227,14 @@ test("confirm removes a worktree whose .git the worker rewrote, deleted or repla
 test("a cleanup that fails after confirm is reported with exit 0, and the task stays accepted", (t) => {
   const s = setup(t);
   goalStart(s.repo, GOAL, null);
-  reviewable(s, "hello", { "hello.txt": "hello\n" });
+  const { worktree } = reviewable(s, "hello", { "hello.txt": "hello\n" });
   accept(s, "hello");
-  must(s.repo, "update-ref", "-d", "refs/heads/wip/hello"); // branch -D will find nothing to delete
+  // rm cannot empty a directory that it may not write to, so the removal of the worktree fails.
+  const locked = join(worktree!, "locked");
+  mkdirSync(locked);
+  writeFileSync(join(locked, "kept"), "kept\n");
+  chmodSync(locked, 0o555);
+  t.after(() => chmodSync(locked, 0o755));
   const before = ledgerSize(s.id);
   const r = cli(s, "confirm", "hello", "--evidence-file", s.file("c.md", "ok\n"));
   assert.equal(r.status, 0, r.stderr);

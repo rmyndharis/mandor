@@ -211,7 +211,14 @@ export function removeOwnedWorktree(repo: string, path: string, branch: string |
   }
   // Only once the tree is gone, so one that will not go stays registered and a later call finishes it.
   for (const admin of admins) removeTree(admin);
-  if (branch !== null) ok(["branch", "-D", branch], repo);
+  if (branch !== null && branchExists(repo, branch)) ok(["branch", "-D", branch], repo);
+}
+
+// Whether anything removeOwnedWorktree takes away is still there: the directory, its registration or the branch.
+export function worktreeLeft(repo: string, path: string, branch: string | null): boolean {
+  const constructed = constructedPath(path);
+  if (lstatSync(constructed, { throwIfNoEntry: false }) !== undefined) return true;
+  return adminDirs(commonDirOf(repo), constructed).length > 0 || (branch !== null && branchExists(repo, branch));
 }
 
 export function branchExists(repo: string, branch: string): boolean {

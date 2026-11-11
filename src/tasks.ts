@@ -8,7 +8,7 @@ import type { Candidate, FileRef, GoalRecord, JobKind, JobRecord, LedgerEvent, M
 import {
   addWorktree, apply3way, applyCheck, applyToIndex, assertCommitIdentity, assertHeadIdentity, assertHomeOutsideRepos, assertRepoOutsideHome, branchExists, changedPaths, commitRunning, commitStaged, configuredDrivers, configuredPromisors,
   confineProblem, deleteBranchAt, diffSinceBaseBytes, diffStat, dropLastCommit, git, GitFailure, indexLockPath, indexTree, isClean, PARTIAL_CLONE, projectRoot,
-  removeOwnedWorktree, resetHardHead, resetTo, revParse, stagedDiff, worktreeAddRunning, worktreeRoot,
+  removeOwnedWorktree, resetHardHead, resetTo, revParse, stagedDiff, worktreeAddRunning, worktreeLeft, worktreeRoot,
 } from "./git.ts";
 import { checkCommitMessage, checkDiff, checkName } from "./guards.ts";
 import { assertOutsideRepos, jobDir, mandorHome, processAlive, processStart, projectDir, projectIdFor, roundDir, workerEnv, worktreesDir } from "./home.ts";
@@ -854,6 +854,29 @@ export function verdictAccept(cwd: string, slug: string, evidenceFile: string, m
   })!;
 }
 
+// A confirm or a cancel that was killed, or whose removal failed, after it recorded its outcome leaves the worktree, its
+// registration or its branch, and no other command takes them away: the same command, run again, finishes the removal. It
+// records nothing. Null when nothing is left, so the command refuses as it did.
+function finishRemovalLocked(root: string, id: string, task: TaskRecord): { cursor: number; cleanup?: "failed" } | null {
+  if (task.worktree === null || !worktreeLeft(root, task.worktree, task.branch)) return null;
+  const cursor = ledgerSize(id);
+  try {
+    removeOwnedWorktree(root, task.worktree, task.branch, worktreesDir(id));
+  } catch (e) {
+    logRunnerTail(`removal of the worktree of ${task.id}`, (e as Error).message);
+    return { cursor, cleanup: "failed" };
+  }
+  return { cursor };
+}
+
+// The same for a cancelled task, whose change is still in the worktree unless an earlier run copied it: the copy comes first,
+// as in the cancel itself, and a copy that cannot be taken keeps the worktree again.
+function finishCancelLocked(root: string, id: string, task: TaskRecord): { cursor: number; cleanup?: "failed"; patch?: "failed" } | null {
+  if (task.worktree === null || !worktreeLeft(root, task.worktree, task.branch)) return null;
+  const cursor = ledgerSize(id);
+  return { cursor, ...saveAndRemoveLocked(root, id, task) };
+}
+
 export function confirm(cwd: string, slug: string, evidenceFile: string): { cursor: number; cleanup?: "failed" } {
   const { root, id } = resolveProject(cwd);
   const models = loadCatalog();
@@ -864,7 +887,11 @@ export function confirm(cwd: string, slug: string, evidenceFile: string): { curs
     const state = loadState(id);
     const task = state.tasks[slug];
     if (task === undefined) throw new Error(`no task ${slug}`);
-    if (task.status !== "integrating") throw new Error(`task ${slug} is ${task.status}, not integrating`);
+    if (task.status !== "integrating") {
+      const finished = task.status === "accepted" ? finishRemovalLocked(root, id, task) : null;
+      if (finished !== null) return finished;
+      throw new Error(`task ${slug} is ${task.status}, not integrating`);
+    }
     const evidence = readNonEmpty(evidenceFile, "evidence");
     const integration = state.goals[task.goalBranch].integrationWorktree;
     // The goal branch too: a commit HEAD names is not yet one the goal has.
@@ -1026,6 +1053,37 @@ export function ready(tool: ToolName): { resumed: string[]; failed?: string[] } 
 const CANCEL_WAIT_MS = 20_000;
 const CANCELLABLE: readonly TaskStatus[] = ["waiting", "working", "needs-review", "stalled", "takeover"];
 
+// What a cancel does with the worktree once the task is recorded cancelled. What the worker wrote goes with the worktree, so a
+// copy is kept first, as cancelled.patch in the task's round: the lead may want it back. A rebase that was killed is undone
+// first, as the worktree would hold the goal's tip and none of the worker's change. A copy that cannot be taken keeps the
+// worktree, and the marker and the patch of a rebase that may hold the change, where the task is still cancelled. A
+// directory that is already gone, or a link that a worker put at the worktree's name, holds nothing to copy, and the removal
+// still clears what git kept of it. A worktree that goes is reported as such, never as a failure of the command.
+function saveAndRemoveLocked(root: string, id: string, task: TaskRecord): { cleanup?: "failed"; patch?: "failed" } {
+  const slug = task.id;
+  const saved = join(roundDir(id, slug, task.seq), "cancelled.patch");
+  let kept = false;
+  if (task.worktree !== null && task.base !== null && !existsSync(saved) && hasRoot(task.worktree)) {
+    try {
+      recoverRebaseLocked(root, id, task);
+      const { bytes } = stagedDiff(root, task.worktree, task.base);
+      if (bytes.length > 0) writeFileAtomic(saved, bytes);
+    } catch (e) {
+      logRunnerTail(`cancel of ${slug}`, (e as Error).message);
+      kept = true;
+    }
+  }
+  if (kept) return { patch: "failed" };
+  clearRebase(id, slug);
+  try {
+    if (task.worktree !== null) removeOwnedWorktree(root, task.worktree, task.branch, worktreesDir(id));
+  } catch (e) {
+    logRunnerTail(`cancel of ${slug}`, (e as Error).message);
+    return { cleanup: "failed" };
+  }
+  return {};
+}
+
 const hasRoot = (worktree: string): boolean => {
   try {
     worktreeRoot(worktree);
@@ -1045,6 +1103,11 @@ export function cancel(cwd: string, slug: string): { cursor: number; cleanup?: "
     if (!CANCELLABLE.includes(task.status)) throw new Error(`task ${slug} is ${task.status}`);
     return task;
   };
+  const finished = withProjectLock(id, () => {
+    const task = taskOf(id, slug);
+    return task.status === "cancelled" ? finishRemovalLocked(root, id, task) : null;
+  })!;
+  if (finished !== null) return finished;
   const cursor = withProjectLock(id, () => {
     cancellable();
     // Its writer, so a start can tell a cancel under way from one that died.
@@ -1077,34 +1140,9 @@ export function cancel(cwd: string, slug: string): { cursor: number; cleanup?: "
         appendEvent(id, { t: "task.updated", at, taskId: t.id, patch: { status: "stalled", stallReason: "failed" }, reason: `dependency ${slug} was cancelled` });
       }
     }
-    // What the worker wrote goes with the worktree, so a copy is kept first: the lead may want it back. A rebase that was
-    // killed is undone first, as the worktree would hold the goal's tip and none of the worker's change. A copy that cannot
-    // be taken keeps the worktree, with the change in it, where the task is still cancelled.
-    let kept = false;
-    // A directory that is already gone, or a link that a worker put at the worktree's name, holds nothing to copy, and the
-    // removal still clears what git kept of it.
-    if (task.worktree !== null && task.base !== null && hasRoot(task.worktree)) {
-      try {
-        recoverRebaseLocked(root, id, task);
-        const { bytes } = stagedDiff(root, task.worktree, task.base);
-        if (bytes.length > 0) writeFileAtomic(join(roundDir(id, slug, task.seq), "cancelled.patch"), bytes);
-      } catch (e) {
-        logRunnerTail(`cancel of ${slug}`, (e as Error).message);
-        kept = true;
-      }
-    }
-    // The worktree it would restore goes now. One that stays keeps the marker and the patch, which may hold the change.
-    if (!kept) clearRebase(id, slug);
-    // The task is cancelled now, so a worktree that will not go is reported, not a failure of the command.
-    let failed = false;
-    try {
-      if (task.worktree !== null && !kept) removeOwnedWorktree(root, task.worktree, task.branch, worktreesDir(id));
-    } catch (e) {
-      logRunnerTail(`cancel of ${slug}`, (e as Error).message);
-      failed = true;
-    }
+    const left = saveAndRemoveLocked(root, id, task);
     pumpAfterCommand(id, models, `cancel of ${slug}`);
-    return failed ? { cursor, cleanup: "failed" as const } : kept ? { cursor, patch: "failed" as const } : { cursor };
+    return { cursor, ...left };
   })!;
 }
 

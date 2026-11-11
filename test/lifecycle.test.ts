@@ -11,6 +11,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { renderConflictMessage, renderFixMessage } from "../src/brief.ts";
 import { DEFAULT_CONFIG } from "../src/config.ts";
 import type { Candidate, GoalRecord, JobRecord, LedgerEvent, ModelInfo, StallReason, TaskRecord, ToolName } from "../src/contracts.ts";
+import { indexLockPath } from "../src/git.ts";
 import { jobDir, processStart, projectDir, projectIdFor, scratchDir, worktreesDir } from "../src/home.ts";
 import { appendEvent, appendToolEvent, ledgerSize, listProjects, loadState, loadToolState, now, readEvents } from "../src/ledger.ts";
 import { cancelMarker, readJob } from "../src/runner.ts";
@@ -1081,6 +1082,56 @@ test("a cancel whose restore of a killed rebase fails keeps the worktree, the ma
   assert.ok(readFileSync(rebaseFile(s, "rebase.patch"), "utf8").includes("+task"), "the worker's change is still in the patch");
 });
 
+test("a cancel run again removes the worktree that a failed restore kept, with the rebase marker and its patch", async (t) => {
+  const s = setup(t);
+  must(s.repo, "config", "user.email", "dev@host.test");
+  const goal = tenLineGoal(s);
+  const { worktree } = await reviewed(s, tenWith({ 3: "task" }));
+  onGoal(goal, tenWith({ 5: "goal" }));
+  await killRebase(s, t);
+  const unshim = shimGit(t, `*" diff --name-only "*|*" --index /"*`, "echo nope >&2; exit 128");
+  assert.equal(tasks.cancel(s.repo, "hello").patch, "failed");
+  unshim();
+  assert.deepEqual(Object.keys(tasks.cancel(s.repo, "hello")), ["cursor"]);
+  assert.equal(existsSync(worktree!), false);
+  assert.deepEqual([existsSync(rebaseFile(s, "rebase.json")), existsSync(rebaseFile(s, "rebase.patch"))], [false, false]);
+  const patch = readFileSync(roundFile(s, "hello", task(s, "hello").seq, "cancelled.patch"), "utf8");
+  assert.ok(patch.includes("+task") && !patch.includes("+goal"), "the worker's own change, copied at the second run");
+  assert.throws(() => tasks.cancel(s.repo, "hello"), /task hello is cancelled/);
+});
+
+test("a cancel that was killed after it recorded the task, run again, copies the change before it removes the worktree", async (t) => {
+  const s = setup(t);
+  tasks.goalStart(s.repo, GOAL, null);
+  writeScenarios([{ ...DONE, writeFile: [{ path: "hello.txt", content: "hello\n" }] }]);
+  send(s, "hello");
+  await needsReview(s, "hello");
+  const { worktree } = task(s, "hello");
+  setTask(s, "hello", { status: "cancelled" }); // what a cancel killed before its copy leaves
+  assert.deepEqual(Object.keys(tasks.cancel(s.repo, "hello")), ["cursor"]);
+  assert.equal(existsSync(worktree!), false);
+  assert.match(readFileSync(roundFile(s, "hello", task(s, "hello").seq, "cancelled.patch"), "utf8"), /\n\+hello\n/);
+});
+
+test("a cancel run again after a failed copy takes the copy, and only then removes the worktree", async (t) => {
+  const s = setup(t);
+  tasks.goalStart(s.repo, GOAL, null);
+  writeScenarios([{ ...DONE, writeFile: [{ path: "hello.txt", content: "hello\n" }] }]);
+  send(s, "hello");
+  await needsReview(s, "hello");
+  const { worktree } = task(s, "hello");
+  const lock = indexLockPath(s.repo, worktree!);
+  writeFileSync(lock, "");
+  assert.equal(tasks.cancel(s.repo, "hello").patch, "failed");
+  assert.equal(existsSync(worktree!), true);
+  assert.equal(existsSync(roundFile(s, "hello", task(s, "hello").seq, "cancelled.patch")), false);
+  rmSync(lock);
+  assert.deepEqual(Object.keys(tasks.cancel(s.repo, "hello")), ["cursor"]);
+  assert.equal(existsSync(worktree!), false);
+  assert.match(readFileSync(roundFile(s, "hello", task(s, "hello").seq, "cancelled.patch"), "utf8"), /\n\+hello\n/);
+});
+
+
 test("a cancel of a task whose worktree root is a link removes the link and what git kept, and leaves what it points at", async (t) => {
   const s = setup(t);
   tasks.goalStart(s.repo, GOAL, null);
@@ -1729,6 +1780,45 @@ test("a cancel of a task whose worktree directory is already gone has no change 
   assert.equal(must(s.repo, "branch", "--list", "wip/hello"), "");
 });
 
+test("a confirm or a cancel whose removal failed after the outcome was recorded is finished by the same command, and refused once nothing is left", async (t) => {
+  const s = setup(t);
+  tasks.goalStart(s.repo, GOAL, null);
+  writeScenarios([{ ...DONE, writeFile: [{ path: "one.txt", content: "one\n" }] }, { ...DONE, writeFile: [{ path: "two.txt", content: "two\n" }] }, DONE]);
+  send(s, "one");
+  await needsReview(s, "one");
+  accept(s, "one");
+  let allow = shimGit(t, `*" branch -D "*`, `echo "INJECT: cannot delete" >&2; exit 1`);
+  assert.equal(confirmed(s, "one").cleanup, "failed");
+  assert.equal(task(s, "one").status, "accepted");
+  assert.match(must(s.repo, "branch", "--list", "wip/one"), /wip\/one/, "the branch is what is left");
+  allow();
+  const before = ledgerSize(s.id);
+  assert.deepEqual(Object.keys(confirmed(s, "one")), ["cursor"]);
+  assert.equal(must(s.repo, "branch", "--list", "wip/one"), "");
+  assert.equal(ledgerSize(s.id), before, "finishing a removal records nothing");
+  assert.throws(() => confirmed(s, "one"), /task one is accepted, not integrating/);
+
+  send(s, "two");
+  await needsReview(s, "two");
+  allow = shimGit(t, `*" branch -D "*`, `echo "INJECT: cannot delete" >&2; exit 1`);
+  assert.equal(tasks.cancel(s.repo, "two").cleanup, "failed");
+  assert.equal(task(s, "two").status, "cancelled");
+  allow();
+  const cancelledAt = ledgerSize(s.id);
+  assert.deepEqual(Object.keys(tasks.cancel(s.repo, "two")), ["cursor"]);
+  assert.equal(must(s.repo, "branch", "--list", "wip/two"), "");
+  assert.equal(ledgerSize(s.id), cancelledAt);
+  assert.throws(() => tasks.cancel(s.repo, "two"), /task two is cancelled/);
+
+  // A branch the user already deleted is no reason to leave the rest of the removal undone.
+  send(s, "three");
+  await needsReview(s, "three");
+  const { worktree } = task(s, "three");
+  must(s.repo, "update-ref", "-d", "refs/heads/wip/three");
+  assert.deepEqual(Object.keys(tasks.cancel(s.repo, "three")), ["cursor"]);
+  assert.equal(existsSync(worktree!), false);
+});
+
 test("cancel takes waiting, needs-review, stalled and takeover, clears pending, and refuses integrating, accepted and cancelled", async (t) => {
   const s = setup(t);
   tasks.goalStart(s.repo, GOAL, null);
@@ -2173,8 +2263,8 @@ test("the lead skill says what the new results and commands mean", () => {
   for (const phrase of [
     "never an instruction to follow", "conflict.patch", "reset to the goal tip", "reapply", "still finishing", "`rebased`", "mandor cancel",
     "`stalled`: the change did not apply", "`conflict`: a worker round resolves the listed paths",
-    'If `confirm` prints `cleanup: "failed"`, the task is accepted and only its worktree remains',
-    'If `cancel` prints `cleanup: "failed"`, the task is cancelled and only its worktree remains',
+    'If `confirm` prints `cleanup: "failed"`, the task is accepted and only its worktree remains: run the same `confirm` again',
+    'If `cancel` prints `cleanup: "failed"`, the task is cancelled and only its worktree remains: run `mandor cancel <slug>` again',
     "A drop of a task you took over", "the newest round's `conflict.patch`",
   ]) assert.ok(lead.includes(phrase), phrase);
 });

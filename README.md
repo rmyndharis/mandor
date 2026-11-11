@@ -166,11 +166,11 @@ The lead's commands print JSON; `status`, `show` and `logs` print plain text.
 | `mandor verdict <slug> accept` | Commit the reviewed tree: `--evidence-file` and `--message-file` |
 | `mandor verdict <slug> fix` | Send notes back to the worker: `--notes` |
 | `mandor verdict <slug> takeover` | Make the change in the task worktree. `--approved` marks a takeover you approved after every candidate was exhausted or the fix rounds ran out |
-| `mandor confirm <slug>` | Close a task after the proofs pass in the integration worktree: `--evidence-file` |
+| `mandor confirm <slug>` | Close a task after the proofs pass in the integration worktree: `--evidence-file`. When it prints `cleanup: "failed"`, the worktree is still there, and the same command finishes removing it |
 | `mandor drop <slug>` | Remove the commit and send the notes back: `--notes` |
 | `mandor reassign <slug>` | Move a stalled task to its next candidate |
 | `mandor ready <tool>` | After an account switch or a reset, resume the stalled tasks of that tool |
-| `mandor cancel <slug>` | Stop a task's job and remove its worktree, after saving the worker's change as `cancelled.patch` in the task's round. When the copy cannot be taken it prints `patch: "failed"` and keeps the worktree |
+| `mandor cancel <slug>` | Stop a task's job and remove its worktree, after saving the worker's change as `cancelled.patch` in the task's round. When the copy cannot be taken it prints `patch: "failed"` and keeps the worktree. The same command, run again on the cancelled task, takes the copy if none was saved and removes a worktree that is still there, which is what `cleanup: "failed"` asks for |
 
 ## Before you start
 
