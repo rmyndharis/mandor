@@ -4,6 +4,8 @@ Issues and pull requests are welcome. This page says how each is expected to loo
 
 A security problem does not belong in an issue or a pull request: see [SECURITY.md](SECURITY.md).
 
+Everyone who takes part is expected to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
+
 ## Issues
 
 - Search the open and closed issues first.
