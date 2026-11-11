@@ -6,7 +6,7 @@ import type { Adapter, ModelInfo, ToolName } from "../contracts.ts";
 import { mandorHome } from "../home.ts";
 import { clampDetail, ensureDir, readJson, writeJsonAtomic } from "../store.ts";
 import type { ModelCache } from "../modelcache.ts";
-import { cacheFile, readModelCache } from "../modelcache.ts";
+import { cacheFile, clearRefreshFailure, noteRefreshFailure, readModelCache, refreshFailedWithin } from "../modelcache.ts";
 import { agyWarnings, createAgyAdapter, TESTED_AGY_VERSION } from "./agy.ts";
 import { codexWarnings, createCodexAdapter } from "./codex.ts";
 import { createZcodeAdapter, zcodeWarnings } from "./zcode.ts";
@@ -61,8 +61,12 @@ export function refreshModels(cfg: Config): ModelInfo[] {
       models.push(...(last?.models ?? []).filter((m) => m.tool === tool));
     }
   }
-  if (listed === 0 && failure !== undefined) throw failure;
+  if (listed === 0 && failure !== undefined) {
+    noteRefreshFailure();
+    throw failure;
+  }
   writeJsonAtomic(cacheFile(), { fetchedAt: new Date().toISOString(), codexVersion: versions.codex ?? "", versions, problems, warnings: warningsOf(cfg, versions, problems), models });
+  clearRefreshFailure();
   return models;
 }
 
@@ -71,6 +75,7 @@ export function refreshModels(cfg: Config): ModelInfo[] {
 export function loadModels(maxAgeMs: number, cfg: Config): ModelInfo[] {
   const cache = readModelCache();
   if (cache !== null && Date.now() - Date.parse(cache.fetchedAt) < maxAgeMs) return cache.models;
+  if (refreshFailedWithin(maxAgeMs)) return cache?.models ?? [];
   try {
     return refreshModels(cfg);
   } catch (e) {

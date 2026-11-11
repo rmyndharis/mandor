@@ -543,6 +543,40 @@ test("loadModels keeps the last good list when a refresh fails, and returns [] w
   assert.equal(readFileSync(join(home, "logs", "models.log"), "utf8").trim().split("\n").length, 2);
 });
 
+test("a refresh that no tool answered is remembered as long as a good cache would be kept, and a good refresh ends it", () => {
+  const home = tempHome();
+  const control = join(process.env.CODEX_HOME!, "fake", "models.json");
+  const attempts = () => readFileSync(join(home, "logs", "models.log"), "utf8").trim().split("\n").length;
+  writeFileSync(control, "not json");
+  assert.deepEqual(loadModels(60_000, DEFAULT_CONFIG), []);
+  const calls = readFakeLog().length;
+  assert.deepEqual(loadModels(60_000, DEFAULT_CONFIG), []);
+  assert.equal(readFakeLog().length, calls, "no tool is asked again");
+  assert.equal(attempts(), 1);
+  assert.deepEqual(loadModels(0, DEFAULT_CONFIG), [], "a failure older than the limit is asked again");
+  assert.equal(attempts(), 2);
+  assert.throws(() => refreshModels(DEFAULT_CONFIG), /does not parse/, "a refresh that is asked for goes ahead");
+  rmSync(control);
+  const good = refreshModels(DEFAULT_CONFIG);
+  rmSync(join(home, "models.json"));
+  writeFileSync(control, "not json");
+  assert.deepEqual(loadModels(60_000, DEFAULT_CONFIG), [], "a good refresh ended the memory, so the tool is asked");
+  assert.equal(attempts(), 3);
+  assert.ok(good.length > 0);
+  // The memory only saves time, so a file it cannot remove never fails a refresh that worked.
+  rmSync(control);
+  rmSync(join(home, "models.failed"), { force: true });
+  mkdirSync(join(home, "models.failed"));
+  assert.doesNotThrow(() => refreshModels(DEFAULT_CONFIG));
+  rmSync(join(home, "models.failed"), { recursive: true });
+  rmSync(join(home, "models.json"));
+  writeFileSync(control, "not json");
+  // A clock that was set back would otherwise keep the memory for as long as it was set back.
+  writeFileSync(join(home, "models.failed"), new Date(Date.now() + 3_600_000).toISOString());
+  assert.deepEqual(loadModels(60_000, DEFAULT_CONFIG), [], "a failure dated in the future is not honored");
+  assert.equal(attempts(), 4);
+});
+
 test("detectModels skips a malformed entry and refuses a catalog with no usable model", () => {
   const usable = { slug: "gpt-ok", display_name: "GPT OK", supported_reasoning_levels: [{ effort: "low", description: "" }], default_reasoning_level: "low", visibility: "list" };
   const listing = (models: unknown[]) => createCodexAdapter(DEFAULT_CONFIG, () => ({ code: 0, stdout: JSON.stringify({ models }) }));

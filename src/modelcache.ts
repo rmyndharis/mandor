@@ -1,3 +1,4 @@
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "./config.ts";
 import { WORKER_TOOLS } from "./config.ts";
@@ -13,6 +14,30 @@ export interface ModelCache {
 }
 
 export const cacheFile = () => join(mandorHome(), "models.json");
+const failureFile = () => join(mandorHome(), "models.failed");
+
+// A refresh that no tool answered is kept for as long as a good list would be, so the commands that follow do not each wait
+// for every tool again; a tool that hangs can take 30 seconds. It never throws: it only saves time.
+export function noteRefreshFailure(): void {
+  try {
+    writeFileSync(failureFile(), new Date().toISOString(), { mode: 0o600 });
+  } catch {}
+}
+
+export function clearRefreshFailure(): void {
+  try {
+    rmSync(failureFile(), { force: true });
+  } catch {}
+}
+
+export function refreshFailedWithin(maxAgeMs: number): boolean {
+  try {
+    const age = Date.now() - Date.parse(readFileSync(failureFile(), "utf8"));
+    return age >= 0 && age < maxAgeMs; // a failure dated ahead of the clock is no failure of the last few minutes
+  } catch {
+    return false;
+  }
+}
 
 // A file from before a field existed reads as one without it.
 export function readModelCache(): ModelCache | null {
