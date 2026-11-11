@@ -1,5 +1,5 @@
 <!--
-Title: an imperative sentence, as in the commit log. See CONTRIBUTING.md.
+Title: `type: summary`, as in the commit log. See CONTRIBUTING.md.
 Say what was wrong or missing, what changed, and what a reviewer should look at closely.
 Delete whatever below does not apply.
 -->

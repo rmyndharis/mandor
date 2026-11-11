@@ -34,13 +34,14 @@ Branch from `main`, and give the branch a short name in lower case with hyphens 
 ## Commits
 
 - One logical change per commit, with its tests. Each commit passes the type check and the tests on its own.
-- The subject is an imperative sentence of about 50 characters, with a capital first letter, no type prefix and no full stop: `Print the usage for --help after a command`.
+- The subject follows [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/): `type: summary`, or `type(scope): summary` when one scope fits. The type is `feat`, `fix`, `docs`, `refactor`, `perf`, `test`, `build`, `ci` or `chore`. The summary is imperative, in lower case and without a full stop, and the subject stays under about 70 characters: `fix: print the usage for --help after a command`.
+- A change that breaks existing use adds `!` after the type, as in `feat!: drop the old tier names`, and says in the body what breaks.
 - Add a body when the subject is not enough. Wrap it at 72 characters, and say why the change is needed and what it costs, not what the diff already shows.
 - Keep the history about the change: no account of the order things were tried in.
 
 ## Pull requests
 
-- The title has the form of a commit subject. With one commit, use that commit's subject.
+- The title has the form of a commit subject, `type: summary`. With one commit, use that commit's subject.
 - The description says what was wrong or missing, what changed, anything a reviewer should look at closely, and how you verified it. Keep it short and complete; delete any part of the template that would be empty.
 - Add a test for any change in what a guard refuses or what a worker may do.
 - A change that gives workers more reach than they have today (a wider environment, a writable path, a weaker guard) explains in the description why it is safe.
@@ -67,7 +68,7 @@ For maintainers.
 
 1. In `CHANGELOG.md`, rename `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD` and put a new, empty `## [Unreleased]` above it.
 2. Set the version: `npm version X.Y.Z --no-git-tag-version`, then the same number in `.claude-plugin/plugin.json`.
-3. Commit both as `Release X.Y.Z`, open a pull request, and land it once the checks pass.
+3. Commit both as `chore(release): X.Y.Z`, open a pull request, and land it once the checks pass.
 4. Tag that commit and push the tag on its own: `git tag -a vX.Y.Z -m vX.Y.Z`, then `git push origin vX.Y.Z`. Push one tag per command.
 
 The tag starts the release workflow. It runs the checks again, refuses a tag that does not match the version in `package.json`, and publishes a GitHub release whose notes are that version's section of the changelog.
