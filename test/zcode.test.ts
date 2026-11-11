@@ -86,6 +86,48 @@ test("the report is the last JSON object of the answer, whatever prose or code f
   assert.equal(lastJsonObject("{ broken"), null);
 });
 
+test("a report followed by braces in prose, or by an object that is not a report, is still the report", () => {
+  const body = JSON.stringify(REPORT);
+  const sample = "if (a) {\n  if (b) {\n    x();\n  }\n}\n".repeat(6);
+  const tails = ["\nSee `if (x) { return; }` above.", "\nAn empty object {} means nothing.", '\nA string such as "}" is fine.', '\n{"status":"nope"}', `\n${"}".repeat(20)}`, `\n${sample}`];
+  for (const tail of tails) {
+    const r = zcode().classify(raw(finished(body + tail)));
+    assert.equal(r.status, "done", tail);
+    assert.deepEqual(r.report, REPORT, tail);
+  }
+  // With no test for the report, the last object that parses is returned, a stray {} included.
+  assert.deepEqual(lastJsonObject('{"a":1} tail {}'), {});
+  assert.deepEqual(lastJsonObject('{"a":1} tail {}', (v) => "a" in v), { a: 1 });
+});
+
+test("the report is found whatever its own strings hold and whatever braces, quotes or objects come around it", () => {
+  const tricky = { ...REPORT, summary: 'Closed the "}" and a {block}, a backslash \\ and a quote \\" inside' };
+  const text = JSON.stringify(tricky);
+  const answers = {
+    "braces and quotes inside its strings": `${text}\nDone }.`,
+    "a quote that never closes before it": `He said "hi and left. ${text}`,
+    "an opening brace that never closes before it": `Format {a, b:\n${text}`,
+    "an opening brace that closes after it": `{ see below\n${text}\n}`,
+    "a wrapper object that is not a report": `{"report":${text}}`,
+    "an object that opens with a key and is not JSON": `{"format" follows: ${text}}`,
+  };
+  for (const [name, answer] of Object.entries(answers)) {
+    const r = zcode().classify(raw(finished(answer)));
+    assert.equal(r.status, "done", name);
+    assert.deepEqual(r.report, tricky, name);
+  }
+  const later = { ...REPORT, summary: "Second." };
+  assert.deepEqual(zcode().classify(raw(finished(`${JSON.stringify(REPORT)}\n${JSON.stringify(later)}`))).report, later, "the later of two reports wins");
+});
+
+test("a long run of opening braces that cannot start an object does not slow the search for the report", () => {
+  const started = Date.now();
+  const r = zcode().classify(raw(finished(`${"{ ".repeat(50_000)}${JSON.stringify(REPORT)}`)));
+  assert.equal(r.status, "done");
+  assert.deepEqual(r.report, REPORT);
+  assert.ok(Date.now() - started < 1000, `took ${Date.now() - started} ms`);
+});
+
 test("a finished run without a report that fits the schema is a failure, and so is a stream that ends early", () => {
   for (const response of ["All done!", '{"status":"done"}', ""]) {
     const r = zcode().classify(raw(finished(response)));

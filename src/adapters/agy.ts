@@ -7,7 +7,7 @@ import { resolveBin } from "../config.ts";
 import type { Adapter, JobResult, JobStatus, ModelInfo, RawRun, WorkerReport } from "../contracts.ts";
 import { mandorHome, workerEnv } from "../home.ts";
 import { clampDetail, ensureDir } from "../store.ts";
-import { lastJsonObject } from "./zcode.ts";
+import { fitsReport, lastJsonObject } from "./zcode.ts";
 
 export const TESTED_AGY_VERSION = "1.5.2";
 
@@ -117,7 +117,7 @@ export function createAgyAdapter(cfg: Config): Adapter {
         if (typeof early === "string" && /^[A-Za-z_]+$/.test(early)) return result("failed", `the run stopped early: ${early}`);
         const structured = get(end, "structured_output");
         const response = get(end, "response");
-        const found = isObject(structured) ? structured : typeof response === "string" ? lastJsonObject(response) : null;
+        const found = isObject(structured) ? structured : typeof response === "string" ? lastJsonObject(response, fitsReport) : null;
         const report: WorkerReport | null = found === null ? null : parseReport(JSON.stringify(found));
         if (report === null) return result("failed", "report not valid JSON");
         const usage = get(end, "usage");

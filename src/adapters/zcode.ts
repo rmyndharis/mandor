@@ -101,19 +101,56 @@ export function zcodeUseApiKey(family: string, key: string): { tool: "zcode"; ho
   return { tool: "zcode", home: zcodeHome(), provider };
 }
 
-// The last object in text that parses as JSON, or null. A worker ends with its report, which a model may wrap in prose
-// or a code fence. Each "{" is tried from the last one back, up to the last "}", so an inner object never wins over
-// the one that holds it.
-export function lastJsonObject(text: string): unknown {
-  const end = text.lastIndexOf("}");
-  for (let start = text.lastIndexOf("{", end); start >= 0; start = start === 0 ? -1 : text.lastIndexOf("{", start - 1)) {
-    try {
-      const v: unknown = JSON.parse(text.slice(start, end + 1));
-      if (isObject(v)) return v;
-    } catch {}
+// The index of the "}" that closes the "{" at start, or -1. A brace inside a string does not count.
+function closingBrace(text: string, start: number): number {
+  let depth = 0;
+  let inString = false;
+  for (let i = start; i < text.length; i++) {
+    const c = text[i];
+    if (inString) {
+      if (c === "\\") i++;
+      else if (c === '"') inString = false;
+    } else if (c === '"') inString = true;
+    else if (c === "{") depth++;
+    else if (c === "}" && --depth === 0) return i;
   }
-  return null;
+  return -1;
 }
+
+// Whether the "{" at start can begin a JSON object: only white space, then a quote (a key) or a closing brace, follows it.
+function opensObject(text: string, start: number): boolean {
+  let i = start + 1;
+  while (text[i] === " " || text[i] === "\t" || text[i] === "\n" || text[i] === "\r") i++;
+  return text[i] === '"' || text[i] === "}";
+}
+
+// The last object in text that parses as JSON and that accept allows, or null. A worker ends with its report, which a
+// model may wrap in prose or a code fence, so each object is cut from its own opening brace to the brace that closes
+// it: braces before or after it do not matter. A candidate that does not parse or fit is passed over one brace at a
+// time, so an object inside it can still be the one; an object that is taken is passed over whole, and a later one wins.
+// A brace that cannot open an object is not scanned, so a long run of stray braces stays cheap.
+export function lastJsonObject(text: string, accept: (v: Record<string, unknown>) => boolean = () => true): unknown {
+  let found: unknown = null;
+  let at = text.indexOf("{");
+  while (at >= 0) {
+    let next = at + 1;
+    const end = opensObject(text, at) ? closingBrace(text, at) : -1;
+    if (end >= 0) {
+      try {
+        const v: unknown = JSON.parse(text.slice(at, end + 1));
+        if (isObject(v) && accept(v)) {
+          found = v;
+          next = end + 1;
+        }
+      } catch {}
+    }
+    at = text.indexOf("{", next);
+  }
+  return found;
+}
+
+// Whether an object is a worker's report, which is what the adapters look for at the end of an answer.
+export const fitsReport = (v: Record<string, unknown>): boolean => parseReport(JSON.stringify(v)) !== null;
 
 // Writes only to the worktree, the worker's home and the temporary directories. What the user's credential directories
 // and the state directory hold cannot be read, but for the worktree, the worker's home and the job's own directory,
@@ -224,7 +261,7 @@ export function createZcodeAdapter(cfg: Config): Adapter {
       const response = get(end, "response");
       if (typeof response === "string") {
         if (raw.exitCode !== 0) return result("failed", `exit ${exit} after the run finished; see stderr.log`);
-        const found = lastJsonObject(response);
+        const found = lastJsonObject(response, fitsReport);
         const report: WorkerReport | null = found === null ? null : parseReport(JSON.stringify(found));
         if (report === null) return result("failed", "report not valid JSON");
         const usage = get(end, "usage");

@@ -76,6 +76,17 @@ test("the report is the structured output, or the last JSON object of the answer
   assert.deepEqual([nonZero.status, nonZero.detail], ["failed", "exit 1 after the run finished; see stderr.log"]);
 });
 
+test("a report in the answer followed by braces in prose, or by an object that is not a report, is still the report", () => {
+  const body = JSON.stringify(REPORT);
+  const sample = "if (a) {\n  if (b) {\n    x();\n  }\n}\n".repeat(6);
+  const tails = ["\nSee `if (x) { return; }` above.", "\nAn empty object {} means nothing.", '\nA string such as "}" is fine.', '\n{"status":"nope"}', `\n${"}".repeat(20)}`, `\n${sample}`];
+  for (const tail of tails) {
+    const r = agy().classify(raw(stream({ status: "SUCCESS", response: body + tail })));
+    assert.equal(r.status, "done", tail);
+    assert.deepEqual(r.report, REPORT, tail);
+  }
+});
+
 test("a tool the run had no permission for fails the job by name, though the CLI itself reports success", () => {
   const denied = [{ action: "write_file", display_name: "WriteFile" }, { action: "command", display_name: "RunCommand" }];
   const r = agy().classify(raw(stream({ status: "SUCCESS", response: "", denied_actions: denied })));
