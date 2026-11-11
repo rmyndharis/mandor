@@ -1,0 +1,41 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The tests hold the plugin manifest and the lock file to the version in package.json, so the tag is checked
+      # against that one file.
+      - name: Take the release notes from the changelog
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          if [ "$(jq -r .version package.json)" != "$version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match the version in package.json"
+            exit 1
+          fi
+          awk -v heading="## [$version]" 'index($0, "## [") == 1 { found = index($0, heading) == 1; next } found' CHANGELOG.md > notes.md
+          if ! grep -q '[^[:space:]]' notes.md; then
+            echo "::error::CHANGELOG.md has no entries under [$version]"
+            exit 1
+          fi
+      - name: Publish the release
+        run: gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" --notes-file notes.md
+        env:
+          GH_TOKEN: ${{ github.token }}

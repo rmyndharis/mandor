@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { test } from "node:test";
 import { TOOL_COMMANDS } from "../src/toolname.ts";
@@ -8,10 +8,19 @@ import { temp } from "./helpers.ts";
 
 const root = join(import.meta.dirname, "..");
 const launcher = join(root, "bin", "mandor");
+const manifest = (file: string) => JSON.parse(readFileSync(join(root, file), "utf8"));
+const packageVersion: string = manifest("package.json").version;
 
-test("--version prints 0.1.0", () => {
+// A release has one version: package.json is what --version prints, and the plugin manifest is what Claude Code reads.
+test("the plugin manifest and the lock file carry the version of package.json", () => {
+  assert.match(packageVersion, /^\d+\.\d+\.\d+$/);
+  assert.equal(manifest(".claude-plugin/plugin.json").version, packageVersion);
+  assert.equal(manifest("package-lock.json").version, packageVersion);
+});
+
+test("--version prints the version of package.json", () => {
   const r = spawnSync(launcher, ["--version"], { encoding: "utf8" });
-  assert.equal(r.stdout, "0.1.0\n");
+  assert.equal(r.stdout, `${packageVersion}\n`);
   assert.equal(r.status, 0);
 });
 
@@ -35,7 +44,7 @@ test("launcher works through a symlink", () => {
   const link = join(temp("mandor-link-"), "launcher");
   symlinkSync(launcher, link);
   const r = spawnSync(link, ["--version"], { encoding: "utf8" });
-  assert.equal(r.stdout, "0.1.0\n");
+  assert.equal(r.stdout, `${packageVersion}\n`);
   assert.equal(r.status, 0);
 });
 
@@ -58,7 +67,7 @@ test("launcher finds its root through any symlink, with nothing on PATH but node
   // The last one runs the script by a bare name, so $0 holds no slash.
   for (const r of [version(launcher, []), version(join(dir, "absolute"), []), version(join(dir, "relative"), []), version(join(dir, "chain"), []),
     version(join(dir, "bindir", "mandor"), []), version("/bin/sh", ["mandor"], join(root, "bin"))]) {
-    assert.deepEqual([r.stdout, r.stderr, r.status], ["0.1.0\n", "", 0]);
+    assert.deepEqual([r.stdout, r.stderr, r.status], [`${packageVersion}\n`, "", 0]);
   }
 });
 
@@ -135,7 +144,7 @@ test("launcher runs under every common shell that is installed, not only /bin/sh
     const as = shell === "/bin/zsh" ? { argv0: "sh" } : {};
     for (const script of [launcher, link]) {
       const r = spawnSync(shell, [script, "--version"], { encoding: "utf8", ...as, env: { PATH: sparsePath() } });
-      assert.deepEqual([r.stdout, r.stderr, r.status], ["0.1.0\n", "", 0], `${shell} ${script}`);
+      assert.deepEqual([r.stdout, r.stderr, r.status], [`${packageVersion}\n`, "", 0], `${shell} ${script}`);
     }
     // The hook that cannot run, with a home that holds a ledger to speak about, and with one that does not.
     for (const [ledger, said] of [[true, "mandor hooks are off: node is not on their PATH\n"], [false, ""]] as const) {
