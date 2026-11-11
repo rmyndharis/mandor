@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadRounds } from "./brief.ts";
-import { changedPaths, stagedDiff } from "./git.ts";
+import { changedPaths, ignoredChanged, stagedDiff } from "./git.ts";
 import { attributionHints, checkDiff, matchesGlob, type Violation } from "./guards.ts";
 import { jobDir } from "./home.ts";
 import { loadState, now } from "./ledger.ts";
@@ -185,6 +185,17 @@ export function reviewPack(cwd: string, slug: string): ReviewPack {
     const log = job === undefined ? "" : join(jobDir(job.id), "raw.log");
     if (round?.report && job?.seq === round.seq && existsSync(log)) {
       for (const f of unrunClaims(round.report.commands_run.map((c) => c.command), readFileSync(log, "utf8"))) flag(f.kind, f.detail);
+    }
+
+    // What the staged tree leaves out and a proof may still run: the ignored paths that changed since the first job began.
+    // The ids of its jobs hold the time they were queued, which is later than the provisioning, and the margin keeps what
+    // the provisioning wrote in its last seconds from counting.
+    const began = task.jobIds.map((j) => /^j-(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})-/.exec(j)).find((m) => m !== null);
+    if (began !== undefined && began !== null) {
+      const [y, mo, d, h, mi, s] = began.slice(1).map(Number);
+      const changed = ignoredChanged(root, task.worktree!, Date.UTC(y, mo - 1, d, h, mi, s) + 5_000);
+      for (const c of changed.slice(0, 10)) flag("ignored-changed", `${c.path}: ${c.files} file${c.files === 1 ? "" : "s"} changed since the first job began`);
+      if (changed.length > 10) flag("ignored-changed", `and ${changed.length - 10} more ignored paths changed`);
     }
 
     files.forEach((f) => {

@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import {
   addWorktree, apply3way, applyCheck, applyToIndex, assertCommitIdentity, assertHeadIdentity, branchExists, changedPaths, commitStaged, configuredDrivers, configuredPromisors, deleteBranchAt,
-  diffSinceBaseBytes, diffStat, dropLastCommit, git, indexLockPath, indexTree, isClean, isPlaceholderEmail, migrateObjects, projectRoot,
+  diffSinceBaseBytes, diffStat, dropLastCommit, git, ignoredChanged, indexLockPath, indexTree, isClean, isPlaceholderEmail, migrateObjects, projectRoot,
   removeOwnedWorktree, removeTree, resetHardHead, resetTo, revParse, stagedDiff, worktreeAddRunning, worktreeRoot,
 } from "../src/git.ts";
 import { diffSinceBase, temp as tempDir, tempHome, tempRepo } from "./helpers.ts";
@@ -883,6 +883,22 @@ test("staging on a copy of the index keeps git's protection against an edit of t
   utimesSync(file, when, when);
   await sleep(1100);
   assert.deepEqual(changedPaths(stagedDiff(repo, wt, base).text), [{ path: "README.md", status: "M" }]);
+});
+
+test("ignoredChanged counts the ignored files whose status changed since a time, by their first path segment, and no file that git does not ignore", () => {
+  const { repo, wt } = withWorktree();
+  writeFileSync(join(wt, ".gitignore"), "build/\n*.local\nnode_modules/\n");
+  mkdirSync(join(wt, "build", "deep"), { recursive: true });
+  writeFileSync(join(wt, "build", "deep", "a.js"), "x\n");
+  writeFileSync(join(wt, "build", "b.js"), "x\n");
+  writeFileSync(join(wt, "run.local"), "x\n");
+  mkdirSync(join(wt, "node_modules", "pkg"), { recursive: true });
+  writeFileSync(join(wt, "node_modules", "pkg", "i.js"), "x\n");
+  // A worker can set the modification time of its own file back, but not the time its status changed.
+  utimesSync(join(wt, "node_modules", "pkg", "i.js"), new Date(2000, 0, 1), new Date(2000, 0, 1));
+  writeFileSync(join(wt, "plain.txt"), "not ignored\n");
+  assert.deepEqual(ignoredChanged(repo, wt, Date.now() - 60_000), [{ path: "build/", files: 2 }, { path: "node_modules/", files: 1 }, { path: "run.local", files: 1 }]);
+  assert.deepEqual(ignoredChanged(repo, wt, Date.now() + 60_000), [], "nothing changed after a later time");
 });
 
 const objectIds = (repo: string): string[] =>

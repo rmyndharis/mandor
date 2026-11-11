@@ -502,6 +502,23 @@ function privateStage<T>(repo: string, worktree: string, use: (g: Bound) => T): 
   }
 }
 
+// What the staged tree leaves out: the ignored files whose status changed after sinceMs, counted by their first path segment
+// (a directory is named with a closing slash), most files first. The status change time, not the modification time: a
+// worker can set the latter back on a file of its own, and not the former. Whether a path is ignored is the worktree's own
+// rule, a .gitignore a worker edited included, which the staged tree shows as a change of that file.
+export function ignoredChanged(repo: string, worktree: string, sinceMs: number): { path: string; files: number }[] {
+  const g = bind(repo, worktree);
+  const found = new Map<string, number>();
+  for (const path of g.okBytes(["ls-files", "-z", "--others", "--ignored", "--exclude-standard"]).toString().split("\0").filter(Boolean)) {
+    const stat = lstatSync(join(g.worktree, path), { throwIfNoEntry: false });
+    if (stat === undefined || !(stat.ctimeMs > sinceMs)) continue;
+    const slash = path.indexOf("/");
+    const key = slash < 0 ? path : `${path.slice(0, slash)}/`;
+    found.set(key, (found.get(key) ?? 0) + 1);
+  }
+  return [...found].map(([path, files]) => ({ path, files })).sort((a, b) => b.files - a.files || (a.path < b.path ? -1 : 1));
+}
+
 // The exact patch bytes: a text file that is not UTF-8 would not survive a decode and re-encode.
 export function diffSinceBaseBytes(repo: string, worktree: string, base: string): Buffer {
   return privateStage(repo, worktree, (g) => {

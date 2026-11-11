@@ -159,6 +159,37 @@ test("the diff command prints the text, exits 2 without a slug and 1 for a task 
   assert.equal(run("diff", "nope").status, 1);
 });
 
+// The task's first job is named by its id, which holds the time it was queued.
+const firstJob = (f: Fixture, id: string) => appendEvent(f.id, { t: "task.updated", at: now(), taskId: SLUG, patch: { jobIds: [id] }, reason: "test" });
+
+test("the pack flags what changed under ignored paths since the task's first job, which the staged tree does not hold", (t) => {
+  const f = fixture(t, { ".gitignore": "build/\n", "src/a.ts": "a\n" });
+  put(f.wt, "src/a.ts", "b\n");
+  put(f.wt, "build/out.js", "worker-written\n");
+  firstJob(f, "j-20200101000000-0000");
+  const p = reviewPack(f.repo, SLUG);
+  assert.deepEqual(details(p, "ignored-changed"), ["build/: 1 file changed since the first job began"]);
+  assert.deepEqual(p.files, [{ path: "src/a.ts", status: "M" }], "the staged tree does not hold it");
+  firstJob(f, "j-20990101000000-0000");
+  assert.deepEqual(details(reviewPack(f.repo, SLUG), "ignored-changed"), [], "a first job in the future leaves nothing newer");
+});
+
+test("the pack names ten ignored paths at most and counts the rest", (t) => {
+  const f = fixture(t, { ".gitignore": "d*/\n", "src/a.ts": "a\n" });
+  for (let i = 0; i < 12; i++) put(f.wt, `d${String(i).padStart(2, "0")}/x.js`, "x\n");
+  firstJob(f, "j-20200101000000-0000");
+  const found = details(reviewPack(f.repo, SLUG), "ignored-changed");
+  assert.equal(found.length, 11);
+  assert.equal(found.at(-1), "and 2 more ignored paths changed");
+});
+
+test("a task whose first job id has no time is flagged for nothing under ignored paths", (t) => {
+  const f = fixture(t, { ".gitignore": "build/\n", "src/a.ts": "a\n" });
+  put(f.wt, "build/out.js", "x\n");
+  firstJob(f, "j-not-a-time");
+  assert.deepEqual(details(reviewPack(f.repo, SLUG), "ignored-changed"), []);
+});
+
 test("a task that does not exist is refused", (t) => {
   const f = fixture(t);
   assert.throws(() => reviewPack(f.repo, "nope"), /no task nope/);

@@ -91,6 +91,11 @@ test("lead skill reads a change with diff, and not with git in a task worktree",
   assert.ok(read("lead").includes("run `mandor diff <slug>`, not git in the task worktree"));
 });
 
+test("lead skill says what an ignored-changed red flag asks", () => {
+  assert.ok(read("lead").includes("Read each `ignored-changed` red flag."));
+  assert.ok(read("lead").includes("or delete the path and rebuild it, before you run the proofs"));
+});
+
 test("status skill runs mandor status", () => {
   assert.ok(read("status").includes("mandor status"));
 });

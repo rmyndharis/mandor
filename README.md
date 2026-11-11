@@ -164,7 +164,7 @@ The lead's commands print JSON; `status`, `show` and `logs` print plain text.
 | `mandor plan set` | Record the plan: `--goal`, `--file` and `--description` |
 | `mandor dispatch` | Start a worker on a task: `--goal`, `--task`, `--tier` and `--brief`, and optionally `--scope` (repeatable), `--use <tool:model@effort>` and `--after <slug>`. It prints the warnings of the tools that are switched on |
 | `mandor wait --since <cursor>` | Return when a task needs the lead. `--timeout <seconds>` bounds the wait |
-| `mandor review <slug>` | Print the review pack and record the reviewed tree |
+| `mandor review <slug>` | Print the review pack, which also names the ignored paths that changed since the task's first job, and record the reviewed tree |
 | `mandor diff <slug>` | Print the task's change as patch text, read through the same confined staging as the review. It records no review, and it refuses a task with a job in flight, whose worker may be using the index |
 | `mandor verdict <slug> accept` | Commit the reviewed tree: `--evidence-file` and `--message-file` |
 | `mandor verdict <slug> fix` | Send notes back to the worker: `--notes` |
