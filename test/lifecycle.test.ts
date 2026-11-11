@@ -1603,6 +1603,68 @@ async function cancelBetweenLocks(s: Lab, t: TestContext): Promise<ChildProcess>
 
 const exited = (c: ChildProcess) => new Promise<void>((done) => (c.exitCode !== null || c.signalCode !== null ? done() : c.once("exit", () => done())));
 
+test("status settles a task whose job a cancel stopped and whose cancel died before it recorded the task", async (t) => {
+  const s = setup(t);
+  tasks.goalStart(s.repo, GOAL, null);
+  writeScenarios([{ ...DONE, threadId: THREAD }, { ...DONE, delayMs: 30_000 }]);
+  send(s, "hello");
+  await needsReview(s, "hello");
+  tasks.verdictFix(s.repo, "hello", s.file("notes.md", NOTES));
+  const jobId = task(s, "hello").jobIds[1];
+  const marker = (pid: number, start: string | null) => writeJsonAtomic(cancelMarker(s.id, "hello"), { pid, start });
+  // This process stands in for a cancel that is alive: the runner stops the job for it.
+  marker(process.pid, processStart(process.pid));
+  assert.ok(await until(() => loadState(s.id).jobs[jobId].outcome?.status === "cancelled"), "the runner stops the job for the cancel");
+  assert.equal(task(s, "hello").status, "working", "nothing but the cancel settles the task");
+  assert.equal(spawnSync(LAUNCHER, ["status"], { cwd: s.repo, encoding: "utf8" }).stdout.includes("working"), true, "a cancel that lives is left to finish");
+  assert.equal(task(s, "hello").status, "working");
+  // The cancel dies.
+  marker(spawnSync("/usr/bin/true").pid, "Thu Jan  1 00:00:00 1970");
+  const r = spawnSync(LAUNCHER, ["status"], { cwd: s.repo, encoding: "utf8" });
+  assert.match(r.stdout, /hello\s+stalled \(failed\)/);
+  assert.deepEqual([task(s, "hello").status, task(s, "hello").stallReason], ["stalled", "failed"]);
+  assert.match(lastUpdate(s, "hello").reason, /a cancel stopped job .* and ended before it cancelled the task/);
+  assert.equal(existsSync(cancelMarker(s.id, "hello")), false, "the marker of the dead cancel is gone");
+  const waited = await waitForNext(s.repo, { since: 0, timeoutMs: 5_000 });
+  assert.ok(waited.kind === "events" && waited.items.some((i) => i.task === "hello" && i.next === "inspect"), JSON.stringify(waited));
+});
+
+test("status settles a task that waits for a dependency that is cancelled", async (t) => {
+  const s = setup(t);
+  tasks.goalStart(s.repo, GOAL, null);
+  writeScenarios([DONE]);
+  send(s, "first");
+  await needsReview(s, "first");
+  send(s, "second", { after: "first" });
+  assert.equal(task(s, "second").status, "waiting");
+  // A cancel killed after it recorded the task, before it stalled the tasks that follow it.
+  setTask(s, "first", { status: "cancelled", pending: null });
+  const r = spawnSync(LAUNCHER, ["status"], { cwd: s.repo, encoding: "utf8" });
+  assert.match(r.stdout, /second\s+stalled \(failed\)/);
+  assert.equal(lastUpdate(s, "second").reason, "dependency first was cancelled");
+  assert.equal(task(s, "first").status, "cancelled");
+});
+
+test("status leaves a task alone that follows a task which is not cancelled, whatever a cancel left further up the chain", async (t) => {
+  const s = setup(t);
+  tasks.goalStart(s.repo, GOAL, null);
+  writeScenarios([DONE]);
+  send(s, "first");
+  await needsReview(s, "first");
+  send(s, "second", { after: "first" });
+  setTask(s, "first", { status: "cancelled", pending: null });
+  const status = () => spawnSync(LAUNCHER, ["status"], { cwd: s.repo, encoding: "utf8" });
+  assert.match(status().stdout, /second\s+stalled \(failed\)/, "the follower of the cancelled task stalls");
+  // The lead takes the stalled one over and a third task follows it: it waits for the second, not for the first.
+  setTask(s, "second", { status: "takeover", stallReason: null, pending: null });
+  send(s, "third", { after: "second" });
+  assert.match(status().stdout, /third\s+waiting/);
+  // Once the second one is accepted the pump starts it, which status never does.
+  setTask(s, "second", { status: "accepted" });
+  assert.match(status().stdout, /third\s+waiting/);
+  assert.equal(task(s, "third").jobIds.length, 0);
+});
+
 test("a cancel killed after its first lock does not make the next fix round end cancelled", async (t) => {
   const s = setup(t);
   tasks.goalStart(s.repo, GOAL, null);

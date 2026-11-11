@@ -382,7 +382,15 @@ export function reconcileLocked(projectId: string, models: ModelInfo[]): string[
     // The newest job in the ledger, listed by the task or not: a newer job than the finished one means
     // a handoff had already started it, so the task is left to that job.
     const last = task.status === "working" ? jobs.findLast((j) => j.taskId === task.id) : undefined;
-    if (last === undefined || last.outcome === null || last.outcome.status === "cancelled") continue;
+    if (last === undefined || last.outcome === null) continue;
+    if (last.outcome.status === "cancelled") {
+      // The cancel that stopped the job settles the task. One that died first left it working with no job for good,
+      // so it goes to the lead, who can reassign it or cancel it again.
+      if (!cancelStandsLocked(projectId, task.id)) {
+        appendEvent(projectId, { t: "task.updated", at: now(), taskId: task.id, patch: { status: "stalled", stallReason: "failed" }, reason: `a cancel stopped job ${last.id} and ended before it cancelled the task` });
+      }
+      continue;
+    }
     const job = readJob(last.id);
     if (job === null) continue;
     const { status, sessionId, detail, resetsAt, exitCode } = last.outcome;
@@ -391,6 +399,15 @@ export function reconcileLocked(projectId: string, models: ModelInfo[]): string[
     settleTaskLocked(job, status, result, models);
     pumpAfterLocked(job, models);
     completed.push(job.id);
+  }
+  // A cancel that died after it recorded its task, before it stalled the tasks that follow, left them waiting for good.
+  // Only a task that directly follows a cancelled one: a task further down waits behind one that the lead now sees
+  // stalled, and one that follows a taken over or accepted task is not stuck at all. The state is read again, as the
+  // loop above and its pump moved it.
+  const current = loadState(projectId);
+  for (const task of Object.values(current.tasks)) {
+    if (task.status !== "waiting" || task.jobIds.length > 0 || task.after === null || current.tasks[task.after]?.status !== "cancelled") continue;
+    appendEvent(projectId, { t: "task.updated", at: now(), taskId: task.id, patch: { status: "stalled", stallReason: "failed" }, reason: `dependency ${task.after} was cancelled` });
   }
   for (const { id, outcome } of jobs) {
     const job = outcome === null ? readJob(id) : null;
