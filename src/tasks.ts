@@ -859,7 +859,7 @@ export function verdictAccept(cwd: string, slug: string, evidenceFile: string, m
     if (violations.length > 0) {
       // Where the repository's own subject uses the name, such prose is no trace, and only the user can say so.
       const hint = !project.nameIsWord && guarded(true).length < violations.length
-        ? "\nIf this repository uses that name as a word of its own subject, the user allows it with project setup --name-is-a-word; do not run it yourself."
+        ? "\nIf this repository uses that name as a word of its own subject, the user allows it with project setup --update --name-is-a-word; do not run it yourself."
         : "";
       throw new Error(`accept refused:\n${violations.map((v) => `- ${v.kind}: ${v.detail}`).join("\n")}${hint}`);
     }

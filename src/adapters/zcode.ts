@@ -239,7 +239,7 @@ export function createZcodeAdapter(cfg: Config): Adapter {
       const { model, effort } = job.candidate;
       if (effort === "") throw new Error("zcode candidate needs an effort");
       // The sandbox cannot close the network for the worker's commands and leave it open for the CLI that runs them.
-      if (!project.network) throw new Error("zcode workers need the network, which their commands share: allow it with mandor project setup --worker-network");
+      if (!project.network) throw new Error("zcode workers need the network, which their commands share: allow it with mandor project setup --update --worker-network");
       const prompt = readFileSync(job.promptPath, "utf8") + REPORT_FORMAT;
       const bytes = Buffer.byteLength(prompt);
       if (bytes > MAX_PROMPT_BYTES) throw new Error(`prompt of ${bytes} bytes is too long for zcode`);

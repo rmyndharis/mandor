@@ -191,7 +191,7 @@ test("catalogGap says that worker network is what a tier lacks when only tools t
   const cfg = withZcode();
   cfg.tiers = { light: ["zcode:GLM-5.3-Flash@high"], medium: ["zcode:GLM-5.3@high"], heavy: ["zcode:GLM-5.3@max"] };
   assert.equal(catalogGap("light", cfg, CATALOG, true), null);
-  assert.equal(catalogGap("light", cfg, CATALOG, false), "no candidate for tier light can run in this project, which allows no worker network: allow it with mandor project setup --worker-network");
+  assert.equal(catalogGap("light", cfg, CATALOG, false), "no candidate for tier light can run in this project, which allows no worker network: allow it with mandor project setup --update --worker-network");
   // Without a candidate that could run at all, the catalog is the fault, whatever the network.
   cfg.tiers.light = ["zcode:GLM-renamed@high"];
   cfg.tiers.medium = ["zcode:GLM-renamed@high"];

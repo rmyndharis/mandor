@@ -327,7 +327,7 @@ test("prepare resumes a session by its id, and refuses an id of another shape, a
   assert.throws(() => prepared({ kind: "resume", sessionId: "00000000-0000-7000-8000-000000000a01" }), /zcode resume needs a session id/);
   assert.throws(() => prepared({ kind: "resume", sessionId: null }), /zcode resume needs a session id/);
   assert.throws(() => prepared({ candidate: { tool: "zcode", model: "GLM-5.3", effort: "" } }), /zcode candidate needs an effort/);
-  assert.throws(() => prepared({}, { network: false, addDirs: [] }), /zcode workers need the network.*project setup --worker-network/);
+  assert.throws(() => prepared({}, { network: false, addDirs: [] }), /zcode workers need the network.*project setup --update --worker-network/);
   const dir = temp("mandor-zlong-");
   // The limit is on the argument as sent, the report format included.
   writeFileSync(join(dir, "prompt.md"), "x".repeat(200_001 - Buffer.byteLength(REPORT_FORMAT)));

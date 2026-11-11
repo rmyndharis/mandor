@@ -2161,7 +2161,7 @@ test("prose that puts the name before an ordinary word is refused with the way o
   writeScenarios([{ ...DONE, writeFile: [{ path: "shift.md", content: `Update the ${name} status when the shift ends.\n` }] }]);
   send(s, "shift");
   await needsReview(s, "shift");
-  assert.throws(() => accept(s, "shift"), new RegExp(`accept refused:\\n- attribution: shift\\.md: names the tool \\(${name} status\\)\\nIf this repository uses that name as a word of its own subject, the user allows it with project setup --name-is-a-word; do not run it yourself\\.$`));
+  assert.throws(() => accept(s, "shift"), new RegExp(`accept refused:\\n- attribution: shift\\.md: names the tool \\(${name} status\\)\\nIf this repository uses that name as a word of its own subject, the user allows it with project setup --update --name-is-a-word; do not run it yourself\\.$`));
   assert.equal(task(s, "shift").status, "needs-review");
   saveProjectConfig(s.id, { ...loadProjectConfig(s.id), nameIsWord: true });
   assert.deepEqual(reviewPack(s.repo, "shift").violations, []);

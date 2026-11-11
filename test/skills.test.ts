@@ -75,8 +75,8 @@ test("lead skill says what a cancel that could not copy the change means", () =>
   assert.ok(read("lead").includes('If `cancel` prints `patch: "failed"`, the change could not be copied, so the worktree was kept: tell the user.'));
 });
 
-test("lead skill points at project show for the options a new setup must repeat", () => {
-  assert.ok(read("lead").includes("repeating every option that `mandor project show` prints"));
+test("lead skill asks for the worker network with project setup --update, which keeps the other settings", () => {
+  assert.ok(read("lead").includes("need `mandor project setup --update --worker-network`, which keeps every other setting"));
 });
 
 test("lead skill says what to do with an accept that did not finish", () => {

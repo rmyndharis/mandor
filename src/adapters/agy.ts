@@ -75,7 +75,7 @@ export function createAgyAdapter(cfg: Config): Adapter {
     prepare(job, files, project) {
       // The tool's sandbox proxy, not the project's setting, decides what a command reaches, so a project that never
       // allowed worker network cannot be promised a closed one: the job is refused, as a ZCode job is.
-      if (!project.network) throw new Error("agy workers reach the network through their sandbox's proxy, which the project's setting does not close: allow it with mandor project setup --worker-network");
+      if (!project.network) throw new Error("agy workers reach the network through their sandbox's proxy, which the project's setting does not close: allow it with mandor project setup --update --worker-network");
       const prompt = readFileSync(job.promptPath, "utf8");
       const bytes = Buffer.byteLength(prompt);
       if (bytes > MAX_PROMPT_BYTES) throw new Error(`prompt of ${bytes} bytes is too long for agy`);

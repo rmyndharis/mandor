@@ -158,7 +158,7 @@ test("prepare names the root it is handed and never follows a link at it: the ru
 });
 
 test("prepare refuses a project without worker network, as the sandbox's proxy, not the project, decides what a command reaches", () => {
-  assert.throws(() => prepared({}, { network: false, addDirs: [] }), /^Error: agy workers .*proxy.*project setup --worker-network$/);
+  assert.throws(() => prepared({}, { network: false, addDirs: [] }), /^Error: agy workers .*proxy.*project setup --update --worker-network$/);
   assert.doesNotThrow(() => prepared({}, { network: true, addDirs: [] }));
 });
 
@@ -274,7 +274,7 @@ test("the pump and reassign read the project's worker network when they route", 
   config.tiers = { light: ["agy:gemini-3.8-flash-medium"], medium: ["agy:gemini-3.8-flash-medium"], heavy: ["agy:gemini-3.8-flash-medium"] };
   writeFileSync(join(p.home, "config.json"), JSON.stringify(config));
   set("first", { status: "stalled", stallReason: "failed" });
-  assert.throws(() => reassign(p.repo, "first"), /^Error: no candidate for tier light can run in this project, which allows no worker network: allow it with mandor project setup --worker-network$/);
+  assert.throws(() => reassign(p.repo, "first"), /^Error: no candidate for tier light can run in this project, which allows no worker network: allow it with mandor project setup --update --worker-network$/);
   net(true);
   assert.equal(reassign(p.repo, "first").task.status, "working");
 });

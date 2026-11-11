@@ -425,6 +425,59 @@ test("project setup --shared-temp keeps the shared temporary directories open to
   assert.equal(loadProjectConfig(projectIdFor(repo)).sharedTemp, false);
 });
 
+test("project setup --update starts from the stored configuration, so one setting is added or removed without restating the others", () => {
+  const repo = tempRepo();
+  mkdirSync(join(repo, "build"), { recursive: true });
+  mkdirSync(join(repo, "gen"), { recursive: true });
+  assert.equal(cli(repo, "--clone", "build", "--clone", "gen", "--setup", "make", "--shared", "CHANGELOG.md", "--deny", "**/*.p12", "--generator", "build=tools/**", "--generator", "build=more/**").status, 0);
+  const stored = () => loadProjectConfig(projectIdFor(repo));
+  const first = stored();
+  // Adding one setting leaves every other as it was.
+  assert.equal(cli(repo, "--update", "--worker-network").status, 0);
+  assert.deepEqual(stored(), { ...first, workerNetwork: true });
+  assert.equal(cli(repo, "--update", "--shared-temp").status, 0);
+  assert.deepEqual(stored(), { ...first, workerNetwork: true, sharedTemp: true });
+  assert.equal(cli(repo, "--update", "--no-shared-temp").status, 0);
+  assert.deepEqual(stored(), { ...first, workerNetwork: true });
+  // Lists grow without repeating an entry, and a scalar is replaced.
+  assert.equal(cli(repo, "--update", "--shared", "CHANGELOG.md", "--shared", "docs/**", "--setup", "make all", "--deny", "**/*.keystore").status, 0);
+  assert.deepEqual([stored().shared, stored().setup, stored().deny], [["CHANGELOG.md", "docs/**"], "make all", ["**/*.p12", "**/*.keystore"]]);
+  // One setting goes with a flag of its own.
+  assert.equal(cli(repo, "--update", "--no-worker-network", "--no-setup", "--remove-shared", "docs/**", "--remove-deny", "**/*.p12", "--remove-generator", "build=more/**").status, 0);
+  assert.deepEqual([stored().workerNetwork, stored().setup, stored().shared, stored().deny, stored().generators], [false, null, ["CHANGELOG.md"], ["**/*.keystore"], { build: ["tools/**"] }]);
+  // A clone path that a generator names cannot go while the generator stays, and a refused update stores nothing.
+  const kept = readFileSync(projectFile(repo), "utf8");
+  const refused = cli(repo, "--update", "--remove-clone", "build");
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /expected <clone path>=<glob> naming a --clone path/);
+  assert.equal(readFileSync(projectFile(repo), "utf8"), kept);
+  assert.equal(cli(repo, "--update", "--remove-generator", "build=tools/**", "--remove-clone", "build").status, 0);
+  assert.deepEqual([stored().clone, stored().generators], [["gen"], {}]);
+  // On a project with nothing stored it is a first setup, and without it each run still states everything.
+  const fresh = tempRepo();
+  assert.equal(cli(fresh, "--update", "--worker-network").status, 0);
+  assert.deepEqual(loadProjectConfig(projectIdFor(fresh)), { ...emptyProjectConfig(), workerNetwork: true });
+  assert.equal(cli(repo, "--shared", "only.txt").status, 0);
+  assert.deepEqual(stored(), { ...emptyProjectConfig(), shared: ["only.txt"] });
+});
+
+test("project setup refuses a removal without --update, and a flag together with its opposite, with exit 2", () => {
+  const repo = tempRepo();
+  for (const [args, said] of [
+    [["--remove-clone", "build"], "--remove-clone needs --update"],
+    [["--no-worker-network"], "--no-worker-network needs --update"],
+    [["--no-shared-temp"], "--no-shared-temp needs --update"],
+    [["--update", "--worker-network", "--no-worker-network"], "--worker-network and --no-worker-network contradict each other"],
+    [["--update", "--setup", "make", "--no-setup"], "--setup and --no-setup contradict each other"],
+    [["--update", "--name-is-a-word", "--no-name-is-a-word"], "--name-is-a-word and --no-name-is-a-word contradict each other"],
+    [["--update", "--shared-temp", "--no-shared-temp"], "--shared-temp and --no-shared-temp contradict each other"],
+  ] as const) {
+    const r = cli(repo, ...args);
+    assert.deepEqual([r.status, r.stderr], [2, `mandor: ${said}\n`], args.join(" "));
+  }
+  assert.equal(existsSync(projectFile(repo)), false, "nothing was stored");
+});
+
 test("project setup exits 2 for an option it does not know or a value that is missing, and 1 for a refusal", () => {
   const repo = tempRepo();
   for (const [args, said] of [[["--bogus", "x"], "unknown project setup flag: --bogus"], [["--clone"], "--clone needs a value"], [["--setup", "make", "--deny"], "--deny needs a value"]] as const) {
