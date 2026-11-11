@@ -449,6 +449,9 @@ const DIFF_INDEX = ["diff-index", "--cached", "--no-renames", "--ignore-submodul
 // run that repository's clean filter. Excluding the gitlink paths (known from the trusted index) leaves the
 // pointer as the index already holds it, which diff-index --ignore-submodules=dirty still reports.
 function stageAll(g: Bound): void {
+  // A staging that was killed leaves its lock, and git would then fail with words that stay in the log.
+  const lock = join(g.gitDir, "index.lock");
+  if (existsSync(lock)) throw new Error(`a git index lock is left at ${lock}. If no git command runs in that worktree, remove it, then run the command again`);
   const gitlinks = g.ok(["ls-files", "--stage", "-z"]).split("\0").filter((l) => l.startsWith("160000 ")).map((l) => l.slice(l.indexOf("\t") + 1));
   g.ok(["add", "-A", "--", ".", ...gitlinks.map((p) => `:(exclude)${p}`)]);
 }

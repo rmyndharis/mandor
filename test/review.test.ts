@@ -10,6 +10,7 @@ import { jobDir, processStart, projectDir, projectIdFor, roundDir, scratchDir } 
 import { appendEvent, loadState, now } from "../src/ledger.ts";
 import { emptyProjectConfig, saveProjectConfig } from "../src/provision.ts";
 import { withProjectLock } from "../src/store.ts";
+import { indexLockPath } from "../src/git.ts";
 import { dispatch, goalStart } from "../src/tasks.ts";
 import { reviewPack } from "../src/review.ts";
 import { tempHome, tempRepo, writeScenarios } from "./helpers.ts";
@@ -84,6 +85,16 @@ test("a diff with nothing to flag gives an empty pack", (t) => {
 test("no change at all gives no files and an empty stat", (t) => {
   const f = fixture(t);
   assert.deepEqual(reviewPack(f.repo, SLUG), { diffStat: "", files: [], redFlags: [], violations: [], worktree: f.wt, reportPath: null });
+});
+
+test("a git index lock that a killed staging left is named, and the review runs again once it is removed", (t) => {
+  const f = fixture(t, { "src/a.ts": "a\n" });
+  put(f.wt, "src/a.ts", "b\n");
+  const lock = indexLockPath(f.repo, f.wt);
+  writeFileSync(lock, "");
+  assert.throws(() => reviewPack(f.repo, SLUG), (e: Error) => e.message.includes(lock) && /remove it/.test(e.message) && !/fatal|Unable to create/.test(e.message));
+  rmSync(lock);
+  assert.deepEqual(reviewPack(f.repo, SLUG).files, [{ path: "src/a.ts", status: "M" }]);
 });
 
 test("a task that does not exist is refused", (t) => {
