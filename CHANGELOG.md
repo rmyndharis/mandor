@@ -20,6 +20,9 @@ All notable changes to mandor are recorded here. The format follows [Keep a Chan
 - `mandor tiers` lists each tier's candidates as the config writes them, with what keeps one from running.
 - `mandor diff <slug>` prints a task's change as patch text, through the same confined staging as the review, and records no review.
 - `mandor project setup --shared-temp` keeps the shared temporary directories open to a Codex or ZCode worker, for a toolchain that cannot work without them. A JVM gets its temporary directory from `JAVA_TOOL_OPTIONS`.
+- `mandor project setup --update` starts from the stored configuration, so one setting is added or removed without restating the others. `--remove-clone`, `--remove-shared`, `--remove-deny`, `--remove-generator` and `--remove-worker-add-dir` take one entry away, and `--no-setup`, `--no-worker-network`, `--no-name-is-a-word` and `--no-shared-temp` switch one setting off. A setup without `--update` still replaces the whole configuration.
+- `mandor verdict <slug> answer --notes <file>` answers a worker report that is blocked, partial or asks questions. `wait` gives such a task the next action `answer`, `show` and the session summary say so, and the review pack has a `report-asks` flag. The worker resumes in a round that no fix round pays for.
+- `wait` and `status` settle the marker of an accept that was killed, as the accept would: undone when nothing landed, adopted when one commit landed with the recorded tree. What they cannot settle stays for the accept to report.
 
 ### Fixed
 
@@ -43,6 +46,7 @@ All notable changes to mandor are recorded here. The format follows [Keep a Chan
 - A model refresh that no tool answered is not repeated for five minutes, where every command that needed the list asked each tool again.
 - Staging a task worktree for a review, a diff, a handoff or a cancel no longer writes the worker's files into the repository's object store, where they stayed until git pruned them, nor changes the worker's own index. It runs on a copy of the index with an object directory of its own, which it removes; the next staging removes one that a kill left.
 - A review, a diff and the apply of an accept work in a repository whose path holds a colon, and a rebase puts back a file that the worker's own ignore rules had made visible. A review whose ignored paths cannot be listed still gives its pack, and a review that failed leaves no record for accept to follow.
+- The commit of an accept is stopped after ten minutes, with what its hooks started, and the accept is undone, where a hook that never returned held the project lock.
 
 ### Security
 
