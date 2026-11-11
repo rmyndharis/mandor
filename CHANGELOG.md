@@ -23,6 +23,7 @@ All notable changes to mandor are recorded here. The format follows [Keep a Chan
 - `mandor project setup --update` starts from the stored configuration, so one setting is added or removed without restating the others. `--remove-clone`, `--remove-shared`, `--remove-deny`, `--remove-generator` and `--remove-worker-add-dir` take one entry away, and `--no-setup`, `--no-worker-network`, `--no-name-is-a-word` and `--no-shared-temp` switch one setting off. A setup without `--update` still replaces the whole configuration.
 - `mandor verdict <slug> answer --notes <file>` answers a worker report that is blocked, partial or asks questions. `wait` gives such a task the next action `answer`, `show` and the session summary say so, and the review pack has a `report-asks` flag. The worker resumes in a round that no fix round pays for, up to as many answers as fixes are allowed.
 - `wait` and `status` settle the marker of an accept that was killed, as the accept would: undone when nothing landed, adopted when one commit landed with the recorded tree. What they cannot settle stays for the accept to report.
+- A worker's file names and diffs show the marks that turn text around (U+202A to U+202E, U+2066 to U+2069) as `\uNNNN`, as they show control bytes as `\xNN`.
 
 ### Fixed
 
@@ -61,6 +62,7 @@ All notable changes to mandor are recorded here. The format follows [Keep a Chan
 - A Codex or ZCode worker gets a temporary directory of its own for each job, as its `TMPDIR`, `TMPPREFIX` (zsh) and clang's module cache, removed when the run ends. `/tmp`, `/var/folders` and the shared `TMPDIR` are closed to it, as the lead's proofs and your own tools keep caches and compiled files there. A build that names `/tmp` itself, runs `mktemp` or needs the per-user cache directory fails in the sandbox; `mandor project setup --shared-temp` keeps them open. Antigravity's temporary directories are its sandbox's own.
 - The staged tree of a review and an accept reads every file whatever `core.ignoreStat`, `core.trustCtime` and `core.checkStat` say of stat data, which let an edit that kept a file's size and times pass unseen.
 - The review pack names the ignored paths whose files changed since the task's first job began, such as `build/` or `node_modules/`, which the staged tree leaves out and the lead's proof commands may still run.
+- Before a fix, an answer, a drop or a reassign is recorded, and before each job, the root of the task worktree is checked for agent paths that the base commit does not hold as they are, ignored ones included. Nothing starts while one is there: the command is refused with the entries named and nothing recorded, and a job that a process wrote one for after the check fails the same way, which `reassign` runs again once they are removed or restored. Codex starts the tool servers that a `.codex/config.toml` names outside its sandbox, and a round of another tool can write one.
 
 ## [0.2.0] - 2026-11-11
 
