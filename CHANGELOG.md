@@ -4,6 +4,8 @@ All notable changes to mandor are recorded here. The format follows [Keep a Chan
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-11
+
 ### Changed
 
 - A task slug or a goal branch made only of digits is refused.
