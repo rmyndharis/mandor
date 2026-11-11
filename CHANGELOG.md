@@ -17,6 +17,8 @@ All notable changes to mandor are recorded here. The format follows [Keep a Chan
 - The Stop hook also blocks while a task waits to start, and the lead's playbook says what is the user's to change.
 - `mandor project show` prints the stored project configuration. A new `project setup` replaces it whole, so the user repeats what it prints.
 - The session summary gives each task its stall reason and next action, each goal its integration worktree, and names the lead skill. It also lists the warnings of the tools that are switched on, and so does `dispatch`. `init` and `models` no longer print Codex's warnings while Codex is off.
+- `mandor tiers` lists each tier's candidates as the config writes them, with what keeps one from running.
+- `mandor diff <slug>` prints a task's change as patch text, through the same confined staging as the review, and records no review.
 
 ### Fixed
 
@@ -37,6 +39,7 @@ All notable changes to mandor are recorded here. The format follows [Keep a Chan
 - Staging, in a review or an accept, names the git index lock that a killed staging left and what to do about it, instead of the fixed sentence and a log pointer.
 - `confirm` and `cancel`, run again after the task was accepted or cancelled, remove the worktree and branch that a kill or a failed removal left. A `cancel` run again takes the copy of the change first, if none was saved. They record nothing, and still refuse when nothing is left.
 - `status` names a goal whose accept was killed before it finished, also as `unfinished` in `--json`, and `fix`, `takeover` and `cancel` refuse that task until an accept settles it.
+- A model refresh that no tool answered is not repeated for five minutes, where every command that needed the list asked each tool again.
 
 ### Security
 
