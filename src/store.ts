@@ -71,13 +71,16 @@ export function clampDetail(s: string): string {
 
 interface Holder { raw: string; pid: number; start: string | null }
 
-// undefined: no lock file. null: unparsable, which counts as held.
+// undefined: no lock file. null: unparsable or unreadable, which counts as held.
 function readHolder(lock: string): Holder | null | undefined {
   let raw: string;
   try {
     raw = readFileSync(lock, "utf8");
   } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    const { code } = e as NodeJS.ErrnoException;
+    if (code === "ENOENT") return undefined;
+    // A holder that cannot be read cannot be shown gone, so it is not broken as stale.
+    if (code === "EACCES" || code === "EPERM") return null;
     throw e;
   }
   try {

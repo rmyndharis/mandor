@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomInt } from "node:crypto";
-import { appendFileSync, existsSync, linkSync, mkdirSync, readdirSync, readFileSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, linkSync, mkdirSync, readdirSync, readFileSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { createRequire, syncBuiltinESMExports } from "node:module";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { test, type TestContext } from "node:test";
@@ -313,6 +314,48 @@ test("an unparsable lock counts as held", () => {
     assert.equal(readFileSync(lock, "utf8"), garbage);
   }
   assert.ok(!existsSync(join(home, "logs", "locks.log")));
+});
+
+test("a lock file that cannot be read counts as held, even when its holder is gone", (t) => {
+  if (process.getuid?.() === 0) return t.skip("root reads any file");
+  const home = tempHome();
+  const lock = lockOf("p-unreadable");
+  ensureDir(dirname(lock));
+  writeFileSync(lock, JSON.stringify(deadHolder()));
+  chmodSync(lock, 0);
+  t.after(() => chmodSync(lock, 0o600));
+  let ran = false;
+  assert.equal(withProjectLock("p-unreadable", () => (ran = true), { tryOnce: true }), null);
+  assert.throws(() => withProjectLock("p-unreadable", () => (ran = true), { maxWaitMs: 120 }), { message: `project busy (${lock})` });
+  assert.equal(ran, false);
+  assert.ok(!existsSync(join(home, "logs", "locks.log")), "the unreadable lock was not broken as stale");
+});
+
+test("a lock whose read fails with EACCES or EPERM counts as held, and any other read error is not swallowed", (t) => {
+  tempHome();
+  const lock = lockOf("p-readerr");
+  ensureDir(dirname(lock));
+  writeFileSync(lock, JSON.stringify(deadHolder()));
+  // The same read the code makes, failing as the system says: a mode of 0 cannot give EPERM, and root reads anything.
+  const fs: typeof import("node:fs") = createRequire(import.meta.url)("node:fs");
+  const real = fs.readFileSync;
+  t.after(() => {
+    fs.readFileSync = real;
+    syncBuiltinESMExports();
+  });
+  const failReadWith = (code: string) => {
+    fs.readFileSync = ((path: unknown, ...rest: unknown[]) => {
+      if (path === lock) throw Object.assign(new Error(`${code}: the read failed`), { code });
+      return Reflect.apply(real, fs, [path, ...rest]);
+    }) as typeof fs.readFileSync;
+    syncBuiltinESMExports();
+  };
+  for (const code of ["EACCES", "EPERM"]) {
+    failReadWith(code);
+    assert.equal(withProjectLock("p-readerr", () => 1, { tryOnce: true }), null, code);
+  }
+  failReadWith("EIO");
+  assert.throws(() => withProjectLock("p-readerr", () => 1, { tryOnce: true }), { code: "EIO" });
 });
 
 test("a lock whose pid is alive but started at another time is stale", () => {

@@ -14,6 +14,7 @@ All notable changes to mandor are recorded here. The format follows [Keep a Chan
 - An Antigravity run that was refused a tool with an unusual name is failed instead of reported done.
 - The copy of the ZCode catalog in the state home is readable by the user only.
 - `drop` refuses a dirty integration worktree after the goal branch has moved.
+- A lock file that cannot be read counts as held, as an unparsable one does.
 
 ### Security
 
