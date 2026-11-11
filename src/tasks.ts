@@ -6,8 +6,8 @@ import { loadRounds, renderBrief, renderConflictMessage, renderFixMessage, rende
 import { loadConfig, resolveBin, WORKER_TOOLS, type Config } from "./config.ts";
 import type { Candidate, FileRef, GoalRecord, JobKind, JobRecord, LedgerEvent, ModelInfo, Pending, ProjectState, StallReason, TaskRecord, TaskStatus, Tier, ToolName, ToolState } from "./contracts.ts";
 import {
-  addWorktree, apply3way, applyCheck, applyToIndex, assertCommitIdentity, assertHeadIdentity, assertRepoOutsideHome, branchExists, changedPaths, commitRunning, commitStaged, configuredDrivers,
-  confineProblem, deleteBranchAt, diffSinceBaseBytes, diffStat, dropLastCommit, git, indexLockPath, indexTree, isClean, projectRoot,
+  addWorktree, apply3way, applyCheck, applyToIndex, assertCommitIdentity, assertHeadIdentity, assertRepoOutsideHome, branchExists, changedPaths, commitRunning, commitStaged, configuredDrivers, configuredPromisors,
+  confineProblem, deleteBranchAt, diffSinceBaseBytes, diffStat, dropLastCommit, git, indexLockPath, indexTree, isClean, PARTIAL_CLONE, projectRoot,
   removeOwnedWorktree, resetHardHead, resetTo, revParse, stagedDiff, worktreeAddRunning,
 } from "./git.ts";
 import { checkCommitMessage, checkDiff, checkName } from "./guards.ts";
@@ -96,7 +96,7 @@ export function handoffPrompt(projectId: string, task: TaskRecord): string {
   const root = recordedRoot(projectId);
   // The diffstat stages the worktree, which would run a driver configured since dispatch. The pump and the runner reach
   // this with no command in front of them to refuse it.
-  refuseDrivers(root);
+  refuseUnsupported(root);
   return renderHandoff({ originalBrief: readFileSync(task.briefPath, "utf8"), rounds: loadRounds(projectId, task.id), diffStat: diffStat(root, task.worktree, task.base) });
 }
 
@@ -109,7 +109,7 @@ function moveToGoalTipLocked(projectId: string, task: TaskRecord): void {
   if (tip === task.base) return;
   // The reset checks out the tip, which would run a driver configured since dispatch. After the return above, as this
   // runs on every poll.
-  refuseDrivers(root);
+  refuseUnsupported(root);
   resetTo(root, task.worktree, tip);
   appendEvent(projectId, { t: "task.updated", at: now(), taskId: task.id, patch: { base: tip }, reason: `moved to the goal tip ${tip}` });
 }
@@ -245,10 +245,13 @@ export function recordedRoot(id: string): string {
 }
 
 // A configured filter or merge driver runs a command that worker-written files (.gitattributes, scripts, modules on
-// the command's path) can steer into running code in the lead, and no parse of the command closes every spelling.
-export function refuseDrivers(root: string): void {
-  const keys = configuredDrivers(root);
-  if (keys.length > 0) throw new Error(`refusing ${root}: its git config defines ${keys.join(", ")}; filter and merge drivers are not supported`);
+// the command's path) can steer into running code in the lead, and no parse of the command closes every spelling. A
+// promisor remote makes git contact it for the objects a checkout, a diff or an apply lacks.
+export function refuseUnsupported(root: string): void {
+  const drivers = configuredDrivers(root);
+  if (drivers.length > 0) throw new Error(`refusing ${root}: its git config defines ${drivers.join(", ")}; filter and merge drivers are not supported`);
+  const promisors = configuredPromisors(root);
+  if (promisors.length > 0) throw new Error(`refusing ${root}: its git config defines ${promisors.join(", ")}; ${PARTIAL_CLONE}`);
 }
 
 const refuseNames = (problems: string[]) => {
@@ -335,7 +338,7 @@ export function goalStart(cwd: string, branch: string, from: string | null): { g
   if (branch === "wip" || branch.startsWith("wip/")) throw new Error(`refusing goal branch ${branch}: wip/ is for task branches`);
   // Goals are keyed by branch, and a name of digits only reorders them as it would a task slug.
   if (/^\d+$/.test(branch)) throw new Error(`refusing goal branch ${branch}: a name of digits only is not allowed`);
-  refuseDrivers(root);
+  refuseUnsupported(root);
   assertRepoOutsideHome(root);
   const config = loadProjectConfig(id);
   // Peeled, so a tag names its commit; a ref that looks like an option then fails as a revision. Without --from, the
@@ -433,7 +436,7 @@ export function dispatch(cwd: string, o: { goal: string; slug: string; tier: Tie
   // A use never reads the tier's list, so only a routed task needs a candidate there.
   const gap = use === null ? catalogGap(o.tier, config, models) : null;
   if (gap !== null) throw new Error(gap);
-  refuseDrivers(root);
+  refuseUnsupported(root);
   assertRepoOutsideHome(root);
   const body = readFileSync(o.briefFile, "utf8");
   const project = loadProjectConfig(id);
@@ -600,7 +603,7 @@ export function recoverRebaseLocked(root: string, id: string, task: TaskRecord):
   if (!existsSync(marker)) return;
   const { oldBase } = readJson<{ oldBase: string }>(marker);
   if (task.base === oldBase) {
-    refuseDrivers(root);
+    refuseUnsupported(root);
     restoreWorkerChanges(root, task, oldBase, rebasePatch(id, task.id));
   }
   clearRebase(id, task.id);
@@ -693,7 +696,7 @@ export function verdictAccept(cwd: string, slug: string, evidenceFile: string, m
   const models = loadCatalog();
   for (const f of [evidenceFile, messageFile]) assertOutsideRepos(f, projectRoot);
   // A driver configured since dispatch would otherwise run in the recovery, the staging and the apply below.
-  refuseDrivers(root);
+  refuseUnsupported(root);
   const allowTestIdentity = opts.allowTestIdentity ?? false;
   return withProjectLock(id, () => {
     const cursor = ledgerSize(id);
@@ -782,7 +785,7 @@ export function confirm(cwd: string, slug: string, evidenceFile: string): { curs
   const models = loadCatalog();
   assertOutsideRepos(evidenceFile, projectRoot);
   // git status in the integration worktree runs a clean filter on a file whose timestamp the index does not hold.
-  refuseDrivers(root);
+  refuseUnsupported(root);
   return withProjectLock(id, () => {
     const state = loadState(id);
     const task = state.tasks[slug];
@@ -831,7 +834,7 @@ export function drop(cwd: string, slug: string, notesFile: string): { cursor: nu
   const models = loadCatalog();
   assertOutsideRepos(notesFile, projectRoot);
   // The reset in the integration worktree would run a driver configured since dispatch.
-  refuseDrivers(root);
+  refuseUnsupported(root);
   return withProjectLock(id, () => {
     const cursor = ledgerSize(id);
     const state = loadState(id);
@@ -874,7 +877,7 @@ export function reassign(cwd: string, slug: string): { task: TaskRecord; cursor:
   const { root, id } = resolveProject(cwd);
   const models = loadCatalog();
   // The handoff's diffstat stages the worktree, which would run a driver configured since dispatch.
-  refuseDrivers(root);
+  refuseUnsupported(root);
   return withProjectLock(id, () => {
     const cursor = ledgerSize(id);
     const state = loadState(id);
@@ -1020,7 +1023,7 @@ export function takeover(cwd: string, slug: string, approved: boolean): { cursor
     // undoes a killed rebase.
     const reset = task.stallReason === "rebase-failed";
     if (reset) {
-      refuseDrivers(root);
+      refuseUnsupported(root);
       const tip = revParse(root, `refs/heads/${task.goalBranch}`);
       let saved = false;
       try {

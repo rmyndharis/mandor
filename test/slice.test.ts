@@ -2078,6 +2078,22 @@ test("goal start and dispatch refuse a repository whose config defines a filter 
   assert.equal(existsSync(join(worktreesDir(s.id), "task-hello")), false);
 });
 
+test("goal start and dispatch refuse a partial clone, whichever key marks it", (t) => {
+  const s = setup(t);
+  for (const [key, value] of [["extensions.partialclone", "origin"], ["remote.origin.promisor", "true"]]) {
+    must(s.repo, "config", key, value);
+    assert.throws(() => goalStart(s.repo, GOAL, null), new RegExp(`defines ${key.replaceAll(".", "\\.")}; a partial clone is not supported`), key);
+    assert.equal(must(s.repo, "branch", "--list", GOAL), "", key);
+    assert.equal(ledgerSize(s.id), 0, key);
+    must(s.repo, "config", "--unset", key);
+  }
+  goalStart(s.repo, GOAL, null);
+  must(s.repo, "config", "remote.origin.promisor", "true");
+  assert.throws(() => send(s, "hello", { use: null }), /remote\.origin\.promisor; a partial clone is not supported/);
+  assert.equal(task(s, "hello"), undefined);
+  assert.equal(existsSync(join(worktreesDir(s.id), "task-hello")), false);
+});
+
 test("dispatch refuses a repository whose config cannot be read", (t) => {
   const s = setup(t);
   fillSlots();

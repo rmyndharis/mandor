@@ -227,6 +227,16 @@ export function configuredDrivers(repo: string): string[] {
   return configKeys(repo, DRIVER_KEYS);
 }
 
+// In a partial clone git fetches an object it lacks from its promisor remote by itself, in a checkout, a diff or an apply,
+// and no command of mandor may contact a remote.
+const PROMISOR_KEYS = "^(extensions\\.partialclone|remote\\..*\\.promisor)$";
+
+export function configuredPromisors(repo: string): string[] {
+  return configKeys(repo, PROMISOR_KEYS);
+}
+
+export const PARTIAL_CLONE = "a partial clone is not supported, as git would fetch the objects it lacks from a remote";
+
 interface Bound {
   gitDir: string;
   worktree: string;
@@ -353,6 +363,8 @@ function bind(repo: string, worktree: string, userConfig = false): Bound {
   // into running worker code in the lead. No bound call goes on under one, whichever scope of the configuration defines it.
   const drivers = configKeys(real, DRIVER_KEYS, location);
   if (drivers.length > 0) throw new Error(`refusing ${real}: its git config defines ${drivers.join(", ")}; filter and merge drivers are not supported`);
+  const promisors = configKeys(real, PROMISOR_KEYS, location);
+  if (promisors.length > 0) throw new Error(`refusing ${real}: its git config defines ${promisors.join(", ")}; ${PARTIAL_CLONE}`);
   // Hardened callers point git at an empty hooks dir and turn fsmonitor off (both reach a submodule child through
   // GIT_CONFIG_PARAMETERS). diff.ignoreSubmodules=dirty makes the apply calls ignore submodule work-tree state too;
   // diff-index and status pass the flag explicitly, and stageAll excludes gitlinks from `add`, which the flag cannot.

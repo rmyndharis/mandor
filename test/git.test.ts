@@ -6,7 +6,7 @@ import { basename, delimiter, dirname, join } from "node:path";
 import { test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import {
-  addWorktree, apply3way, applyCheck, applyToIndex, assertCommitIdentity, assertHeadIdentity, branchExists, changedPaths, commitStaged, configuredDrivers, deleteBranchAt,
+  addWorktree, apply3way, applyCheck, applyToIndex, assertCommitIdentity, assertHeadIdentity, branchExists, changedPaths, commitStaged, configuredDrivers, configuredPromisors, deleteBranchAt,
   diffSinceBaseBytes, diffStat, dropLastCommit, git, indexLockPath, indexTree, isClean, isPlaceholderEmail, migrateObjects, projectRoot,
   removeOwnedWorktree, resetHardHead, resetTo, revParse, stagedDiff, worktreeAddRunning, worktreeRoot,
 } from "../src/git.ts";
@@ -1025,6 +1025,36 @@ test("a driver that only the worktree's own configuration file defines is refuse
   must(wt, "config", "--worktree", "filter.foo.clean", "/bin/cat");
   assert.deepEqual(configuredDrivers(repo), []);
   for (const call of bound) assert.throws(() => call(repo, wt, patch), /defines filter\.foo\.clean; filter and merge drivers are not supported/);
+});
+
+// In a partial clone git fetches an object it lacks from the remote by itself, which no command of mandor may start.
+const PROMISOR_KEYS = [["extensions.partialclone", "origin"], ["remote.origin.promisor", "true"]];
+
+test("a promisor remote is refused by every bound call, whichever key marks it, until it is removed", () => {
+  const { repo, wt, base } = withWorktree();
+  const patch = patchBeforeDrivers(repo, base);
+  for (const [key, value] of PROMISOR_KEYS) {
+    must(repo, "config", key, value);
+    assert.deepEqual(configuredPromisors(repo), [key], key);
+    for (const call of bound) assert.throws(() => call(repo, wt, patch), new RegExp(`defines ${key.replaceAll(".", "\\.")}; a partial clone is not supported`), key);
+    must(repo, "config", "--unset", key);
+    assert.deepEqual(configuredPromisors(repo), [], key);
+    assert.doesNotThrow(() => isClean(repo, wt), key);
+  }
+  // The filter alone makes no remote one that git fetches from.
+  must(repo, "config", "remote.origin.partialclonefilter", "blob:none");
+  assert.deepEqual(configuredPromisors(repo), []);
+  assert.doesNotThrow(() => isClean(repo, wt));
+});
+
+test("a promisor remote that only the worktree's configuration defines is refused by every bound call", () => {
+  const { repo, wt, base } = withWorktree();
+  const patch = patchBeforeDrivers(repo, base);
+  const include = join(temp(), "promisor.gitconfig");
+  writeFileSync(include, '[remote "origin"]\n\tpromisor = true\n');
+  must(repo, "config", "includeIf.onbranch:wip/**.path", include);
+  assert.deepEqual(configuredPromisors(repo), []);
+  for (const call of bound) assert.throws(() => call(repo, wt, patch), /defines remote\.origin\.promisor; a partial clone is not supported/);
 });
 
 test("a bound call reads the configuration through the worktree's admin dir, not through its own .git file", () => {

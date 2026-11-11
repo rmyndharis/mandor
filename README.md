@@ -255,6 +255,7 @@ To stop using mandor, stop passing `--plugin-dir`. To remove its state, delete `
 - No dashboard: `mandor status`, the lead's reports in chat and the log files are the interface.
 - A repository whose git directory is kept outside its work tree, made with `git init --separate-git-dir`, works from its main checkout. A linked worktree of it is a project of its own, because git does not say where the main checkout is.
 - A filter or merge driver anywhere in the git configuration that applies to a repository makes mandor refuse it. That includes your global file: `git lfs install` writes Git LFS's filters there, and after it every repository is refused.
+- A partial clone is refused, whether `extensions.partialclone` or a `promisor` remote marks it: git would fetch the objects it lacks from the remote by itself, and mandor starts no command that contacts one.
 
 ## Development
 

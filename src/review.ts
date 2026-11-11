@@ -7,7 +7,7 @@ import { jobDir } from "./home.ts";
 import { loadState, now } from "./ledger.ts";
 import { loadProjectConfig } from "./provision.ts";
 import { clampDetail, withProjectLock, writeJsonAtomic } from "./store.ts";
-import { diffDeny, recoverRebaseLocked, refuseDrivers, resolveProject, reviewedFile } from "./tasks.ts";
+import { diffDeny, recoverRebaseLocked, refuseUnsupported, resolveProject, reviewedFile } from "./tasks.ts";
 
 export interface ReviewPack {
   diffStat: string;
@@ -110,7 +110,7 @@ function unrunClaims(claims: string[], rawLog: string): { kind: string; detail: 
 export function reviewPack(cwd: string, slug: string): ReviewPack {
   const { root, id } = resolveProject(cwd);
   // Staging the worktree would run a driver configured since dispatch, as accept's staging would.
-  refuseDrivers(root);
+  refuseUnsupported(root);
   // The diff calls stage the worktree's index, so they wait for an accept that is doing the same.
   return withProjectLock(id, () => {
     const state = loadState(id);
