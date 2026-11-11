@@ -20,7 +20,7 @@ import { showTask } from "../src/status.ts";
 import { withProjectLock, writeFileAtomic, writeJsonAtomic } from "../src/store.ts";
 import * as tasks from "../src/tasks.ts";
 import { waitForNext } from "../src/wait.ts";
-import { temp, readFakeLog, tempHome, tempRepo, writeScenarios } from "./helpers.ts";
+import { FAKE_ZCODE, temp, readFakeLog, tempHome, tempRepo, writeScenarios } from "./helpers.ts";
 
 const LAUNCHER = join(import.meta.dirname, "..", "bin", "mandor");
 const SKILL = join(import.meta.dirname, "..", "skills", "lead", "SKILL.md");
@@ -1014,7 +1014,7 @@ test("reassign prefers the tool only after a model-limit", async (t) => {
   // The tier lists another tool first, so only preferTool can pick codex.
   const config = structuredClone(DEFAULT_CONFIG);
   config.tools.codex.bin = process.env.MANDOR_CODEX_BIN!;
-  config.tools.zcode.enabled = true;
+  config.tools.zcode = { ...config.tools.zcode, enabled: true, bin: FAKE_ZCODE };
   config.tiers.medium = ["zcode:GLM-5.3@high", "codex:gpt-6.1-sol@high"];
   writeJsonAtomic(join(s.home, "config.json"), config);
   const model = (tool: ToolName, name: string, efforts: string[]): ModelInfo => ({ tool, model: name, label: name, efforts, defaultEffort: efforts[0], hidden: false });
@@ -1030,7 +1030,7 @@ test("reassign prefers the tool only after a model-limit", async (t) => {
   await workersRunning(moved.jobIds.slice(1));
   kill(-readJob(moved.jobIds[1])!.workerPid!);
   await stalled(s, "hello", "failed");
-  // After anything else the tier's own order holds; the zcode job fails on its missing adapter, which is not the point.
+  // After anything else the tier's own order holds; the zcode job fails without the network, which is not the point.
   assert.deepEqual(tasks.reassign(s.repo, "hello").task.candidate, { tool: "zcode", model: "GLM-5.3", effort: "high" });
 });
 

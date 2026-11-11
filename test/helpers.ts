@@ -105,7 +105,7 @@ export function zcodeSignIn(provider = "account:zai-individual-coding-plan"): st
   return home;
 }
 
-const FAKE_ZCODE = join(import.meta.dirname, "fake-bin", "fake-zcode.mjs");
+export const FAKE_ZCODE = join(import.meta.dirname, "fake-bin", "fake-zcode.mjs");
 
 // A config with zcode switched on and pointed at its fake, next to the fake codex.
 export function writeZcodeConfig(home: string): void {
