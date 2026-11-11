@@ -239,6 +239,16 @@ function signalGroup(pid: number, signal: NodeJS.Signals): void {
   } catch {} // the group is gone already
 }
 
+// A worker whose runner died runs on with no timeout, and may write while the lead reads. Its group is stopped only when
+// the recorded pid still names the process that was started: a start time never recorded, or one that no longer
+// matches, is a process this job did not start, and the signal would reach someone else's group.
+function stopOrphanedWorker(job: JobRecord): void {
+  const { workerPid, workerStart } = job;
+  if (typeof workerPid !== "number" || !Number.isSafeInteger(workerPid) || workerPid <= 1) return;
+  if (typeof workerStart !== "string" || processStart(workerPid) !== workerStart) return;
+  signalGroup(workerPid, "SIGKILL");
+}
+
 // Starts the worker in the worktree's root, which this process enters itself and verifies by the physical path it is
 // in before the spawn inherits it. A process an earlier round left behind is granted the root entry by its own sandbox
 // and can swap the root for a link to a sibling worktree at any instant, so a cwd given to the spawn, a chdir by path in
@@ -315,7 +325,7 @@ async function work(job: JobRecord, adapter: Adapter): Promise<JobResult> {
   let exit: { code: number | null; signal: NodeJS.Signals | null } | undefined;
   try {
     // Only this runner writes job.json while it is alive, so this update needs no lock.
-    writeJsonAtomic(jobFile(job.id), { ...job, workerPid: pid });
+    writeJsonAtomic(jobFile(job.id), { ...job, workerPid: pid, workerStart: processStart(pid) });
     // Wall-clock time, checked every second: a timer would not count the time a sleeping Mac skips.
     tick = setInterval(() => {
       if (stop !== null) return;
@@ -396,8 +406,8 @@ export async function runJob(jobId: string): Promise<void> {
   pruneJobs();
 }
 
-// Finishes what a dead runner or a crashed completion left undone. It reads recorded pids and never
-// signals them.
+// Finishes what a dead runner or a crashed completion left undone. It reads recorded pids, and signals only the worker
+// of a job whose runner died, and only while its pid and start time still name that worker.
 export function reconcileLocked(projectId: string, models: ModelInfo[]): string[] {
   const completed: string[] = [];
   const state = loadState(projectId);
@@ -441,7 +451,10 @@ export function reconcileLocked(projectId: string, models: ModelInfo[]): string[
       completeJobLocked(id, failedResult("runner did not start"), models);
     } else if (isRunnerAlive(job)) continue;
     else if (existsSync(resultFile(id))) completeJobLocked(id, readJson<JobResult>(resultFile(id)), models);
-    else completeJobLocked(id, failedResult("runner died"), models, { stallReason: "runner-died" });
+    else {
+      stopOrphanedWorker(job);
+      completeJobLocked(id, failedResult("runner died"), models, { stallReason: "runner-died" });
+    }
     completed.push(id);
   }
   return completed;

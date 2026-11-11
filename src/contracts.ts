@@ -46,6 +46,7 @@ export interface JobRecord {        // live record in jobs/<id>/job.json
   worktree: string; sessionId: string | null; promptPath: string; timeoutMs: number;
   bin: string; env: Record<string, string>; queuedAt: string;
   status: JobStatus; runnerPid: number | null; runnerStart: string | null; workerPid: number | null;
+  workerStart?: string | null;      // when the worker started, read at the spawn; a record of an older mandor has none
   startedAt: string | null; endedAt: string | null;
 }
 export interface JobResult {        // full result in jobs/<id>/result.json

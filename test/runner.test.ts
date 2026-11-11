@@ -928,6 +928,37 @@ test("reconcile handles a dead runner without result.json", async (t) => {
   assert.equal(finishedEvents(job.id).length, 1);
 });
 
+// A job whose runner was killed while its worker went on. A start time of undefined stands for a record that never had one.
+async function orphaned(t: TestContext, workerStart?: string | null): Promise<JobRecord> {
+  setup(t);
+  writeScenarios([{ stdout: "generated:done", delayMs: 30_000 }]);
+  const job = await workerRunning(startJob().id);
+  kill(job.runnerPid!);
+  assert.ok(await until(() => !alive(job.runnerPid!), 5_000));
+  if (workerStart !== undefined) writeJsonAtomic(join(jobDir(job.id), "job.json"), { ...job, workerStart });
+  assert.equal(alive(job.workerPid!), true, "the worker runs on after its runner");
+  return job;
+}
+
+test("reconcile stops a worker that outlived its runner, as it settles the job", async (t) => {
+  const job = await orphaned(t);
+  assert.equal(typeof job.workerStart, "string", "the worker's start time is recorded when it starts");
+  assert.deepEqual(reconcile(), [job.id]);
+  assert.ok(await until(() => !alive(job.workerPid!), 5_000), "the worker is gone");
+  const task = currentTask();
+  assert.deepEqual([task.status, task.stallReason], ["stalled", "runner-died"]);
+});
+
+test("reconcile signals no process whose start time differs from the worker's, or that was never recorded", async (t) => {
+  for (const workerStart of ["Mon Jan  1 00:00:00 2001", null]) {
+    const job = await orphaned(t, workerStart);
+    assert.deepEqual(reconcile(), [job.id]);
+    await sleep(500);
+    assert.equal(alive(job.workerPid!), true, `a worker start of ${workerStart} is a process this job did not start`);
+    kill(-job.workerPid!);
+  }
+});
+
 test("reconcile handles a dead runner with result.json", async (t) => {
   setup(t);
   writeScenarios([{ stdout: "generated:done", delayMs: 30_000 }]);
