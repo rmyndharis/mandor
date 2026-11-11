@@ -15,6 +15,7 @@ All notable changes to mandor are recorded here. The format follows [Keep a Chan
 - `status` ends each exhausted line with the reason, the paid-credit mark included, and lists the commits of a goal branch that mandor did not record.
 - `status` lists each goal with its integration worktree, and `models` prints each model as `tool:model`, which is how a tier list names it.
 - The Stop hook also blocks while a task waits to start, and the lead's playbook says what is the user's to change.
+- `mandor project show` prints the stored project configuration. A new `project setup` replaces it whole, so the user repeats what it prints.
 - The session summary gives each task its stall reason and next action, each goal its integration worktree, and names the lead skill. It also lists the warnings of the tools that are switched on, and so does `dispatch`. `init` and `models` no longer print Codex's warnings while Codex is off.
 
 ### Fixed
@@ -28,6 +29,10 @@ All notable changes to mandor are recorded here. The format follows [Keep a Chan
 - Routing passes over a ZCode or an Antigravity candidate in a project without worker network, and `dispatch --use` of one is refused, where a job was created that failed at once and stalled its task.
 - `review` and `verdict accept` print a fixed sentence and the path of `logs/git.stderr`, which holds the whole text, when staging, the apply or the commit fails, instead of git's own words, which can quote file names a worker chose or the output of a hook.
 - `wait` and `status` settle a task whose job a cancel stopped before the cancel died, which now stalls with `failed`, and a task that waits for a cancelled dependency, which now stalls too.
+- A handoff after an account mismatch starts only where routing finds its candidate usable, not on one marked exhausted or one that needs a network the project does not allow.
+- A Codex or ZCode resume that opened another session is treated as an account mismatch, as an Antigravity resume already was, instead of being recorded as done.
+- A resume that opened another session leaves the task on the session it asked for, whatever the run ended with.
+- `cancel` saves the staged change as `cancelled.patch` in the task's round before it removes the worktree, and `show` lists it. When the copy cannot be taken it keeps the worktree and prints `patch: "failed"`.
 
 ### Security
 
