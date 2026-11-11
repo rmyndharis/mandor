@@ -29,8 +29,13 @@ Fixes go into the latest release only.
 
 ## What does not
 
-The README states these limits under [Before you start](README.md#before-you-start), and they are not vulnerabilities in mandor:
+The README states these limits in its Safety model and under [Before you start](README.md#before-you-start), and they are not vulnerabilities in mandor:
 
 - A worker can read any file your account can read, and what its model reads reaches the worker's vendor. With `--worker-network`, or with Antigravity at whatever its sandbox's proxy lets through, its commands can also send one out.
 - Workers run on your own accounts at their tools, and a Codex worker inherits what Codex loads for you.
+- Your code reaches the vendor of every tool you have enabled, as tools are enabled per machine, not per project.
+- To check a result, the Claude Code session that leads the work runs the task's tests and builds on code a worker wrote, with your privileges and no sandbox. The temporary and cache directories a project opens are shared with those commands and with your own tools.
+- The repository's own git hooks run with your privileges and no sandbox, and at accept they run over a change a worker wrote.
+- The guard that refuses credit to a tool has no override, and it refuses only the usual forms: a plain sentence that says an AI tool was used can pass it.
+- Paid usage is not always stopped: nothing switches it off for Codex or ZCode, and mandor looks for it only for Codex, after a finished run.
 - A flaw in Codex, ZCode, Antigravity, Claude Code or `sandbox-exec` itself belongs with its vendor. A way mandor makes such a flaw worse is in scope.

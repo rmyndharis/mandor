@@ -8,6 +8,7 @@ All notable changes to mandor are recorded here. The format follows [Keep a Chan
 
 - A task slug or a goal branch made only of digits is refused.
 - The README and SECURITY.md state accurately what confines a worker and where its reads and writes can go.
+- The README states the risks of running proofs on worker code, of switching accounts, of sending code to every enabled vendor, of guards that cannot be overridden, of paid usage and of shared directories.
 
 ### Fixed
 
