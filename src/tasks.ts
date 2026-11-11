@@ -819,6 +819,7 @@ export function confirm(cwd: string, slug: string, evidenceFile: string): { curs
 
 export function verdictFix(cwd: string, slug: string, notesFile: string): { cursor: number } {
   const { root, id } = resolveProject(cwd);
+  refuseUnconfined();
   const models = loadCatalog();
   assertOutsideRepos(notesFile, projectRoot);
   return withProjectLock(id, () => {
@@ -834,6 +835,7 @@ export function verdictFix(cwd: string, slug: string, notesFile: string): { curs
 
 export function drop(cwd: string, slug: string, notesFile: string): { cursor: number } {
   const { root, id } = resolveProject(cwd);
+  refuseUnconfined();
   const models = loadCatalog();
   assertOutsideRepos(notesFile, projectRoot);
   // The reset in the integration worktree would run a driver configured since dispatch.
@@ -878,6 +880,7 @@ const REASSIGNABLE: readonly StallReason[] = ["quota", "model-limit", "failed", 
 
 export function reassign(cwd: string, slug: string): { task: TaskRecord; cursor: number } {
   const { root, id } = resolveProject(cwd);
+  refuseUnconfined();
   const models = loadCatalog();
   // The handoff's diffstat stages the worktree, which would run a driver configured since dispatch.
   refuseUnsupported(root);
@@ -922,6 +925,7 @@ function revivedPending(task: TaskRecord): Pending {
 // Runs from any directory, over every project. `failed` lists a project this could not reach, whose tasks a later ready
 // revives; the tool stays marked ready, and one bad ledger or busy lock must not keep the other projects from it.
 export function ready(tool: ToolName): { resumed: string[]; failed?: string[] } {
+  refuseUnconfined();
   const config = loadConfig();
   if (!Object.hasOwn(config.tools, tool)) throw new Error(`unknown tool ${tool}`);
   const { refreshModels } = requireOnUse("./adapters/index.ts") as typeof import("./adapters/index.ts");

@@ -1166,6 +1166,35 @@ test("a reassign whose handoff cannot be built stalls with a fixed reason, and g
   assert.match(runnerLog(), new RegExp(`task hello: .*${name}.*Permission denied`));
 });
 
+test("the commands that start a job refuse where sandbox-exec cannot apply a profile, before they change anything", async (t) => {
+  const s = setup(t);
+  tasks.goalStart(s.repo, GOAL, null);
+  writeScenarios([DONE]);
+  send(s, "hello");
+  await needsReview(s, "hello");
+  const notes = s.file("notes.md", NOTES);
+  // Under an outer sandbox a nested sandbox-exec cannot apply the kind of profile the confined calls use.
+  const nested = (...args: string[]) => spawnSync("/usr/bin/sandbox-exec", ["-p", "(version 1)(allow default)", LAUNCHER, ...args], { cwd: s.repo, encoding: "utf8" });
+  const refusal = /^mandor: cannot confine with sandbox-exec \(sandbox-exec: .+\): run mandor outside Claude Code's Bash sandbox, which sandbox-exec cannot nest in$/m;
+  const refused = (what: string, ...args: string[]) => {
+    const toolsFile = join(process.env.MANDOR_HOME!, "tools.jsonl");
+    const tools = () => (existsSync(toolsFile) ? readFileSync(toolsFile, "utf8") : "");
+    const [ledger, before] = [ledgerSize(s.id), tools()];
+    const r = nested(...args);
+    assert.equal(r.status, 1, what);
+    assert.match(r.stderr, refusal, what);
+    assert.equal(ledgerSize(s.id), ledger, what);
+    assert.equal(tools(), before, what);
+  };
+  refused("fix", "verdict", "hello", "fix", "--notes", notes);
+  refused("drop", "drop", "hello", "--notes", notes);
+  setTask(s, "hello", { status: "stalled", stallReason: "timeout" });
+  refused("reassign", "reassign", "hello");
+  setTask(s, "hello", { stallReason: "quota" });
+  refused("ready", "ready", "codex");
+  assert.deepEqual([task(s, "hello").status, task(s, "hello").stallReason], ["stalled", "quota"]);
+});
+
 test("reassign refuses a driver configured since dispatch, before it stages anything", async (t) => {
   const s = setup(t);
   tasks.goalStart(s.repo, GOAL, null);

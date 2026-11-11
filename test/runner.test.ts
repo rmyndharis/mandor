@@ -241,6 +241,18 @@ test("a done job whose report says blocked or partial carries that in its outcom
   assert.equal(currentTask().status, "needs-review");
 });
 
+test("a runner that cannot confine starts no worker and says why in the log", async (t) => {
+  setup(t);
+  writeScenarios([{ stdout: "generated:done" }]);
+  const job = queueJob();
+  // Under an outer sandbox a nested sandbox-exec cannot apply the kind of profile the confined calls use.
+  const r = spawnSync("/usr/bin/sandbox-exec", ["-p", "(version 1)(allow default)", LAUNCHER, "_run", job.id], { encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(execs().length, 0, "no worker started");
+  assert.equal((await finished(job.id)).status, "failed");
+  assert.match(read(join(process.env.MANDOR_HOME!, "logs", "runner.log")), /job .*: runner error: cannot confine with sandbox-exec \(sandbox-exec: .+\): run mandor outside Claude Code's Bash sandbox/);
+});
+
 test("a job whose worktree root was replaced by a link starts no worker in what the link names", async (t) => {
   const task = setup(t);
   // A process an earlier round left behind emptied the root and put a link at its name, to a sibling's tree.

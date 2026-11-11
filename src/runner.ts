@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { REPORT_SCHEMA, saveRoundFile } from "./brief.ts";
 import { loadConfig } from "./config.ts";
 import type { Adapter, JobRecord, JobResult, JobStatus, ModelInfo, PreparedRun, ProjectState, StallReason, TaskRecord } from "./contracts.ts";
-import { worktreeRoot } from "./git.ts";
+import { confineProblem, worktreeRoot } from "./git.ts";
 import { jobDir, mandorHome, processAlive, processStart, projectDir } from "./home.ts";
 import { appendEvent, appendToolEvent, listProjects, loadState, loadToolState, now, readEvents } from "./ledger.ts";
 import { loadProjectConfig } from "./provision.ts";
@@ -345,6 +345,10 @@ export async function runJob(jobId: string): Promise<void> {
   let result = failedResult("runner error");
   let models: ModelInfo[] = [];
   try {
+    // A runner started where sandbox-exec cannot apply a profile (inside Claude Code's Bash sandbox) cannot confine
+    // what its worker writes: the job fails before the worker starts, and the log says why.
+    const unconfined = confineProblem();
+    if (unconfined !== null) throw new Error(unconfined);
     // Imported on use, so modules that only need completion or liveness never load the vendor adapter.
     const { getAdapter, loadModels, MODELS_MAX_AGE_MS } = await import("./adapters/index.ts");
     const cfg = loadConfig();
