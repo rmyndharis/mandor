@@ -16,7 +16,7 @@ import { jobDir, processStart, projectDir, projectIdFor, scratchDir, worktreesDi
 import { appendEvent, appendToolEvent, ledgerSize, listProjects, loadState, loadToolState, now, readEvents } from "../src/ledger.ts";
 import { cancelMarker, readJob } from "../src/runner.ts";
 import { loadProjectConfig, saveProjectConfig } from "../src/provision.ts";
-import { reviewPack } from "../src/review.ts";
+import { reviewPack, taskDiff } from "../src/review.ts";
 import { showTask } from "../src/status.ts";
 import { withProjectLock, writeFileAtomic, writeJsonAtomic } from "../src/store.ts";
 import * as tasks from "../src/tasks.ts";
@@ -1065,6 +1065,40 @@ test("cancelling a task whose rebase was killed saves the worker's own change, n
   const patch = readFileSync(roundFile(s, "hello", task(s, "hello").seq, "cancelled.patch"), "utf8");
   assert.ok(patch.includes("+task"), "the worker's change");
   assert.ok(!patch.includes("+goal"), "not what the goal gained meanwhile");
+});
+
+test("diff after a killed rebase shows the worker's own change, as the review does", async (t) => {
+  const s = setup(t);
+  must(s.repo, "config", "user.email", "dev@host.test");
+  const goal = tenLineGoal(s);
+  await reviewed(s, tenWith({ 3: "task" }));
+  onGoal(goal, tenWith({ 5: "goal" }));
+  await killRebase(s, t);
+  const text = taskDiff(s.repo, "hello");
+  assert.ok(text.includes("+task"), "the worker's change");
+  assert.ok(!text.includes("+goal"), "not what the goal gained meanwhile");
+});
+
+test("diff refuses a driver configured since dispatch without running it, and shows git's words nowhere", async (t) => {
+  const s = setup(t);
+  tasks.goalStart(s.repo, GOAL, null);
+  writeScenarios([{ ...DONE, writeFile: [{ path: "hello.txt", content: "hello\n" }, { path: ".gitattributes", content: "hello.txt filter=x\n" }] }]);
+  send(s, "hello");
+  await needsReview(s, "hello");
+  const { script, ran } = driverScript(s);
+  must(s.repo, "config", "filter.x.clean", script);
+  assert.throws(() => taskDiff(s.repo, "hello"), /filter\.x\.clean/);
+  assert.equal(existsSync(ran), false);
+});
+
+test("a staging that fails in diff prints a fixed sentence and the log, not git's words", async (t) => {
+  const s = setup(t);
+  tasks.goalStart(s.repo, GOAL, null);
+  writeScenarios([{ ...DONE, writeFile: [{ path: "hello.txt", content: "hello\n" }] }]);
+  send(s, "hello");
+  await needsReview(s, "hello");
+  shimGit(t, `*" write-tree "*`, `echo "INJECT: no" >&2; exit 128`);
+  assert.throws(() => taskDiff(s.repo, "hello"), (e: Error) => /^could not stage task hello for its diff; see .*git\.stderr$/.test(e.message) && !e.message.includes("INJECT"));
 });
 
 test("a cancel whose restore of a killed rebase fails keeps the worktree, the marker and the patch that holds the change", async (t) => {

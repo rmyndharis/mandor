@@ -661,7 +661,7 @@ export function unrecordedNote(branch: string, commits: string[]): string {
   return `goal ${branch} holds ${commits.length} commit${commits.length === 1 ? "" : "s"} that mandor did not record (${commits.slice(0, 5).map((c) => c.slice(0, 12)).join(", ")}${more})`;
 }
 
-function refuseOpenJob(state: ProjectState, slug: string): void {
+export function refuseOpenJob(state: ProjectState, slug: string): void {
   if (Object.values(state.jobs).some((j) => j.taskId === slug && j.outcome === null)) throw new Error(`task ${slug} has a queued or running job`);
 }
 

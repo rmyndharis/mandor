@@ -87,6 +87,10 @@ test("lead skill points at tiers for a tier with no candidate that can run", () 
   assert.ok(read("lead").includes("`mandor tiers` shows each candidate and what keeps it from running"));
 });
 
+test("lead skill reads a change with diff, and not with git in a task worktree", () => {
+  assert.ok(read("lead").includes("run `mandor diff <slug>`, not git in the task worktree"));
+});
+
 test("status skill runs mandor status", () => {
   assert.ok(read("status").includes("mandor status"));
 });

@@ -12,7 +12,7 @@ import { emptyProjectConfig, saveProjectConfig } from "../src/provision.ts";
 import { withProjectLock } from "../src/store.ts";
 import { indexLockPath } from "../src/git.ts";
 import { dispatch, goalStart } from "../src/tasks.ts";
-import { reviewPack } from "../src/review.ts";
+import { reviewPack, taskDiff } from "../src/review.ts";
 import { tempHome, tempRepo, writeScenarios } from "./helpers.ts";
 
 const LAUNCHER = join(import.meta.dirname, "..", "bin", "mandor");
@@ -73,6 +73,13 @@ function fixture(t: TestContext, files: Record<string, string> = {}, scope: stri
 
 const details = (p: ReturnType<typeof reviewPack>, kind: string) => p.redFlags.filter((f) => f.kind === kind).map((f) => f.detail);
 
+// The fixture's task still has the job that dispatch queued, so a test that wants a task with no job in flight ends it.
+function endJob(f: Fixture): void {
+  for (const jobId of loadState(f.id).tasks[SLUG].jobIds) {
+    appendEvent(f.id, { t: "job.finished", at: now(), jobId, outcome: { status: "done", sessionId: null, detail: "", resetsAt: null, exitCode: 0 } });
+  }
+}
+
 test("a diff with nothing to flag gives an empty pack", (t) => {
   const f = fixture(t, { "src/a.ts": "export const a = 1;\n" });
   put(f.wt, "src/a.ts", "export const a = 2;\n");
@@ -95,6 +102,62 @@ test("a git index lock that a killed staging left is named, and the review runs 
   assert.throws(() => reviewPack(f.repo, SLUG), (e: Error) => e.message.includes(lock) && /remove it/.test(e.message) && !/fatal|Unable to create/.test(e.message));
   rmSync(lock);
   assert.deepEqual(reviewPack(f.repo, SLUG).files, [{ path: "src/a.ts", status: "M" }]);
+});
+
+test("diff prints the task's change as text through the review's git layer, and records no review", (t) => {
+  const f = fixture(t, { "src/a.ts": "a\n" });
+  put(f.wt, "src/a.ts", "b\n");
+  put(f.wt, "src/new.ts", "n\n");
+  endJob(f);
+  const text = taskDiff(f.repo, SLUG);
+  assert.match(text, /^diff --git a\/src\/a\.ts b\/src\/a\.ts$/m);
+  assert.match(text, /^-a\n\+b$/m);
+  assert.match(text, /^diff --git a\/src\/new\.ts b\/src\/new\.ts$/m);
+  assert.equal(existsSync(join(projectDir(f.id), "tasks", SLUG, "reviewed.json")), false, "accept still wants a review");
+  assert.throws(() => taskDiff(f.repo, "nope"), /no task nope/);
+  const bare = fixture(t);
+  endJob(bare);
+  assert.equal(taskDiff(bare.repo, SLUG), "", "no change gives no text");
+});
+
+test("diff writes the control bytes of a worker's file as visible escapes, and keeps tabs, line ends and CRLF", (t) => {
+  const f = fixture(t, { "src/a.ts": "a\n" });
+  put(f.wt, "src/new.ts", "x\x1b[2Ky\rz\0w\tv\r\nend\n");
+  endJob(f);
+  const text = taskDiff(f.repo, SLUG);
+  assert.ok(text.includes("x\\x1b[2Ky\\x0dz\\x00w\tv\r\n"), JSON.stringify(text));
+  assert.ok(!/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/.test(text.replace(/\r\n/g, "\n")), "no control byte is left but a tab and a line end");
+});
+
+test("diff into a reader that stops early is no failure and prints no stack", (t) => {
+  const f = fixture(t, { "src/a.ts": "a\n" });
+  put(f.wt, "src/big.txt", "line\n".repeat(200_000));
+  endJob(f);
+  const err = join(f.scratch, "err.txt");
+  const r = spawnSync("bash", ["-c", 'set -o pipefail; "$1" diff "$2" 2>"$3" | head -c 1 >/dev/null; echo $?', "x", LAUNCHER, SLUG, err], { cwd: f.repo, encoding: "utf8" });
+  assert.equal(r.stdout.trim(), "0");
+  assert.equal(readFileSync(err, "utf8"), "");
+});
+
+test("diff refuses a task with a job in flight, whose worker may be using the index", (t) => {
+  const f = fixture(t, { "src/a.ts": "a\n" });
+  put(f.wt, "src/a.ts", "b\n");
+  const candidate = { tool: "codex", model: "gpt-6-luna", effort: "medium" } as const;
+  appendEvent(f.id, { t: "job.started", at: now(), job: { id: "j-20261108100000-0001", taskId: SLUG, seq: 1, kind: "start", candidate } });
+  assert.throws(() => taskDiff(f.repo, SLUG), /task work has a queued or running job/);
+});
+
+test("the diff command prints the text, exits 2 without a slug and 1 for a task that does not exist", (t) => {
+  const f = fixture(t, { "src/a.ts": "a\n" });
+  put(f.wt, "src/a.ts", "b\n");
+  endJob(f);
+  const run = (...args: string[]) => spawnSync(LAUNCHER, args, { cwd: f.repo, encoding: "utf8" });
+  const shown = run("diff", SLUG);
+  assert.equal(shown.status, 0, shown.stderr);
+  assert.match(shown.stdout, /^-a\n\+b$/m);
+  const bare = run("diff");
+  assert.deepEqual([bare.status, bare.stderr], [2, "mandor: usage: diff <slug>\n"]);
+  assert.equal(run("diff", "nope").status, 1);
 });
 
 test("a task that does not exist is refused", (t) => {

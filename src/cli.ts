@@ -175,6 +175,7 @@ The lead runs:
            [--scope <glob>]... [--use <tool:model@effort>] [--after <slug>]
   wait --since <cursor> [--timeout <seconds>]
   review <slug>
+  diff <slug>                   print the task's change as text, which a review records nothing of
   verdict <slug> accept --evidence-file <file> --message-file <file>
   verdict <slug> fix --notes <file>
   verdict <slug> takeover [--approved]
@@ -357,6 +358,23 @@ export async function main(argv: string[]): Promise<number> {
     }
   }
   // Plain text, not the JSON the lead's commands print.
+  if (argv[0] === "diff") {
+    if (argv.length !== 2) {
+      console.error("mandor: usage: diff <slug>");
+      return 2;
+    }
+    try {
+      // A reader that stops early (a pipe into head) is no failure of the command.
+      process.stdout.on("error", (e: NodeJS.ErrnoException) => {
+        if (e.code !== "EPIPE") throw e;
+      });
+      process.stdout.write((await import("./review.ts")).taskDiff(process.cwd(), argv[1]));
+      return 0;
+    } catch (e) {
+      console.error(`mandor: ${(e as Error).message}`);
+      return 1;
+    }
+  }
   if (argv[0] === "status" || argv[0] === "show" || argv[0] === "logs") return (await import("./status.ts")).viewMain(argv);
   try {
     console.log(JSON.stringify(await leadCommand(argv), null, 2));
