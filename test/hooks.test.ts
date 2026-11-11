@@ -150,10 +150,19 @@ test("outside a git repo, in little more than the launcher's own start", () => {
   // launcher, node, the module graph) and does no hook work, and under load that cost grows at the same rate as the
   // hook's, where a bare node start grows far less. Measured: the hook costs 1.2 to 1.3 of --version, unloaded and
   // loaded alike. Real work outside a project (a catalog load that runs codex, a reconcile) costs a process or more.
-  const base = fastest(() => run(LAUNCHER, ["--version"], ""), 0).ms;
-  const budget = 1.5 * base + 40;
   for (const name of HOOKS) {
-    const best = fastest(() => hook(name, input), budget);
+    // The two are timed in turn, so the fastest run of each comes from the same stretch of time: a budget taken in a
+    // quiet moment would fail a hook timed while other test files load the machine. Five rounds at least, so the
+    // budget never rests on one slow start of the launcher.
+    let base = Infinity;
+    let budget = Infinity;
+    let best = hook(name, input);
+    for (let rounds = 0; rounds < 20 && (rounds < 5 || best.ms >= budget); rounds++) {
+      base = Math.min(base, run(LAUNCHER, ["--version"], "").ms);
+      budget = 1.5 * base + 40;
+      const r = hook(name, input);
+      if (r.ms < best.ms) best = r;
+    }
     silent(best, name);
     assert.ok(best.ms < budget, `${name} took ${Math.round(best.ms)} ms at best, over the budget of ${Math.round(budget)} ms (--version: ${Math.round(base)} ms)`);
   }
