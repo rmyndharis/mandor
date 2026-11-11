@@ -94,14 +94,13 @@ test("no change at all gives no files and an empty stat", (t) => {
   assert.deepEqual(reviewPack(f.repo, SLUG), { diffStat: "", files: [], redFlags: [], violations: [], worktree: f.wt, reportPath: null });
 });
 
-test("a git index lock that a killed staging left is named, and the review runs again once it is removed", (t) => {
+test("a review works on a copy of the index, so a lock in the worktree's git directory does not stop it and is left alone", (t) => {
   const f = fixture(t, { "src/a.ts": "a\n" });
   put(f.wt, "src/a.ts", "b\n");
   const lock = indexLockPath(f.repo, f.wt);
   writeFileSync(lock, "");
-  assert.throws(() => reviewPack(f.repo, SLUG), (e: Error) => e.message.includes(lock) && /remove it/.test(e.message) && !/fatal|Unable to create/.test(e.message));
-  rmSync(lock);
   assert.deepEqual(reviewPack(f.repo, SLUG).files, [{ path: "src/a.ts", status: "M" }]);
+  assert.equal(existsSync(lock), true, "the lock is not the review's to remove");
 });
 
 test("diff prints the task's change as text through the review's git layer, and records no review", (t) => {

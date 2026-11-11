@@ -8,7 +8,7 @@ import type { TestContext } from "node:test";
 import { test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { Candidate, JobRecord, ModelInfo, StallReason, TaskRecord, WaitItem } from "../src/contracts.ts";
-import { addWorktree, assertRepoOutsideHome, projectRoot } from "../src/git.ts";
+import { addWorktree, assertRepoOutsideHome, projectRoot, stagedDiff } from "../src/git.ts";
 import { jobDir, processStart, projectDir, projectIdFor, scratchDir, worktreesDir } from "../src/home.ts";
 import { appendEvent, ledgerSize, listProjects, loadState, now, readEvents } from "../src/ledger.ts";
 import { emptyProjectConfig, saveProjectConfig } from "../src/provision.ts";
@@ -247,14 +247,14 @@ test("slice: goal start, plan set, dispatch, wait, accept and confirm make one c
 test("accept commits only the tree the last review showed", (t) => {
   const s = setup(t);
   goalStart(s.repo, GOAL, null);
-  const { worktree } = reviewable(s, "hello", { "hello.txt": "hello\n" });
+  const { worktree, base } = reviewable(s, "hello", { "hello.txt": "hello\n" });
   const tip = must(s.repo, "rev-parse", GOAL);
   const unreviewed = () => verdictAccept(s.repo, "hello", s.file("evidence.md", "ok\n"), s.file("message.txt", MESSAGE), { allowTestIdentity: true });
   assert.throws(unreviewed, /^Error: task hello has no review on record; run mandor review hello first$/);
   refused(s, "hello", tip);
   reviewPack(s.repo, "hello");
   const pin = join(projectDir(s.id), "tasks", "hello", "reviewed.json");
-  assert.equal(JSON.parse(readFileSync(pin, "utf8")).tree, must(worktree!, "write-tree"));
+  assert.equal(JSON.parse(readFileSync(pin, "utf8")).tree, stagedDiff(s.repo, worktree!, base!).tree);
   // An edit after the review, a tracked file or an untracked one, is not what the review showed.
   writeFileSync(join(worktree!, "hello.txt"), "hello, changed after the review\n");
   assert.throws(unreviewed, /^Error: task hello changed since its last review; run mandor review hello again$/);

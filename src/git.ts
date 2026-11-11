@@ -1,10 +1,11 @@
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { basename, delimiter, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { inflateSync } from "node:zlib";
 import { foldPath } from "./guards.ts";
 import { mandorHome } from "./home.ts";
+import { ensureDir } from "./store.ts";
 
 // Inherited, these would point git at another repository or work tree than the one asked for.
 // Identity (GIT_AUTHOR_*, GIT_COMMITTER_*) and GIT_CONFIG_* stay, as the identity check reads them.
@@ -277,6 +278,8 @@ interface Bound {
   ok(args: string[]): string;
   okBytes(args: string[]): Buffer;
   confined(allow: [string, string][], args: string[], extra?: Location): Result;
+  // The same binding with more git environment, as a staging that keeps its index and objects of its own needs.
+  with(extra: Location): Bound;
 }
 
 // A git command that writes a bound worktree, confined by the kernel sandbox to write only the paths in allow, which
@@ -406,15 +409,17 @@ function bind(repo: string, worktree: string, userConfig = false): Bound {
   const hooksOff = [...new Set(configured)].map((name) => `--config-env=hook.${name}.enabled=LEAD_HOOK_OFF`);
   const env: Location = hooksOff.length > 0 ? { ...location, LEAD_HOOK_OFF: "false" } : location;
   const pre = userConfig ? ["-c", "core.fsmonitor=false"] : ["-c", `core.hooksPath=${emptyHooks()}`, "-c", "core.fsmonitor=false", "-c", "diff.ignoreSubmodules=dirty", ...hooksOff];
-  return {
+  const make = (e: Location): Bound => ({
     gitDir: named[0],
     worktree: real,
     commonDir,
-    run: (a) => run([...pre, ...a], real, env),
-    ok: (a) => ok([...pre, ...a], real, env),
-    okBytes: (a) => okBytes([...pre, ...a], real, env),
-    confined: (allow, a, extra = {}) => confinedRun(real, { ...env, ...extra }, pre, allow, a),
-  };
+    run: (a) => run([...pre, ...a], real, e),
+    ok: (a) => ok([...pre, ...a], real, e),
+    okBytes: (a) => okBytes([...pre, ...a], real, e),
+    confined: (allow, a, extra = {}) => confinedRun(real, { ...e, ...extra }, pre, allow, a),
+    with: (extra) => make({ ...e, ...extra }),
+  });
+  return make(env);
 }
 
 // Untracked files count even when status.showUntrackedFiles hides them; ignored files never do.
@@ -463,18 +468,46 @@ const DIFF_INDEX = ["diff-index", "--cached", "--no-renames", "--ignore-submodul
 // run that repository's clean filter. Excluding the gitlink paths (known from the trusted index) leaves the
 // pointer as the index already holds it, which diff-index --ignore-submodules=dirty still reports.
 function stageAll(g: Bound): void {
-  // A staging that was killed leaves its lock, and git would then fail with words that stay in the log.
-  const lock = join(g.gitDir, "index.lock");
-  if (existsSync(lock)) throw new Error(`a git index lock is left at ${lock}. If no git command runs in that worktree, remove it, then run the command again`);
   const gitlinks = g.ok(["ls-files", "--stage", "-z"]).split("\0").filter((l) => l.startsWith("160000 ")).map((l) => l.slice(l.indexOf("\t") + 1));
   g.ok(["add", "-A", "--", ".", ...gitlinks.map((p) => `:(exclude)${p}`)]);
 }
 
+// What staging for a read leaves behind. In the repository's own object store every worker file it read would stay as an
+// unreachable object until git prunes it, and in the worker's own index the entries would name objects that the worker's git
+// could not find. So the staging runs on a copy of the index, in a directory of its own under the state home, with an
+// object directory of its own that reads through the repository's, and the whole directory goes at the end. The tree it
+// makes has the id it would have made anywhere else, as an id is a hash of the content.
+function privateStage<T>(repo: string, worktree: string, use: (g: Bound) => T): T {
+  const g = bind(repo, worktree);
+  const stages = join(mandorHome(), "stage");
+  ensureDir(stages);
+  const dir = mkdtempSync(join(stages, "s-"));
+  try {
+    // A split index keeps most of its entries in a shared file beside it. A copy keeps the modification time of its original:
+    // git trusts an entry whose file looks unchanged only when the entry is older than the index, so an index that looked
+    // newer than it is would let an edit of the same size, within the second of the last write, pass unseen.
+    for (const name of readdirSync(g.gitDir)) {
+      if (name !== "index" && !name.startsWith("sharedindex.")) continue;
+      const from = join(g.gitDir, name);
+      const at = statSync(from);
+      copyFileSync(from, join(dir, name));
+      // Rounded down, so that no entry that was racy in the original reads as safe in the copy.
+      utimesSync(join(dir, name), Math.floor(at.atimeMs / 1000), Math.floor(at.mtimeMs * 1000) / 1e6);
+    }
+    const objects = join(dir, "objects");
+    mkdirSync(objects, { mode: 0o700 });
+    return use(g.with({ GIT_INDEX_FILE: join(dir, "index"), GIT_OBJECT_DIRECTORY: objects, GIT_ALTERNATE_OBJECT_DIRECTORIES: join(g.commonDir, "objects") }));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 // The exact patch bytes: a text file that is not UTF-8 would not survive a decode and re-encode.
 export function diffSinceBaseBytes(repo: string, worktree: string, base: string): Buffer {
-  const g = bind(repo, worktree);
-  stageAll(g);
-  return g.okBytes([...DIFF_INDEX, "--binary", base, "--"]);
+  return privateStage(repo, worktree, (g) => {
+    stageAll(g);
+    return g.okBytes([...DIFF_INDEX, "--binary", base, "--"]);
+  });
 }
 
 // The patch to apply, the text the guards read and the stat the lead sees, from one tree: write-tree fixes what was
@@ -483,17 +516,19 @@ export function diffSinceBaseBytes(repo: string, worktree: string, base: string)
 // added lines into a binary patch that no check reads; the patch itself is never taken from it.
 // The tree id names exactly what was read, for a later check that nothing changed since.
 export function stagedDiff(repo: string, worktree: string, base: string): { bytes: Buffer; text: string; stat: string; tree: string } {
-  const g = bind(repo, worktree);
-  stageAll(g);
-  const tree = g.ok(["write-tree"]).trim();
-  const read = (flags: string[]) => g.okBytes(["diff-tree", "-r", "--no-renames", "--ignore-submodules=dirty", ...flags, base, tree, "--"]);
-  return { bytes: read(["--binary"]), text: read(["--patch", "--text"]).toString(), stat: read(["--stat"]).toString(), tree };
+  return privateStage(repo, worktree, (g) => {
+    stageAll(g);
+    const tree = g.ok(["write-tree"]).trim();
+    const read = (flags: string[]) => g.okBytes(["diff-tree", "-r", "--no-renames", "--ignore-submodules=dirty", ...flags, base, tree, "--"]);
+    return { bytes: read(["--binary"]), text: read(["--patch", "--text"]).toString(), stat: read(["--stat"]).toString(), tree };
+  });
 }
 
 export function diffStat(repo: string, worktree: string, base: string): string {
-  const g = bind(repo, worktree);
-  stageAll(g);
-  return g.ok([...DIFF_INDEX, "--stat", base, "--"]);
+  return privateStage(repo, worktree, (g) => {
+    stageAll(g);
+    return g.ok([...DIFF_INDEX, "--stat", base, "--"]);
+  });
 }
 
 const ESCAPES: Record<string, number> = { a: 7, b: 8, t: 9, n: 10, v: 11, f: 12, r: 13, '"': 34, "\\": 92 };

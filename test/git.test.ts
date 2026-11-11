@@ -212,7 +212,7 @@ test("diffSinceBase covers committed, modified, untracked, deleted and renamed f
   assert.equal(applyCheck(repo, target, patch), true);
   applyToIndex(repo, target, patch);
   commitStaged(repo, target, changedPaths(diff).map((c) => c.path), "Apply task", true);
-  assert.equal(revParse(target, "HEAD^{tree}"), must(wt, "write-tree").trim());
+  assert.equal(revParse(target, "HEAD^{tree}"), stagedDiff(repo, wt, base).tree);
 });
 
 test("diffs, staged paths and applies ignore user diff, submodule and whitespace config", () => {
@@ -280,7 +280,7 @@ test("changedPaths handles a path with a space and a non-ASCII name", () => {
   const quoted = diffSinceBase(repo, wt, base);
   assert.ok(quoted.includes('diff --git "a/caf\\303\\251.txt" "b/caf\\303\\251.txt"\n'));
   assert.deepEqual(listed(quoted), expected);
-  assert.deepEqual(stagedPaths(repo, wt).sort(), [...names].sort());
+  assert.deepEqual(changedPaths(stagedDiff(repo, wt, base).text).map((c) => c.path).sort(), [...names].sort());
   // Without quotePath, non-ASCII bytes stay raw, also inside a quoted name.
   must(repo, "config", "core.quotePath", "false");
   const raw = diffSinceBase(repo, wt, base);
@@ -869,6 +869,43 @@ test("a worktree whose .git names a repository built inside it never runs that r
   assert.deepEqual(ran(markers), []);
 });
 
+test("staging on a copy of the index keeps git's protection against an edit of the same size within the second of the last index write", async () => {
+  const { repo, wt, base } = withWorktree();
+  const file = join(wt, "README.md");
+  const when = new Date(Math.floor(Date.now() / 1000) * 1000);
+  utimesSync(file, when, when);
+  const adminIndex = join(execFileSync("git", ["rev-parse", "--absolute-git-dir"], { cwd: wt, encoding: "utf8" }).trim(), "index");
+  must(wt, "update-index", "--refresh");
+  utimesSync(adminIndex, when, when);
+  const before = readFileSync(file, "utf8");
+  // The same size, and the modification time the index recorded: only the index's own timestamp can tell the file is racily clean.
+  writeFileSync(file, before.replace(/^./, "X"));
+  utimesSync(file, when, when);
+  await sleep(1100);
+  assert.deepEqual(changedPaths(stagedDiff(repo, wt, base).text), [{ path: "README.md", status: "M" }]);
+});
+
+const objectIds = (repo: string): string[] =>
+  execFileSync("git", ["cat-file", "--batch-all-objects", "--batch-check=%(objectname)"], { cwd: repo, encoding: "utf8" }).split("\n").filter(Boolean).sort();
+
+test("staging for a read leaves the repository's objects and the worker's index as they were, and nothing of its own behind", () => {
+  const { repo, wt, base } = withWorktree();
+  writeFileSync(join(wt, "new.txt"), "a worker's file\n");
+  writeFileSync(join(wt, "README.md"), "changed by the worker\n");
+  const blob = execFileSync("git", ["hash-object", "new.txt"], { cwd: wt, encoding: "utf8" }).trim();
+  const adminIndex = join(execFileSync("git", ["rev-parse", "--absolute-git-dir"], { cwd: wt, encoding: "utf8" }).trim(), "index");
+  const objects = objectIds(repo);
+  const index = readFileSync(adminIndex);
+  const staged = stagedDiff(repo, wt, base);
+  assert.deepEqual(changedPaths(staged.text).map((c) => c.path).sort(), ["README.md", "new.txt"]);
+  assert.match(diffStat(repo, wt, base), /new\.txt +\| 1 \+/);
+  assert.match(diffSinceBaseBytes(repo, wt, base).toString(), /\+a worker's file/);
+  assert.deepEqual(objectIds(repo), objects, "no object was written into the repository");
+  assert.equal(spawnSync("git", ["cat-file", "-e", blob], { cwd: repo }).status, 1, "the worker's file is in no object store of the repository");
+  assert.ok(readFileSync(adminIndex).equals(index), "the worker's index is as it was");
+  assert.deepEqual(readdirSync(join(process.env.MANDOR_HOME!, "stage")), [], "no private directory stays");
+});
+
 test("a worktree whose .git names a fake repository outside the mandor home never runs its core.fsmonitor", () => {
   const { repo, wt, base } = withWorktree();
   const main = revParse(repo, "refs/heads/main");
@@ -885,6 +922,7 @@ test("a worktree whose .git names a fake repository outside the mandor home neve
   assert.equal(isClean(repo, wt), false);
   const patch = join(temp(), "accepted.patch");
   writeFileSync(patch, bytes);
+  rmSync(join(wt, "a.txt")); // staging for a read stages nothing in the worktree, so the reset has nothing to take away
   resetHardHead(repo, wt);
   assert.equal(applyCheck(repo, wt, patch), true);
   applyToIndex(repo, wt, patch);
@@ -906,7 +944,11 @@ test("commitStaged on an integration worktree whose .git names a fake repository
   // The integration worktree's .git is rewritten to a fake repository, with an identity and hooks of its own.
   plantFakeRepository(repo, wt, base, join(temp(), "fc"), `\thooksPath = ${hooks}\n[user]\n\tname = Test\n\temail = test@example.invalid\n`);
   writeFileSync(join(wt, "a.txt"), "a\n");
-  diffSinceBase(repo, wt, base);
+  // What an accept does: the patch goes into the index of the integration worktree, which a commit then reads.
+  const patch = join(temp(), "accepted.patch");
+  writeFileSync(patch, diffSinceBaseBytes(repo, wt, base));
+  rmSync(join(wt, "a.txt"));
+  applyToIndex(repo, wt, patch);
   const sha = commitStaged(repo, wt, ["a.txt"], "Add a", true);
   assert.deepEqual(ran(markers), []);
   assert.equal(revParse(repo, "refs/heads/goal"), sha);
@@ -1447,7 +1489,7 @@ test("stagedDiff's patch is byte-exact and its text shows what a -diff entry or 
   const patch = join(temp(), "accepted.patch");
   writeFileSync(patch, bytes);
   applyToIndex(repo, target, patch);
-  assert.equal(indexTree(repo, target), indexTree(repo, wt));
+  assert.equal(indexTree(repo, target), stagedDiff(repo, wt, base).tree);
   assert.deepEqual(readFileSync(join(target, "latin1.txt")), Buffer.from("caf\xe9\n", "latin1"));
 });
 
