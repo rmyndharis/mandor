@@ -7,6 +7,9 @@ All notable changes to mandor are recorded here. The format follows [Keep a Chan
 ### Changed
 
 - A new worktree is checked out confined, after its own configuration was read, so the repository's `post-checkout` and `post-index-change` hooks no longer run when mandor creates one.
+- The README says that the commit hooks at accept can run scripts that the reviewed change altered, that a commit which a hook changes is rolled back, and that mandor starts no git command that names a remote.
+- The help and the README describe `mandor models` as the list read at the last refresh.
+- The lead's playbook covers a task that stalls on a filter or merge driver, as it covers a command that refuses one.
 
 ### Fixed
 

@@ -21,7 +21,7 @@ Write every brief, plan, notes, evidence, and commit-message file under the dire
 - An `agy:` candidate is written without an effort, as its model id carries one: `--use agy:gemini-4-argon-high`.
 - A `zcode:` candidate only runs in a project whose workers may use the network. If a task on one stalls with `failed` and its log names the network, tell the user that ZCode workers need `mandor project setup --worker-network`, and stop until they decide.
 - Write the plan file under scratch. Run `mandor goal start <branch>`, then `mandor plan set --goal <branch> --file <plan file> --description "<one line>"`. `goal start` branches from the HEAD of the checkout you run it in; pass `--from <ref>` to branch from another commit or branch. It prints JSON; `goal.integrationWorktree` is the integration worktree path, which you need in section 7.
-- If `goal start` or `dispatch` refuses because the git config defines a filter or merge driver, tell the user what the error names and stop. Do not edit the config or work around it.
+- If `goal start` or `dispatch` refuses because the git config defines a filter or merge driver, tell the user what the error names and stop. Do not edit the config or work around it. The same goes for a task that stalls with `failed` or `account-mismatch` and whose reason says to `see` the runner log, when the last line of that log for the task says that the git config defines a filter or merge driver.
 
 ## 3. Brief sections
 

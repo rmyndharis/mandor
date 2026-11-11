@@ -150,7 +150,7 @@ const USAGE = `mandor <command>
 
 You run:
   init                          create the home and its config, read the model list, print warnings
-  models [--refresh] [--json]   list the models the enabled tools offer
+  models [--refresh] [--json]   list the models read at the last refresh (a list older than 5 minutes is read again)
   login zcode [zai|bigmodel] [--api-key]
                                 sign the zcode worker in under a home of its own: in a browser, or with a
                                 Coding Plan API key piped in
