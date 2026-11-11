@@ -15,6 +15,7 @@ concurrency:
 
 jobs:
   test:
+    # These names are the required checks on main: change the branch protection together with the matrix.
     name: Node ${{ matrix.node }}
     # sandbox-exec, which the workers and the tests rely on, exists on macOS only.
     runs-on: macos-latest
