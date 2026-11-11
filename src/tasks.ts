@@ -843,6 +843,9 @@ export function drop(cwd: string, slug: string, notesFile: string): { cursor: nu
         logRunnerTail(`drop of ${slug}`, message);
         throw new Error(`could not drop ${commit}; see ${runnerLogPath()}`);
       }
+    } else if (commit !== null && !isClean(root, integration)) {
+      // The reset is already done, so what the worktree holds now is not the commit's: a fix round would go on over it.
+      throw new Error(`refusing to drop ${commit}: ${integration} is not clean`);
     }
     // A task the lead took over stays the lead's: no worker round, and no fix round counted.
     if (readEvents(id).items.some((e) => e.t === "verdict" && e.taskId === slug && e.verdict === "takeover")) {

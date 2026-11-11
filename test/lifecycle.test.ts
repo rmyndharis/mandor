@@ -519,6 +519,28 @@ test("a drop killed after its reset goes on from the commit's parent", async (t)
   await needsReview(s, "hello");
 });
 
+test("a drop refuses an integration worktree that is not clean even when the goal branch is at the commit's parent", async (t) => {
+  const s = setup(t);
+  const { goal } = tasks.goalStart(s.repo, GOAL, null);
+  writeScenarios([{ ...DONE, writeFile: [{ path: "hello.txt", content: "hello\n" }] }, DONE]);
+  send(s, "hello");
+  await needsReview(s, "hello");
+  const commit = committed(s, "hello");
+  const inGoal = (...args: string[]) => must(goal.integrationWorktree, ...args);
+  const unchanged = (why: string) => assert.deepEqual([task(s, "hello").status, task(s, "hello").integratedCommit, task(s, "hello").fixRounds], ["integrating", commit, 0], why);
+  const drop = () => tasks.drop(s.repo, "hello", s.file("notes.md", NOTES));
+  // The change is staged and the branch has moved back: only a staged change is in the way.
+  inGoal("reset", "-q", "--soft", "HEAD~1");
+  assert.throws(drop, /not clean/);
+  unchanged("a staged change");
+  inGoal("reset", "-q", "--hard", commit);
+  // The parent is checked out cleanly, and one untracked file is in the way.
+  inGoal("reset", "-q", "--keep", "HEAD~1");
+  writeFileSync(join(goal.integrationWorktree, "stray.txt"), "left by a proof\n");
+  assert.throws(drop, /not clean/);
+  unchanged("an untracked file");
+});
+
 test("a drop that git cannot do keeps the commit and git's stderr out of the output, and refuses a driver configured since dispatch", async (t) => {
   const s = setup(t);
   const { goal } = tasks.goalStart(s.repo, GOAL, null);
