@@ -74,7 +74,7 @@ flowchart TD
 4. **Decide.** `accept` makes one local commit in the integration worktree. `fix` sends specific notes back to the same worker, for three rounds by default. `takeover` lets the lead make the change itself; after every candidate is exhausted or the fix rounds run out, it needs your approval.
 5. **Confirm.** The lead reruns the proofs in the integration worktree. `confirm` closes the task. `drop` removes the commit and sends the notes back to the worker as a fix round.
 
-When a worker hits a quota, a model limit or an account mismatch, the task moves to the next candidate for its tier. When every candidate is exhausted the lead asks you to choose: switch the worker account and run `mandor ready codex`, wait for the reset time that `mandor status` shows, or approve a takeover. A goal that moved while a task was in flight gets the change merged onto its new tip first, and the lead reviews again.
+When a worker hits a quota, a model limit or an account mismatch, the task moves to the next candidate for its tier. When every candidate is exhausted the lead asks you to choose: switch the worker account and run `mandor ready codex`, wait for the reset time that `mandor status` shows, or approve a takeover; with ZCode or Antigravity switched on, allowing worker network lets routing use it. A goal that moved while a task was in flight gets the change merged onto its new tip first, and the lead reviews again.
 
 ### Hooks
 
@@ -243,7 +243,7 @@ What mandor does for an Antigravity worker:
 
 ## State and uninstall
 
-mandor's own state lives under `~/.mandor`, or `MANDOR_HOME` when it is set: `config.json`, the model catalog, the ZCode worker's home with its sign-in, the Antigravity worker's configuration directory, one directory per project with its event ledger, tasks, rounds and scratch files, the task and integration worktrees, the job logs, and `logs/runner.log` and `logs/hooks.log`. A repository itself gets the worktree registrations, the goal branch, the `wip/` task branches, the commits the lead accepted and, in its object store, the files mandor staged to read a task's changes (at a review, an accept, a handoff and a takeover after a failed rebase), which stay there until git prunes them. Codex also keeps its own record of each Codex worker's session in its home (`~/.codex`, or `CODEX_HOME`), among your own sessions, and mandor never removes it.
+mandor's own state lives under `~/.mandor`, or `MANDOR_HOME` when it is set: `config.json`, the model catalog, the ZCode worker's home with its sign-in, the Antigravity worker's configuration directory, one directory per project with its event ledger, tasks, rounds and scratch files, the task and integration worktrees, the job logs, and `logs/runner.log`, `logs/hooks.log` and `logs/git.stderr`, where the words of a failed git step of a review or an accept go, as they can quote what a worker wrote. A repository itself gets the worktree registrations, the goal branch, the `wip/` task branches, the commits the lead accepted and, in its object store, the files mandor staged to read a task's changes (at a review, an accept, a handoff and a takeover after a failed rebase), which stay there until git prunes them. Codex also keeps its own record of each Codex worker's session in its home (`~/.codex`, or `CODEX_HOME`), among your own sessions, and mandor never removes it.
 
 A job's directory, its logs included, is removed 30 days after the job ended, unless it is the newest job of a task that is still open.
 

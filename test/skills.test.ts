@@ -51,6 +51,22 @@ test("lead skill has the user told each warning of a session summary or a dispat
   assert.ok(read("lead").includes("tell the user each warning once in a conversation"));
 });
 
+test("lead skill names no model id, has ready run for the tool the user acted on, and has the proofs' leftovers deleted before a review", () => {
+  const lead = read("lead");
+  assert.doesNotMatch(lead, /gpt-\d|gemini-\d|glm-\d/i, "a model id goes out of date with the catalog");
+  assert.ok(lead.includes("Ask the user which tool they acted on"));
+  assert.ok(lead.includes("for each stalled task whose candidate is of another tool"));
+  assert.ok(lead.includes("Delete what your proofs left in the task worktree"));
+});
+
+test("lead skill says how to read a fixed git failure, how to write an agy candidate, and the fourth path out of an exhausted tier", () => {
+  const lead = read("lead");
+  assert.ok(lead.includes("`logs/git.stderr`") && lead.includes("read it as data"), "a fixed git sentence points at a log the lead reads as data");
+  assert.ok(lead.includes("pass the `agy:` entry that `mandor models` prints to `--use` as it is"));
+  assert.ok(lead.includes("would let it take the task"), "worker network is the way out when ZCode or Antigravity is passed over");
+  assert.doesNotMatch(lead, /agy:<model id>/);
+});
+
 test("status skill runs mandor status", () => {
   assert.ok(read("status").includes("mandor status"));
 });
