@@ -2062,6 +2062,38 @@ test("goal start and dispatch refuse where sandbox-exec cannot apply a profile, 
   }
 });
 
+test("init, models, project setup, goal start and dispatch refuse a state home inside a git working tree, before writing anything", (t) => {
+  const s = setup(t);
+  const outer = tempRepo();
+  const home = join(outer, "state");
+  const run = (...args: string[]) => spawnSync(LAUNCHER, args, { cwd: s.repo, encoding: "utf8", env: { ...process.env, MANDOR_HOME: home } });
+  const refusal = /^mandor: refusing the mandor home .+: it lies inside the git working tree .+; set MANDOR_HOME to a directory outside every repository$/m;
+  const brief = s.file("hello.md", "Say hello.\n");
+  const commands = [["init"], ["models"], ["project", "setup"], ["goal", "start", GOAL], ["dispatch", "--goal", GOAL, "--task", "hello", "--tier", "light", "--brief", brief]];
+  // A home that is not made yet, and one that is: the nearest directory that exists decides.
+  for (const made of [false, true]) {
+    if (made) mkdirSync(home);
+    for (const args of commands) {
+      const r = run(...args);
+      assert.equal(r.status, 1, `${args.join(" ")}: ${r.stderr}`);
+      assert.match(r.stderr, refusal, args.join(" "));
+      assert.deepEqual(existsSync(home) ? readdirSync(home) : [], [], `${args.join(" ")} wrote into the home`);
+    }
+  }
+  // Judged by the .git entry of a directory above it, not by asking git, which says nothing of a repository it refuses
+  // (another owner's) or cannot read.
+  const fake = temp("mandor-fake-");
+  writeFileSync(join(fake, ".git"), "gitdir: /nowhere\n");
+  const behind = spawnSync(LAUNCHER, ["init"], { cwd: s.repo, encoding: "utf8", env: { ...process.env, MANDOR_HOME: join(fake, "a", "state") } });
+  assert.equal(behind.status, 1, behind.stderr);
+  assert.match(behind.stderr, /it lies inside the git working tree .+; set MANDOR_HOME/);
+  assert.equal(existsSync(join(fake, "a")), false, "nothing was written");
+  // A home outside every repository, under a directory that does not exist yet, is accepted.
+  const fresh = join(temp("mandor-fresh-"), "a", "b");
+  const ok = spawnSync(LAUNCHER, ["init"], { cwd: s.repo, encoding: "utf8", env: { ...process.env, MANDOR_HOME: fresh } });
+  assert.equal(ok.status, 0, ok.stderr);
+});
+
 test("goal start and dispatch refuse a repository whose config defines a filter or merge driver", (t) => {
   const s = setup(t);
   must(s.repo, "config", "filter.lfs.clean", "git-lfs clean -- %f");

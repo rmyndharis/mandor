@@ -6,7 +6,7 @@ import { loadRounds, renderBrief, renderConflictMessage, renderFixMessage, rende
 import { loadConfig, resolveBin, WORKER_TOOLS, type Config } from "./config.ts";
 import type { Candidate, FileRef, GoalRecord, JobKind, JobRecord, LedgerEvent, ModelInfo, Pending, ProjectState, StallReason, TaskRecord, TaskStatus, Tier, ToolName, ToolState } from "./contracts.ts";
 import {
-  addWorktree, apply3way, applyCheck, applyToIndex, assertCommitIdentity, assertHeadIdentity, assertRepoOutsideHome, branchExists, changedPaths, commitRunning, commitStaged, configuredDrivers, configuredPromisors,
+  addWorktree, apply3way, applyCheck, applyToIndex, assertCommitIdentity, assertHeadIdentity, assertHomeOutsideRepos, assertRepoOutsideHome, branchExists, changedPaths, commitRunning, commitStaged, configuredDrivers, configuredPromisors,
   confineProblem, deleteBranchAt, diffSinceBaseBytes, diffStat, dropLastCommit, git, indexLockPath, indexTree, isClean, PARTIAL_CLONE, projectRoot,
   removeOwnedWorktree, resetHardHead, resetTo, revParse, stagedDiff, worktreeAddRunning,
 } from "./git.ts";
@@ -332,6 +332,7 @@ function reserve(root: string, all: string, file: string, worktree: string, bran
 export function goalStart(cwd: string, branch: string, from: string | null): { goal: GoalRecord; cursor: number } {
   const { root, id, checkout } = resolveProject(cwd);
   refuseUnconfined();
+  assertHomeOutsideRepos();
   const models = loadCatalog();
   refuseNames(checkName(branch).map((v) => v.detail));
   // wip/ holds the disposable task branches: no accept can commit on one, and a branch named wip blocks them all.
@@ -420,6 +421,7 @@ export function dispatch(cwd: string, o: { goal: string; slug: string; tier: Tie
   scope: string[]; use: Candidate | null; after: string | null }): { task: TaskRecord; cursor: number } {
   const { root, id } = resolveProject(cwd);
   refuseUnconfined();
+  assertHomeOutsideRepos();
   const models = loadCatalog();
   assertOutsideRepos(o.briefFile, projectRoot);
   const { slug } = o;

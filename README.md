@@ -210,7 +210,7 @@ Each tier lists its candidates as `tool:model@effort`, in order of preference; `
 
 | Variable | Effect |
 | --- | --- |
-| `MANDOR_HOME` | The state directory. Must be an absolute path. Defaults to `~/.mandor` |
+| `MANDOR_HOME` | The state directory. Must be an absolute path, and must not lie inside a git working tree: `init`, `models`, `project setup`, `goal start` and `dispatch` refuse one. Defaults to `~/.mandor` |
 | `MANDOR_CODEX_BIN` | The Codex binary, as an absolute path. Overrides `tools.codex.bin` and the `PATH` lookup |
 | `MANDOR_JOB` | Set by mandor in a worker's environment to the job id. You do not set it |
 

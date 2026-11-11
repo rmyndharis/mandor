@@ -223,7 +223,7 @@ export async function main(argv: string[]): Promise<number> {
   }
   if (argv[0] === "models" || argv[0] === "init") {
     // Imported on use, so other commands, the hooks above all, never load the vendor adapter.
-    const [{ join }, { loadConfig }, { confineProblem }, { mandorHome }, { modelsReport }, { tierWarnings }] = await Promise.all([
+    const [{ join }, { loadConfig }, { assertHomeOutsideRepos, confineProblem }, { mandorHome }, { modelsReport }, { tierWarnings }] = await Promise.all([
       import("node:path"), import("./config.ts"), import("./git.ts"), import("./home.ts"), import("./adapters/index.ts"), import("./routing.ts"),
     ]);
     const init = argv[0] === "init";
@@ -233,6 +233,7 @@ export async function main(argv: string[]): Promise<number> {
       return 2;
     }
     try {
+      assertHomeOutsideRepos();
       const cfg = loadConfig();
       const r = modelsReport(cfg, init || argv.includes("--refresh"));
       r.warnings.push(...tierWarnings(cfg, r.models));
@@ -285,6 +286,8 @@ export async function main(argv: string[]): Promise<number> {
   }
   if (argv[0] === "project" && argv[1] === "setup") {
     try {
+      const { assertHomeOutsideRepos } = await import("./git.ts");
+      assertHomeOutsideRepos();
       const { recordRoot, resolveProject } = await import("./tasks.ts");
       const { root, id } = resolveProject(process.cwd());
       const c = projectSetup(id, argv.slice(2));

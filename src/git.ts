@@ -59,6 +59,20 @@ export function projectRoot(cwd: string): string | null {
   return realpathSync(gitDir !== common && basename(common) === ".git" ? dirname(common) : top);
 }
 
+// The state home holds the worktrees, the ledgers and every file the lead hands over. Inside a git working tree, that
+// repository's `git add` would take them in, and every file under scratch would be refused. The nearest directory that
+// exists stands for a home that is not made yet. A directory above it that holds a .git entry makes it a working tree,
+// whatever git says of that repository, which it refuses when another account owns it.
+export function assertHomeOutsideRepos(): void {
+  const home = mandorHome();
+  let dir = home;
+  while (!existsSync(dir) && dirname(dir) !== dir) dir = dirname(dir);
+  for (dir = realpathSync(dir); ; dir = dirname(dir)) {
+    if (existsSync(join(dir, ".git"))) throw new Error(`refusing the mandor home ${home}: it lies inside the git working tree ${dir}; set MANDOR_HOME to a directory outside every repository`);
+    if (dirname(dir) === dir) return;
+  }
+}
+
 export function revParse(cwd: string, ref: string): string {
   return ok(["rev-parse", "--verify", ref], cwd).trim();
 }
