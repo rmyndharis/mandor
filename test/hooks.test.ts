@@ -4,6 +4,7 @@ import { appendFileSync, chmodSync, closeSync, existsSync, mkdirSync, openSync, 
 import { join } from "node:path";
 import { test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
+import { saveRoundFile } from "../src/brief.ts";
 import type { Candidate, JobRecord, TaskRecord, TaskStatus } from "../src/contracts.ts";
 import { foldPath } from "../src/guards.ts";
 import { jobDir, processStart, projectDir, projectIdFor, worktreesDir } from "../src/home.ts";
@@ -427,6 +428,11 @@ test("the summary gives a task that needs the lead its stall reason and next act
   const add = (slug: string, status: TaskStatus, over: Partial<TaskRecord> = {}) => appendEvent(s.id, { t: "task.created", at: now(), task: taskRecord(slug, status, over) });
   add("busy", "working");
   add("reviewing", "needs-review");
+  add("asking", "needs-review");
+  saveRoundFile(s.id, "asking", 1, "report.json", JSON.stringify({
+    status: "blocked", summary: "Stuck.", files_changed: [], commands_run: [], tests: { ran: false, passed: 0, failed: 0, notes: "" },
+    open_issues: [], questions_for_lead: ["Which port?"],
+  }));
   add("limit", "stalled", { stallReason: "quota" });
   add("spent", "stalled", { stallReason: "all-exhausted" });
   add("rounds", "stalled", { stallReason: "fix-rounds-exceeded" });
@@ -441,6 +447,7 @@ test("the summary gives a task that needs the lead its stall reason and next act
   const tail = ", codex:gpt-6-luna@medium, seq 1, fix rounds 0";
   assert.equal(line("busy"), `- busy: working${tail}`);
   assert.equal(line("reviewing"), `- reviewing: needs-review${tail}; next: review`);
+  assert.equal(line("asking"), `- asking: needs-review${tail}; next: answer`);
   assert.equal(line("limit"), `- limit: stalled (quota)${tail}; next: reassign-or-ready`);
   assert.equal(line("spent"), `- spent: stalled (all-exhausted)${tail}; next: offer-takeover`);
   assert.equal(line("rounds"), `- rounds: stalled (fix-rounds-exceeded)${tail}; next: fix-rounds-exceeded`);

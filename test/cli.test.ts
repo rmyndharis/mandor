@@ -18,6 +18,13 @@ test("the plugin manifest and the lock file carry the version of package.json", 
   assert.equal(manifest("package-lock.json").version, packageVersion);
 });
 
+test("verdict answer is listed in the help, and wants its notes file", () => {
+  const help = spawnSync(launcher, ["--help"], { encoding: "utf8" });
+  assert.match(help.stdout, /^  verdict <slug> answer --notes <file>/m);
+  const bare = spawnSync(launcher, ["verdict", "hello", "answer"], { encoding: "utf8", cwd: temp("mandor-help-") });
+  assert.deepEqual([bare.status, bare.stdout, bare.stderr], [2, "", "mandor: --notes is required\n"]);
+});
+
 test("--version prints the version of package.json", () => {
   const r = spawnSync(launcher, ["--version"], { encoding: "utf8" });
   assert.equal(r.stdout, `${packageVersion}\n`);

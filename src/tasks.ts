@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, posix, sep } from "node:path";
-import { loadRounds, renderBrief, renderConflictMessage, renderFixMessage, renderHandoff, saveRoundFile } from "./brief.ts";
+import { askOf, loadRounds, renderAnswerMessage, renderBrief, renderConflictMessage, renderFixMessage, renderHandoff, roundReport, saveRoundFile } from "./brief.ts";
 import { loadConfig, resolveBin, WORKER_TOOLS, type Config } from "./config.ts";
 import type { Candidate, FileRef, GoalRecord, JobKind, JobRecord, LedgerEvent, ModelInfo, Pending, ProjectState, StallReason, TaskRecord, TaskStatus, Tier, ToolName, ToolState } from "./contracts.ts";
 import {
@@ -728,7 +728,7 @@ export function recoverRebaseLocked(root: string, id: string, task: TaskRecord):
 // message lists file names a worker chose, and an event has a size limit. The pump starts the round or, with the tool at
 // its limit or spent, leaves it waiting or stalled, so a fix round never runs on an exhausted tool. Whatever the caller
 // moved in the task lands in the event that decides the round.
-function startFixRoundLocked(projectId: string, task: TaskRecord, message: string, counts: boolean, models: ModelInfo[], verdict: "fix" | "drop"): void {
+function startFixRoundLocked(projectId: string, task: TaskRecord, message: string, counts: boolean, models: ModelInfo[], verdict: "fix" | "drop" | "answer"): void {
   const at = now();
   const taskId = task.id;
   const fixRounds = task.fixRounds + (counts ? 1 : 0);
@@ -746,7 +746,7 @@ function startFixRoundLocked(projectId: string, task: TaskRecord, message: strin
   pumpAfterCommand(projectId, models, `${verdict} of ${taskId}`);
 }
 
-function recordNotesLocked(projectId: string, taskId: string, seq: number, notes: string, verdict: "fix" | "drop", at: string): void {
+function recordNotesLocked(projectId: string, taskId: string, seq: number, notes: string, verdict: "fix" | "drop" | "answer", at: string): void {
   const { path, sha256 } = saveRoundFile(projectId, taskId, seq, "notes.md", notes);
   appendEvent(projectId, { t: "verdict", at, taskId, verdict, seq, file: { path, sha256, excerpt: "" } });
 }
@@ -959,6 +959,17 @@ export function confirm(cwd: string, slug: string, evidenceFile: string): { curs
 }
 
 export function verdictFix(cwd: string, slug: string, notesFile: string): { cursor: number } {
+  return resumeWithNotes(cwd, slug, notesFile, "fix");
+}
+
+// The lead's answer to a report that is blocked, partial or asks a question. The worker resumes with it as with a fix, but
+// no fix round is counted, so an answer is never what stalls a task on the limit of fix rounds. A report that asks
+// nothing has nothing to answer: its notes are a fix.
+export function verdictAnswer(cwd: string, slug: string, notesFile: string): { cursor: number } {
+  return resumeWithNotes(cwd, slug, notesFile, "answer");
+}
+
+function resumeWithNotes(cwd: string, slug: string, notesFile: string, verdict: "fix" | "answer"): { cursor: number } {
   const { root, id } = resolveProject(cwd);
   refuseUnconfined();
   const models = loadCatalog();
@@ -970,7 +981,12 @@ export function verdictFix(cwd: string, slug: string, notesFile: string): { curs
     if (task.status !== "needs-review") throw new Error(`task ${slug} is ${task.status}, not needs-review`);
     refuseUnfinishedAccept(id, task);
     refuseOpenJob(loadState(id), slug);
-    startFixRoundLocked(id, task, renderFixMessage(readNonEmpty(notesFile, "notes")), true, models, "fix");
+    const notes = readNonEmpty(notesFile, "notes");
+    if (verdict === "fix") startFixRoundLocked(id, task, renderFixMessage(notes), true, models, "fix");
+    else {
+      if (askOf(roundReport(id, slug, task.seq)) === null) throw new Error(`task ${slug}: its newest report neither says blocked or partial nor asks a question, so there is nothing to answer; send notes with verdict fix`);
+      startFixRoundLocked(id, task, renderAnswerMessage(notes), false, models, "answer");
+    }
     return { cursor };
   })!;
 }

@@ -42,6 +42,16 @@ test("lead skill leaves the user's settings, git identity and sign-ins to the us
   }
 });
 
+test("lead skill has the lead answer a report that is blocked, partial or asks, as a round that no fix round pays for", () => {
+  const lead = read("lead");
+  for (const term of [
+    "`mandor verdict <slug> answer --notes <file>`", "`report-asks` red flag", "an `answer` is section 6's",
+    "the round is not counted against the limit of fix rounds", "`answer` refuses a report that asks nothing",
+  ]) {
+    assert.ok(lead.includes(term), term);
+  }
+});
+
 test("lead skill tells a new conversation to handle integrating and takeover tasks before it waits", () => {
   const lead = read("lead");
   assert.ok(lead.includes("(needs-review, stalled, integrating or takeover), then wait from the summary's cursor"));

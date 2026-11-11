@@ -1,6 +1,6 @@
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { ROUND_FILES } from "./brief.ts";
+import { ROUND_FILES, askOf, roundReport } from "./brief.ts";
 import { formatCandidate } from "./config.ts";
 import type { JobRecord, JobResult, ProjectState, TaskRecord, ToolState } from "./contracts.ts";
 import { jobDir, projectDir, roundDir } from "./home.ts";
@@ -95,6 +95,7 @@ export function showTask(projectId: string, slug: string): string {
   const outcome = Object.values(state.jobs).findLast((j) => j.taskId === slug && j.outcome !== null)?.outcome;
   const reason = newerReason(projectId, slug);
   const last = reason !== null ? `${t.status}: ${reason}` : outcome == null ? "none" : outcome.detail === "" ? outcome.status : `${outcome.status}: ${outcome.detail}`;
+  const ask = t.status === "needs-review" ? askOf(roundReport(projectId, slug, t.seq)) : null;
   const files = roundFiles(projectId, slug);
   const jobs = jobLines(Object.values(state.jobs).filter((j) => j.taskId === slug));
   // confirm and cancel remove the worktree, so its path alone would send the lead to a directory that is gone.
@@ -103,6 +104,7 @@ export function showTask(projectId: string, slug: string): string {
   return [
     `task: ${t.id}`, `status: ${statusOf(t)}`, `brief: ${t.briefPath}`, `worktree: ${worktree}`, `branch: ${t.branch}`,
     `base: ${t.base ?? "none"}`, `session: ${t.sessionId ?? "none"}`, `fix rounds: ${t.fixRounds}`, `last outcome: ${last}`,
+    ...(ask === null ? [] : [`next: answer: ${ask}`]),
     ...(files.length === 0 ? [] : ["round files:", ...files.map((f) => `  ${f}`)]),
     ...(jobs.length === 0 ? [] : ["jobs:", ...jobs]),
   ].join("\n");

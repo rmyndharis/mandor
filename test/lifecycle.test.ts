@@ -8,9 +8,9 @@ import { join } from "node:path";
 import type { TestContext } from "node:test";
 import { test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
-import { renderConflictMessage, renderFixMessage } from "../src/brief.ts";
+import { renderAnswerMessage, renderConflictMessage, renderFixMessage } from "../src/brief.ts";
 import { DEFAULT_CONFIG } from "../src/config.ts";
-import type { Candidate, GoalRecord, JobRecord, LedgerEvent, ModelInfo, StallReason, TaskRecord, ToolName } from "../src/contracts.ts";
+import type { Candidate, GoalRecord, JobRecord, LedgerEvent, ModelInfo, StallReason, TaskRecord, ToolName, WorkerReport } from "../src/contracts.ts";
 import { jobDir, processStart, projectDir, projectIdFor, scratchDir, worktreesDir } from "../src/home.ts";
 import { appendEvent, appendToolEvent, ledgerSize, listProjects, loadState, loadToolState, now, readEvents } from "../src/ledger.ts";
 import { cancelMarker, readJob } from "../src/runner.ts";
@@ -31,6 +31,11 @@ const LUNA: Candidate = { tool: "codex", model: "gpt-6-luna", effort: "medium" }
 const SOL_HIGH: Candidate = { tool: "codex", model: "gpt-6.1-sol", effort: "high" };
 const SOL_MAX: Candidate = { tool: "codex", model: "gpt-6.1-sol", effort: "max" };
 const DONE = { stdout: "generated:done" };
+// A done run whose report asks the lead something, and whose session can be resumed.
+const ASKS = (over: Partial<WorkerReport>) => ({
+  ...DONE, threadId: THREAD,
+  lastMessage: JSON.stringify({ status: "done", summary: "Done.", files_changed: [], commands_run: [], tests: { ran: false, passed: 0, failed: 0, notes: "" }, open_issues: [], questions_for_lead: [], ...over }),
+});
 // Stays running until the test's cleanup kills it, so its slot stays taken.
 const HOLD = { stdout: "generated:done", delayMs: 30_000 };
 const NOTES = "Line 3 is wrong: it must say hello.\n";
@@ -336,6 +341,66 @@ test("a review that fails after it staged the worktree leaves no review on recor
   mkdirSync(report);
   assert.throws(() => reviewPack(s.repo, "hello"), /EISDIR/);
   assert.throws(() => unreviewedAccept(s, "hello"), /task hello has no review on record; run mandor review hello first/);
+});
+
+test("a report that is blocked, partial or asks a question has the next action answer, and an answer resumes the worker without a fix round", async (t) => {
+  const s = setup(t);
+  tasks.goalStart(s.repo, GOAL, null);
+  writeScenarios([ASKS({ status: "blocked", questions_for_lead: ["Which port?"] }), DONE]);
+  const sent = send(s, "hello");
+  const woke = await waitForNext(s.repo, { since: sent.cursor, timeoutMs: 30_000 });
+  assert.deepEqual(woke.kind === "events" && woke.items.map((i) => [i.task, i.status, i.detail, i.next]), [["hello", "needs-review", "the report says blocked and asks 1 question", "answer"]]);
+  assert.match(showTask(s.id, "hello"), /^next: answer: the report says blocked and asks 1 question$/m);
+  const notes = "Use port 8080.\n";
+  const { cursor } = tasks.verdictAnswer(s.repo, "hello", s.file("answer.md", notes));
+  assert.deepEqual([task(s, "hello").fixRounds, verdicts(s)], [0, ["hello:answer"]]);
+  await needsReview(s, "hello");
+  assert.equal(readFileSync(readJob(task(s, "hello").jobIds[1])!.promptPath, "utf8"), renderAnswerMessage(notes));
+  assert.equal(readFileSync(roundFile(s, "hello", 2, "notes.md"), "utf8"), renderAnswerMessage(notes));
+  assert.equal(task(s, "hello").fixRounds, 0);
+  assert.ok(!ledgerText(s).includes("8080"), "the ledger never holds the answer");
+  // The plain report that follows asks nothing: the item is a review again, and an answer has nothing to answer.
+  const next = await waitForNext(s.repo, { since: cursor, timeoutMs: 30_000 });
+  assert.deepEqual(next.kind === "events" && next.items.map((i) => [i.task, i.next]), [["hello", "review"]]);
+  assert.doesNotMatch(showTask(s.id, "hello"), /^next:/m);
+  assert.throws(() => tasks.verdictAnswer(s.repo, "hello", s.file("again.md", notes)), /task hello: its newest report neither says blocked or partial nor asks a question, so there is nothing to answer; send notes with verdict fix/);
+  assert.deepEqual(verdicts(s), ["hello:answer"]);
+});
+
+test("a partial report, and a done report that asks a question, are answered like a blocked one", async (t) => {
+  const s = setup(t);
+  tasks.goalStart(s.repo, GOAL, null);
+  writeScenarios([ASKS({ status: "partial" }), DONE, ASKS({ questions_for_lead: ["Keep it?"] }), DONE]);
+  for (const [slug, said] of [["one", "the report says partial"], ["two", "the report asks 1 question"]] as const) {
+    send(s, slug);
+    await needsReview(s, slug);
+    assert.match(showTask(s.id, slug), new RegExp(`^next: answer: ${said}$`, "m"), slug);
+    tasks.verdictAnswer(s.repo, slug, s.file(`${slug}.md`, "Yes.\n"));
+    await needsReview(s, slug);
+    assert.equal(task(s, slug).fixRounds, 0, slug);
+  }
+  assert.deepEqual(verdicts(s), ["one:answer", "two:answer"]);
+});
+
+test("an answer is taken at the fix round limit, where a fix stalls the task, and it refuses what a fix refuses", async (t) => {
+  const s = setup(t);
+  tasks.goalStart(s.repo, GOAL, null);
+  assert.throws(() => tasks.verdictAnswer(s.repo, "nope", s.file("notes.md", NOTES)), /no task nope/);
+  ledgerTask(s, "early", { status: "stalled", stallReason: "failed" });
+  assert.throws(() => tasks.verdictAnswer(s.repo, "early", s.file("notes.md", NOTES)), /task early is stalled, not needs-review/);
+  writeScenarios([ASKS({ status: "blocked" }), DONE]);
+  send(s, "hello");
+  await needsReview(s, "hello");
+  assert.throws(() => tasks.verdictAnswer(s.repo, "hello", s.file("empty.md", "  \n")), /is empty/);
+  const inside = join(s.repo, "inside.md");
+  writeFileSync(inside, NOTES);
+  assert.throws(() => tasks.verdictAnswer(s.repo, "hello", inside), /write it under mandor scratch/);
+  assert.deepEqual([task(s, "hello").status, verdicts(s)], ["needs-review", []]);
+  setTask(s, "hello", { fixRounds: 3 });
+  tasks.verdictAnswer(s.repo, "hello", s.file("answer.md", NOTES));
+  assert.deepEqual([task(s, "hello").status === "stalled", task(s, "hello").fixRounds], [false, 3]);
+  await needsReview(s, "hello");
+  assert.deepEqual([task(s, "hello").stallReason, task(s, "hello").fixRounds], [null, 3]);
 });
 
 test("a fix at the tool's limit waits, and the pump starts it when a slot frees", async (t) => {

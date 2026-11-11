@@ -71,7 +71,7 @@ flowchart TD
 1. **Plan.** `goal start <branch>` creates the goal branch and an integration worktree for it. The lead splits the goal into tasks, each with scope globs, a tier and proof commands, and writes a brief for every task.
 2. **Work.** `dispatch` makes a task worktree from the goal tip and starts a worker on it. The tier (`light`, `medium` or `heavy`) picks a model from its list of candidates, in order. `--use` pins one. `wait` returns when a task needs the lead.
 3. **Review.** `review <slug>` prints the diff stat, the changed files, the red flags and the violations, and records the tree it showed. The lead reads every changed file and runs the proof commands itself. The worker's report is not evidence.
-4. **Decide.** `accept` makes one local commit in the integration worktree. `fix` sends specific notes back to the same worker, for three rounds by default. `takeover` lets the lead make the change itself; after every candidate is exhausted or the fix rounds run out, it needs your approval.
+4. **Decide.** `accept` makes one local commit in the integration worktree. `fix` sends specific notes back to the same worker, for three rounds by default. When the worker's report is blocked, partial or asks questions, `answer` resumes it with the lead's answer, and no fix round is counted. `takeover` lets the lead make the change itself; after every candidate is exhausted or the fix rounds run out, it needs your approval.
 5. **Confirm.** The lead reruns the proofs in the integration worktree. `confirm` closes the task. `drop` removes the commit and sends the notes back to the worker as a fix round.
 
 When a worker hits a quota, a model limit or an account mismatch, the task moves to the next candidate for its tier. When every candidate is exhausted the lead asks you to choose: switch the worker account and run `mandor ready codex`, wait for the reset time that `mandor status` shows, or approve a takeover; with ZCode or Antigravity switched on, allowing worker network lets routing use it. A goal that moved while a task was in flight gets the change merged onto its new tip first, and the lead reviews again.
@@ -165,10 +165,11 @@ The lead's commands print JSON; `status`, `show` and `logs` print plain text.
 | `mandor plan set` | Record the plan: `--goal`, `--file` and `--description` |
 | `mandor dispatch` | Start a worker on a task: `--goal`, `--task`, `--tier` and `--brief`, and optionally `--scope` (repeatable), `--use <tool:model@effort>` and `--after <slug>`. It prints the warnings of the tools that are switched on |
 | `mandor wait --since <cursor>` | Return when a task needs the lead. `--timeout <seconds>` bounds the wait |
-| `mandor review <slug>` | Print the review pack, which also names the ignored paths that changed since the task's first job, and record the reviewed tree |
+| `mandor review <slug>` | Print the review pack, which also names the ignored paths that changed since the task's first job and a report that is blocked, partial or asks questions, and record the reviewed tree |
 | `mandor diff <slug>` | Print the task's change as patch text, read through the same confined staging as the review. It records no review, and it refuses a task with a job in flight, whose worker is still changing the files |
 | `mandor verdict <slug> accept` | Commit the reviewed tree: `--evidence-file` and `--message-file` |
 | `mandor verdict <slug> fix` | Send notes back to the worker: `--notes` |
+| `mandor verdict <slug> answer` | Answer a report that is blocked, partial or asks questions: `--notes`. The worker resumes with the answer, and no fix round is counted |
 | `mandor verdict <slug> takeover` | Make the change in the task worktree. `--approved` marks a takeover you approved after every candidate was exhausted or the fix rounds ran out |
 | `mandor confirm <slug>` | Close a task after the proofs pass in the integration worktree: `--evidence-file`. When it prints `cleanup: "failed"`, the worktree is still there, and the same command finishes removing it |
 | `mandor drop <slug>` | Remove the commit and send the notes back: `--notes` |

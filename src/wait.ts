@@ -1,6 +1,7 @@
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import { askOf, roundReport } from "./brief.ts";
 import { formatCandidate } from "./config.ts";
 import type { ModelInfo, StallReason, TaskRecord, WaitItem, WaitSummary } from "./contracts.ts";
 import { processStart, projectDir } from "./home.ts";
@@ -26,9 +27,10 @@ const NEXT: Record<StallReason, WaitItem["next"]> = {
   "rebase-failed": "inspect",
 };
 
-// What the lead does next about a task in this state; null when it has nothing to do.
-export function nextFor(t: TaskRecord): WaitItem["next"] | null {
-  if (t.status === "needs-review") return "review";
+// What the lead does next about a task in this state; null when it has nothing to do. A task whose newest report is
+// blocked, partial or asks something (`asks`) is answered before it is reviewed.
+export function nextFor(t: TaskRecord, asks = false): WaitItem["next"] | null {
+  if (t.status === "needs-review") return asks ? "answer" : "review";
   return t.status === "stalled" && t.stallReason !== null ? NEXT[t.stallReason] : null;
 }
 
@@ -53,9 +55,10 @@ function poll(id: string, cursor: number, models: ModelInfo[]): Poll | null {
       const items: WaitItem[] = [];
       for (const slug of changed) {
         const t = state.tasks[slug];
-        const next = t !== undefined && nextFor(t);
+        const ask = t !== undefined && t.status === "needs-review" ? askOf(roundReport(id, slug, t.seq)) : null;
+        const next = t !== undefined && nextFor(t, ask !== null);
         if (!next) continue;
-        const detail = newerReason(id, slug) ?? jobs.findLast((j) => j.taskId === slug && j.outcome !== null)?.outcome?.detail ?? "";
+        const detail = ask ?? newerReason(id, slug) ?? jobs.findLast((j) => j.taskId === slug && j.outcome !== null)?.outcome?.detail ?? "";
         items.push({ task: slug, status: t.status, candidate: t.candidate && formatCandidate(t.candidate), detail, next });
       }
       const idle = !jobs.some((j) => j.outcome === null) && !Object.values(state.tasks).some((t) => t.status === "waiting" && t.pending !== null);

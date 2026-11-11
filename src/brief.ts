@@ -66,6 +66,21 @@ export function renderFixMessage(notes: string): string {
   return `The lead reviewed your work and found problems to fix. The lead's notes:\n\n${notes}\n\nFix these in the current files. ${REPORT_REMINDER}`;
 }
 
+// The lead's answer to a report that is blocked, partial or asks something: the worker resumes with it, and it is no fix.
+export function renderAnswerMessage(notes: string): string {
+  return `The lead read your report and answers it. The lead's notes:\n\n${notes}\n\nContinue the task from the current files with this answer. ${REPORT_REMINDER}`;
+}
+
+// What a report asks of the lead, as a short phrase, or null when it asks nothing: it says blocked or partial, or it holds
+// a question. Only counts and the status are named, as the questions are the worker's own text.
+export function askOf(report: WorkerReport | null): string | null {
+  if (report === null) return null;
+  const questions = report.questions_for_lead.filter((q) => q.trim() !== "").length;
+  const says = report.status === "done" ? null : `the report says ${report.status}`;
+  const asks = questions === 0 ? null : `${says === null ? "the report asks" : "asks"} ${questions} question${questions === 1 ? "" : "s"}`;
+  return [says, asks].filter((p) => p !== null).join(" and ") || null;
+}
+
 export function renderConflictMessage(goalBranch: string, files: string[]): string {
   return `Combining your work with ${goalBranch} left conflicts in these files:\n${files.map((f) => `- ${f}`).join("\n")}\n\n`
     + `Resolve the conflict markers in these files by editing them. Do not run git. ${REPORT_REMINDER}`;
@@ -158,6 +173,12 @@ function readIfPresent(p: string): string | null {
     if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw e;
   }
+}
+
+// The report of one round, or null when the round holds none or it does not parse.
+export function roundReport(projectId: string, slug: string, seq: number): WorkerReport | null {
+  const text = readIfPresent(join(checkedRoundDir(projectId, slug, seq), "report.json"));
+  return text === null ? null : parseReport(text);
 }
 
 // Directory names sort as text ("10" before "9"), so the order is made numeric here.

@@ -69,7 +69,7 @@ export interface Adapter {
   refine(result: JobResult, job: JobRecord): JobResult;  // structured quota fallback, resetsAt, credit signal
 }
 
-export type Verdict = "accept" | "confirm" | "drop" | "fix" | "takeover" | "cancel";
+export type Verdict = "accept" | "answer" | "confirm" | "drop" | "fix" | "takeover" | "cancel";
 export interface FileRef { path: string; sha256: string; excerpt: string }  // excerpt <= 300 chars
 export type LedgerEvent =
   | { t: "goal.started"; at: string; goal: GoalRecord }
@@ -91,6 +91,6 @@ export interface ProjectState {
 }
 export type ToolState = Record<string, { resetsAt: number | null; detail: string }>;
 export interface WaitItem { task: string; status: TaskStatus; candidate: string | null; detail: string;
-  next: "review" | "reassign-or-ready" | "offer-takeover" | "fix-rounds-exceeded" | "inspect" }
+  next: "review" | "answer" | "reassign-or-ready" | "offer-takeover" | "fix-rounds-exceeded" | "inspect" }
 export type WaitSummary = { kind: "events"; items: WaitItem[]; cursor: number }
   | { kind: "idle"; cursor: number } | { kind: "timeout"; cursor: number };

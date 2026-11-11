@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { loadRounds } from "./brief.ts";
+import { askOf, loadRounds } from "./brief.ts";
 import { changedPaths, ignoredChanged, stagedDiff } from "./git.ts";
 import { attributionHints, checkDiff, matchesGlob, type Violation } from "./guards.ts";
 import { jobDir } from "./home.ts";
@@ -202,6 +202,10 @@ export function reviewPack(cwd: string, slug: string): ReviewPack {
         if (changed.length > 10) flag("ignored-changed", `and ${changed.length - 10} more ignored paths changed`);
       }
     }
+
+    // What the newest round's report asks of the lead, by status and count; the questions stay the worker's own words.
+    const ask = round?.seq === task.seq ? askOf(round.report) : null;
+    if (ask !== null) flag("report-asks", ask);
 
     files.forEach((f) => {
       for (const [clone, globs] of Object.entries(project.generators)) {

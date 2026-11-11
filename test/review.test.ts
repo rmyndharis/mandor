@@ -320,6 +320,35 @@ test("the ignored paths of a review count from five seconds after the first job 
   assert.deepEqual(flagged(), [], "nothing changed after a job that has not begun");
 });
 
+test("a report that is blocked, partial or asks a question is flagged report-asks, for the round the task is in only, and its text stays out", (t) => {
+  const f = fixture(t, { "src/a.ts": "a\n" });
+  endJob(f);
+  put(f.wt, "src/a.ts", "b\n");
+  const seq = loadState(f.id).tasks[SLUG].seq;
+  const write = (at: number, over: object) => {
+    mkdirSync(roundDir(f.id, SLUG, at), { recursive: true });
+    writeFileSync(join(roundDir(f.id, SLUG, at), "report.json"), JSON.stringify({
+      status: "done", summary: "Done.", files_changed: [], commands_run: [], tests: { ran: false, passed: 0, failed: 0, notes: "" },
+      open_issues: [], questions_for_lead: [], ...over,
+    }));
+  };
+  const asked = () => details(reviewPack(f.repo, SLUG), "report-asks");
+  assert.deepEqual(asked(), [], "no report");
+  write(seq, {});
+  assert.deepEqual(asked(), [], "a report that asks nothing");
+  write(seq, { status: "partial" });
+  assert.deepEqual(asked(), ["the report says partial"]);
+  write(seq, { status: "blocked", questions_for_lead: ["SECRET-QUESTION?", "b?"] });
+  assert.deepEqual(asked(), ["the report says blocked and asks 2 questions"]);
+  assert.ok(!JSON.stringify(reviewPack(f.repo, SLUG)).includes("SECRET-QUESTION"), "the worker's own words stay out of the pack");
+  write(seq, { questions_for_lead: ["a?"] });
+  assert.deepEqual(asked(), ["the report asks 1 question"]);
+  // A report of an earlier round, where the task has moved on to a round without one, is no ask of this round.
+  appendEvent(f.id, { t: "task.updated", at: now(), taskId: SLUG, patch: { seq: seq + 1 }, reason: "test" });
+  write(seq, { status: "blocked" });
+  assert.deepEqual(asked(), [], "only the report of the task's own round counts");
+});
+
 // A job that ran `npm test` and reported two commands, one of which it never ran.
 const REPORT = {
   status: "done", summary: "Done.", files_changed: [],

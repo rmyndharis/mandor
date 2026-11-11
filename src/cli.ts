@@ -181,6 +181,10 @@ async function leadCommand(argv: string[]): Promise<unknown> {
     const f = flags(rest.slice(1), ["--notes"]);
     return (await tasks()).verdictFix(cwd, sub, required(f, "--notes"));
   }
+  if (cmd === "verdict" && sub !== undefined && rest[0] === "answer") {
+    const f = flags(rest.slice(1), ["--notes"]);
+    return (await tasks()).verdictAnswer(cwd, sub, required(f, "--notes"));
+  }
   if (cmd === "verdict" && sub !== undefined && rest[0] === "takeover") {
     const [, flag, extra] = rest;
     if (extra !== undefined || (flag !== undefined && flag !== "--approved")) throw new UsageError(`unknown option: ${extra ?? flag}`);
@@ -237,6 +241,7 @@ The lead runs:
   diff <slug>                   print the task's change as text, which a review records nothing of
   verdict <slug> accept --evidence-file <file> --message-file <file>
   verdict <slug> fix --notes <file>
+  verdict <slug> answer --notes <file>
   verdict <slug> takeover [--approved]
   confirm <slug> --evidence-file <file>
   drop <slug> --notes <file>

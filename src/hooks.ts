@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { askOf, roundReport } from "./brief.ts";
 import { formatCandidate, readConfig } from "./config.ts";
 import { cachedWarnings } from "./modelcache.ts";
 import type { TaskRecord } from "./contracts.ts";
@@ -74,8 +75,8 @@ const isSettled = (t: TaskRecord) => t.status === "accepted" || t.status === "ca
 
 // What the lead does next about a task. A wait reports the first two kinds; a session that starts meets the other two as
 // well, which no wait would ever report.
-const nextAction = (t: TaskRecord): string | null =>
-  nextFor(t) ?? (t.status === "integrating" ? "confirm or drop" : t.status === "takeover" ? "finish the takeover, then accept" : null);
+const nextAction = (t: TaskRecord, asks: boolean): string | null =>
+  nextFor(t, asks) ?? (t.status === "integrating" ? "confirm or drop" : t.status === "takeover" ? "finish the takeover, then accept" : null);
 
 const list = (title: string, lines: string[]) => (lines.length > 0 ? [title, ...lines] : []);
 
@@ -91,7 +92,7 @@ export function sessionStartText(input: { cwd: string }): string {
   const goalLines = Object.values(goals).reverse().map((g) =>
     `- ${g.branch}: ${g.description === null ? "no description" : neutral(g.description)}; plan ${g.plan?.path ?? "none"}; worktree ${g.integrationWorktree}`);
   const taskLines = Object.values(tasks).toSorted((a, b) => Number(isSettled(a)) - Number(isSettled(b))).map((t) => {
-    const next = nextAction(t);
+    const next = nextAction(t, t.status === "needs-review" && askOf(roundReport(id, t.id, t.seq)) !== null);
     return `- ${t.id}: ${t.status}${t.stallReason === null ? "" : ` (${t.stallReason})`}, ${t.candidate === null ? "no candidate" : formatCandidate(t.candidate)}, seq ${t.seq}, fix rounds ${t.fixRounds}${next === null ? "" : `; next: ${next}`}`;
   });
   const exhausted = Object.keys(loadToolState(Date.now() / 1000));

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
-import { BRIEF_HEADER_LINES, REPORT_SCHEMA, loadRounds, parseReport, renderBrief, renderConflictMessage, renderFixMessage, renderHandoff, saveRoundFile } from "../src/brief.ts";
+import { BRIEF_HEADER_LINES, REPORT_SCHEMA, askOf, loadRounds, parseReport, renderAnswerMessage, renderBrief, renderConflictMessage, renderFixMessage, renderHandoff, roundReport, saveRoundFile } from "../src/brief.ts";
 import type { WorkerReport } from "../src/contracts.ts";
 import { mandorHome, roundDir } from "../src/home.ts";
 import { tempHome } from "./helpers.ts";
@@ -176,6 +176,39 @@ test("accept and confirm evidence are separate files", () => {
   assert.equal(readFileSync(accept.path, "utf8"), "accept evidence");
   assert.equal(readFileSync(confirm.path, "utf8"), "confirm evidence");
   assert.notEqual(accept.sha256, confirm.sha256);
+});
+
+test("askOf names what a report asks of the lead, and is null for a report that asks nothing", () => {
+  assert.equal(askOf(null), null);
+  assert.equal(askOf(report()), null);
+  assert.equal(askOf(report({ status: "blocked" })), "the report says blocked");
+  assert.equal(askOf(report({ status: "partial" })), "the report says partial");
+  assert.equal(askOf(report({ questions_for_lead: ["Which port?"] })), "the report asks 1 question");
+  assert.equal(askOf(report({ questions_for_lead: ["a?", "b?"] })), "the report asks 2 questions");
+  assert.equal(askOf(report({ status: "blocked", questions_for_lead: ["a?", "b?"] })), "the report says blocked and asks 2 questions");
+  assert.equal(askOf(report({ status: "partial", questions_for_lead: ["a?"] })), "the report says partial and asks 1 question");
+  assert.equal(askOf(report({ questions_for_lead: ["", "  "] })), null, "a blank question asks nothing");
+});
+
+test("renderAnswerMessage says the notes answer the report, and ends with the report reminder", () => {
+  const m = renderAnswerMessage("Use port 8080.\n");
+  assert.ok(m.startsWith("The lead read your report and answers it. The lead's notes:\n\nUse port 8080."), m);
+  assert.ok(m.endsWith("End with a final message that is only the JSON report described by the output schema."), m);
+  assert.ok(!m.includes("found problems to fix"), m);
+});
+
+test("roundReport reads the report of one round, and is null for a round with none or one that does not parse", () => {
+  tempHome();
+  const r = report({ status: "blocked", questions_for_lead: ["Which port?"] });
+  saveRoundFile("p-1", "t1", 1, "report.json", JSON.stringify(r));
+  saveRoundFile("p-1", "t1", 2, "notes.md", "only notes");
+  saveRoundFile("p-1", "t1", 3, "report.json", "{ not json");
+  assert.deepEqual(roundReport("p-1", "t1", 1), r);
+  assert.equal(roundReport("p-1", "t1", 2), null);
+  assert.equal(roundReport("p-1", "t1", 3), null);
+  assert.equal(roundReport("p-1", "t1", 4), null);
+  assert.equal(roundReport("p-1", "none", 1), null);
+  assert.throws(() => roundReport("p-1", "../escape", 1), /outside/);
 });
 
 test("loadRounds returns every round in numeric order", () => {
