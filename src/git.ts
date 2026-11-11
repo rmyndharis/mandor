@@ -63,9 +63,14 @@ export function revParse(cwd: string, ref: string): string {
   return ok(["rev-parse", "--verify", ref], cwd).trim();
 }
 
-// Creates the branch itself, so it fails when the branch already exists.
+// Creates the branch itself, so it fails when the branch already exists. The worktree is made without a checkout, which
+// git would run under the user's configuration, hooks and drivers included, before the configuration of the new
+// worktree could be read. The checkout then runs bound to the worktree and confined, as every write into one does.
+// Both steps carry the tag: a command killed between them can leave either one running.
 export function addWorktree(repo: string, path: string, branch: string, base: string): void {
-  ok(["-c", pathTag("add", path), "worktree", "add", "-b", branch, path, base], repo);
+  ok(["-c", pathTag("add", path), "worktree", "add", "--no-checkout", "-b", branch, path, base], repo);
+  const g = bind(repo, path);
+  okConfined(g, checkoutAllow(g), ["-c", pathTag("add", path), ...READ_TREE, "HEAD"]);
 }
 
 const lines = (s: string) => s.replace(/\n$/, "").split("\n");
@@ -126,8 +131,8 @@ function refuseInsideHome(subject: string, commonDir: string, home: string): voi
   if (commonDir.startsWith(home + sep)) throw new Error(`refusing ${subject}: its repository ${commonDir} is inside the mandor home ${home}`);
 }
 
-// For a command about to run git in repo and write there: nothing of a repository under the home may run, a checkout hook
-// included, so this comes before the first such command.
+// For a command about to run git in repo and write there: nothing of a repository under the home may run, its
+// reference-transaction hook included, so this comes before the first such command.
 export function assertRepoOutsideHome(repo: string): void {
   refuseInsideHome(repo, commonDirOf(repo), realpathSync.native(mandorHome()));
 }
@@ -202,22 +207,24 @@ export function deleteBranchAt(repo: string, branch: string, tip: string): void 
 }
 
 const DRIVER_KEYS = "^(filter\\..*\\.(clean|smudge|process)|merge\\..*\\.driver)$";
+// A hook that the configuration defines (git 2.54 and later) is not looked up in the hooks directory.
+const HOOK_KEYS = "^hook\\..*\\.(command|event)$";
 
-// The filter and merge driver commands that the configuration cwd sees defines. With a location that is the
+// The keys of the configuration that cwd sees, whose names match the pattern. With a location that is the
 // configuration of a worktree: an include that depends on its branch and its own config.worktree count, which a read
 // from the main checkout does not see. Throws when the configuration cannot be read, so a caller never takes an
-// unreadable one for one without drivers.
-function driverKeys(cwd: string, location: Location = {}): string[] {
-  const r = run(["config", "-z", "--name-only", "--get-regexp", DRIVER_KEYS], cwd, location);
+// unreadable one for one without such keys.
+function configKeys(cwd: string, pattern: string, location: Location = {}): string[] {
+  const r = run(["config", "-z", "--name-only", "--get-regexp", pattern], cwd, location);
   // Only a silent exit 1 is "no such key": run reports a spawn failure or a kill as exit 1 with a message.
   if (r.code === 1 && r.stdout.length === 0 && r.stderr === "") return [];
   if (r.code !== 0) throw new Error(`cannot read the git config of ${cwd}: ${r.stderr.trim()}`);
   return r.stdout.toString().split("\0").filter(Boolean);
 }
 
-// What the main checkout sees, for the commands that refuse before they touch a worktree.
+// The filter and merge driver commands the main checkout sees, for the commands that refuse before they touch a worktree.
 export function configuredDrivers(repo: string): string[] {
-  return driverKeys(repo);
+  return configKeys(repo, DRIVER_KEYS);
 }
 
 interface Bound {
@@ -344,20 +351,25 @@ function bind(repo: string, worktree: string, userConfig = false): Bound {
   const location = { GIT_DIR: named[0], GIT_WORK_TREE: real };
   // git runs a driver command with the worktree as cwd, where a worker-written attributes file and script can steer it
   // into running worker code in the lead. No bound call goes on under one, whichever scope of the configuration defines it.
-  const drivers = driverKeys(real, location);
+  const drivers = configKeys(real, DRIVER_KEYS, location);
   if (drivers.length > 0) throw new Error(`refusing ${real}: its git config defines ${drivers.join(", ")}; filter and merge drivers are not supported`);
   // Hardened callers point git at an empty hooks dir and turn fsmonitor off (both reach a submodule child through
   // GIT_CONFIG_PARAMETERS). diff.ignoreSubmodules=dirty makes the apply calls ignore submodule work-tree state too;
   // diff-index and status pass the flag explicitly, and stageAll excludes gitlinks from `add`, which the flag cannot.
-  const pre = userConfig ? ["-c", "core.fsmonitor=false"] : ["-c", `core.hooksPath=${emptyHooks()}`, "-c", "core.fsmonitor=false", "-c", "diff.ignoreSubmodules=dirty"];
+  // A hook that the configuration itself defines is not in the hooks dir, so each one is switched off by its name.
+  const configured = userConfig ? [] : configKeys(real, HOOK_KEYS, location).map((key) => key.slice("hook.".length, key.lastIndexOf(".")));
+  // --config-env splits at the last equals sign, so a name that holds one still reaches git whole; -c would split at the first.
+  const hooksOff = [...new Set(configured)].map((name) => `--config-env=hook.${name}.enabled=LEAD_HOOK_OFF`);
+  const env: Location = hooksOff.length > 0 ? { ...location, LEAD_HOOK_OFF: "false" } : location;
+  const pre = userConfig ? ["-c", "core.fsmonitor=false"] : ["-c", `core.hooksPath=${emptyHooks()}`, "-c", "core.fsmonitor=false", "-c", "diff.ignoreSubmodules=dirty", ...hooksOff];
   return {
     gitDir: named[0],
     worktree: real,
     commonDir,
-    run: (a) => run([...pre, ...a], real, location),
-    ok: (a) => ok([...pre, ...a], real, location),
-    okBytes: (a) => okBytes([...pre, ...a], real, location),
-    confined: (allow, a, extra = {}) => confinedRun(real, { ...location, ...extra }, pre, allow, a),
+    run: (a) => run([...pre, ...a], real, env),
+    ok: (a) => ok([...pre, ...a], real, env),
+    okBytes: (a) => okBytes([...pre, ...a], real, env),
+    confined: (allow, a, extra = {}) => confinedRun(real, { ...env, ...extra }, pre, allow, a),
   };
 }
 
@@ -372,6 +384,9 @@ export function isClean(repo: string, worktree: string): boolean {
 
 // A plain index, so no split-index write (sharedindex.*) lands in the admin dir outside the narrow allow set.
 const SPLIT_OFF = ["-c", "core.splitIndex=false"];
+// git worktree add resets without recursing into submodules. A user's submodule.recurse would make read-tree do so, and
+// create their directories in the git dir, where the sandbox denies a write.
+const READ_TREE = [...SPLIT_OFF, "read-tree", "--reset", "-u", "--no-recurse-submodules"];
 
 // The allow set a confined checkout needs: the worktree subtree, and the two index files by exact name, so a target
 // tree or untracked file named like an admin-dir pointer (gitdir, commondir, HEAD) cannot be written through a link.
@@ -388,7 +403,7 @@ export function resetTo(repo: string, worktree: string, ref: string): void {
   const branch = lines(g.run(["symbolic-ref", "-q", "HEAD"]).stdout.toString())[0];
   if (!branch.startsWith("refs/heads/wip/")) throw new Error(`refusing to reset ${worktree}: HEAD is ${branch || "detached"}, not a wip/ branch`);
   const target = g.ok(["rev-parse", "--verify", `${ref}^{commit}`]).trim();
-  okConfined(g, checkoutAllow(g), [...SPLIT_OFF, "read-tree", "--reset", "-u", target]); // tracked files to the target tree
+  okConfined(g, checkoutAllow(g), [...READ_TREE, target]); // tracked files to the target tree
   okConfined(g, [["subpath", g.worktree]], ["clean", "-ffd"]); // -ff also removes a nested repository; no -x, so ignored stay
   ok(["update-ref", branch, target], repo); // the shared branch, from the repo, not the worktree
 }
@@ -567,6 +582,33 @@ function hooksDir(g: Bound): string | null {
   return dir === root ? "" : dir.startsWith(`${root}/`) ? dir.slice(root.length + 1) : null;
 }
 
+// The first shell word of a command: its program, honouring a single pair of surrounding quotes.
+function firstShellWord(value: string): string {
+  const s = value.replace(/^\s+/, "");
+  if (s[0] === '"' || s[0] === "'") {
+    const close = s.indexOf(s[0], 1);
+    return close === -1 ? s.slice(1) : s.slice(1, close);
+  }
+  return s.split(/\s/)[0];
+}
+
+// The programs git starts to sign a commit, and the command that names the default ssh key. One that is a path relative
+// to the worktree names the staged file of that path, which git starts from the worktree. A leading ~ counts as
+// relative, as git before 2.51 does not expand it. A bare name is looked up on the PATH, which holds no relative entry.
+function assertSafeSigning(g: Bound, worktree: string): void {
+  const r = g.run(["config", "-z", "--get-regexp", "^gpg\\.(.*\\.)?program$|^gpg\\.ssh\\.defaultkeycommand$"]);
+  if (r.code === 1 && r.stdout.length === 0 && r.stderr === "") return; // no such key
+  if (r.code !== 0) throw new Error(`cannot read the git config of ${worktree}: ${r.stderr.trim()}`);
+  for (const entry of r.stdout.toString().split("\0").filter(Boolean)) {
+    const nl = entry.indexOf("\n");
+    const [key, value] = [entry.slice(0, nl), entry.slice(nl + 1)];
+    const word = firstShellWord(value);
+    if (word.includes("/") && !word.startsWith("/")) {
+      throw new Error(`refusing to commit in ${worktree}: config ${key} "${value}" is relative to the worktree; use an absolute path or a bare name on PATH`);
+    }
+  }
+}
+
 // A header of a commit object, undefined unless it appears exactly once.
 function commitHeader(raw: string, key: string): string | undefined {
   const found = raw.slice(0, raw.indexOf("\n\n")).split("\n").filter((h) => h.startsWith(`${key} `));
@@ -598,6 +640,7 @@ export function commitStaged(repo: string, worktree: string, expectedPaths: stri
   if (touched.length > 0) {
     throw new Error(`refusing to commit in ${worktree}: core.hooksPath ${hooks || "."} is inside the worktree and the staged changes touch ${JSON.stringify(touched)}`);
   }
+  assertSafeSigning(g, worktree);
   const tip = g.ok(["rev-parse", "--verify", "HEAD"]).trim();
   const tree = g.ok(["write-tree"]).trim();
   // Hooks still run, so HEAD must then name exactly the commit asked for. Verbatim keeps git's cleanup off the message.
@@ -628,7 +671,7 @@ export function resetHardHead(repo: string, worktree: string): void {
   // reset --hard HEAD: discards tracked changes without moving HEAD and without removing untracked files, so a confined
   // read-tree --reset -u to HEAD is the whole of it.
   const g = bind(repo, worktree);
-  okConfined(g, checkoutAllow(g), [...SPLIT_OFF, "read-tree", "--reset", "-u", "HEAD"]);
+  okConfined(g, checkoutAllow(g), [...READ_TREE, "HEAD"]);
 }
 
 // Whether the parent of HEAD is exactly checked out under a HEAD still at the commit: the index holds the parent's
@@ -652,6 +695,6 @@ export function dropLastCommit(repo: string, worktree: string, expectedSha: stri
   // A commit a remote-tracking branch contains has already left this machine.
   if (g.ok(["branch", "-r", "--contains", "HEAD"]) !== "") throw new Error(`refusing to drop ${head}: a remote branch contains it`);
   // The worktree is clean, so reset --keep is a plain checkout of the parent: confined, then the branch moves to it.
-  if (!resumed) okConfined(g, checkoutAllow(g), [...SPLIT_OFF, "read-tree", "--reset", "-u", parent]);
+  if (!resumed) okConfined(g, checkoutAllow(g), [...READ_TREE, parent]);
   g.ok(["update-ref", "HEAD", parent]);
 }

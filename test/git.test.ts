@@ -8,7 +8,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import {
   addWorktree, apply3way, applyCheck, applyToIndex, assertCommitIdentity, assertHeadIdentity, branchExists, changedPaths, commitStaged, configuredDrivers, deleteBranchAt,
   diffSinceBaseBytes, diffStat, dropLastCommit, git, indexLockPath, indexTree, isClean, isPlaceholderEmail, migrateObjects, projectRoot,
-  removeOwnedWorktree, resetHardHead, resetTo, revParse, stagedDiff, worktreeRoot,
+  removeOwnedWorktree, resetHardHead, resetTo, revParse, stagedDiff, worktreeAddRunning, worktreeRoot,
 } from "../src/git.ts";
 import { diffSinceBase, temp as tempDir, tempHome, tempRepo } from "./helpers.ts";
 
@@ -17,6 +17,8 @@ const temp = () => tempDir("mandor-git-");
 // Worktree git calls run only in worktrees under the mandor home, as mandor places them.
 const home = tempHome();
 const owned = () => mkdtempSync(join(home, "wt-"));
+// A linked worktree made with plain git wherever a test puts it: addWorktree refuses a path outside the mandor home.
+const plainAdd = (repo: string, path: string, branch: string, base: string) => must(repo, "worktree", "add", "-q", "-b", branch, path, base);
 
 // Setup runs git directly and throws on failure, so a broken setup can never pass a refusal test.
 function must(cwd: string, ...args: string[]): string {
@@ -588,7 +590,7 @@ test("removeOwnedWorktree refuses a path outside the root and a non-wip branch",
   const base = revParse(repo, "HEAD");
   const root = join(temp(), "root");
   mkdirSync(root);
-  const add = (path: string, branch: string) => (addWorktree(repo, path, branch, base), path);
+  const add = (path: string, branch: string) => (plainAdd(repo, path, branch, base), path);
   const mine = add(join(root, "owned"), "wip/owned");
   const keep = add(join(root, "keep"), "wip/keep");
   // Shares the root's name as a prefix, but is a sibling directory.
@@ -721,7 +723,7 @@ test("an inherited GIT_WORK_TREE cannot make resetTo touch the main checkout", (
 test("a linked worktree outside the mandor home, or below a worktree's top, is refused", () => {
   const { repo, wt, base } = withWorktree();
   const outside = join(temp(), "outside");
-  addWorktree(repo, outside, "wip/outside", base);
+  plainAdd(repo, outside, "wip/outside", base);
   writeFileSync(join(outside, "x.txt"), "x\n");
   for (const call of bound) assert.throws(() => call(repo, outside, base), /not under the mandor home/);
   mkdirSync(join(wt, "sub"));
@@ -1055,6 +1057,138 @@ test("a GIT_CONFIG in the environment does not hide the drivers that git itself 
   });
 });
 
+test("a new worktree is checked out bound and confined, so a driver that only its configuration defines never runs", () => {
+  const repo = tempRepo();
+  writeFileSync(join(repo, ".gitattributes"), "data.txt filter=foo\n");
+  writeFileSync(join(repo, "data.txt"), "data\n");
+  must(repo, "add", ".gitattributes", "data.txt");
+  must(repo, "commit", "-qm", "Add data");
+  const markers = temp();
+  const smudge = join(temp(), "smudge.sh");
+  writeFileSync(smudge, `#!/bin/sh\ntouch '${join(markers, "smudge.ran")}'\ncat\n`, { mode: 0o755 });
+  const include = join(temp(), "drivers.gitconfig");
+  writeFileSync(include, `[filter "foo"]\n\tsmudge = ${smudge}\n`);
+  // Read only while HEAD is a wip/ branch, so the main checkout shows no driver and the worktree does.
+  must(repo, "config", "includeIf.onbranch:wip/**.path", include);
+  assert.deepEqual(configuredDrivers(repo), []);
+  assert.throws(() => addWorktree(repo, join(owned(), "task"), "wip/task", revParse(repo, "HEAD")), /defines filter\.foo\.smudge; filter and merge drivers are not supported/);
+  assert.deepEqual(ran(markers), []);
+});
+
+test("creating a worktree checks every tracked file out and runs none of the repository's checkout hooks", () => {
+  const repo = tempRepo();
+  writeFileSync(join(repo, "f.txt"), "x\n");
+  must(repo, "add", "f.txt");
+  must(repo, "commit", "-qm", "Add f");
+  const markers = temp();
+  const wt = join(owned(), "task");
+  hook(repo, "post-checkout", `touch '${join(markers, "post-checkout.ran")}'`);
+  // The checkout runs confined, where only the worktree can be written, so the marker of this hook lies there.
+  hook(repo, "post-index-change", `touch '${join(wt, "post-index-change.ran")}'`);
+  configuredHook(repo, "mark", join(wt, "configured.ran"), ["post-index-change"]);
+  addWorktree(repo, wt, "wip/task", revParse(repo, "HEAD"));
+  assert.equal(readFileSync(join(wt, "f.txt"), "utf8"), "x\n");
+  assert.equal(isClean(repo, wt), true);
+  assert.equal(must(wt, "symbolic-ref", "HEAD").trim(), "refs/heads/wip/task");
+  assert.deepEqual(ran(markers), []);
+  assert.deepEqual([existsSync(join(wt, "post-index-change.ran")), existsSync(join(wt, "configured.ran"))], [false, false]);
+});
+
+test("a new worktree is created under submodule.recurse with an initialized submodule", () => {
+  const sub = tempRepo();
+  const repo = tempRepo();
+  must(repo, "-c", "protocol.file.allow=always", "submodule", "add", "-q", sub, "sub");
+  must(repo, "commit", "-qm", "Add the submodule");
+  must(repo, "config", "submodule.recurse", "true");
+  const wt = join(owned(), "task");
+  addWorktree(repo, wt, "wip/task", revParse(repo, "HEAD"));
+  assert.equal(existsSync(join(wt, ".gitmodules")), true);
+  resetHardHead(repo, wt);
+  assert.equal(isClean(repo, wt), true);
+});
+
+test("both steps of a worktree creation carry the tag that a reservation looks for", async () => {
+  const repo = tempRepo();
+  const wt = join(owned(), "task");
+  const fake = join(temp(), "bin");
+  mkdirSync(fake);
+  const real = execFileSync("/usr/bin/which", ["git"], { encoding: "utf8" }).trim();
+  // The confined checkout stops here, as a command killed in the middle of it would leave it.
+  writeFileSync(join(fake, "git"), `#!/bin/sh\ncase " $* " in *" read-tree "*) sleep 30; exit 1;; esac\nexec "${real}" "$@"\n`, { mode: 0o755 });
+  const code = `import { addWorktree } from ${JSON.stringify(new URL("../src/git.ts", import.meta.url).href)}; addWorktree(${JSON.stringify(repo)}, ${JSON.stringify(wt)}, "wip/task", "HEAD");`;
+  const child = spawn(process.execPath, ["--input-type=module", "-e", code], { env: { ...process.env, PATH: `${fake}:${process.env.PATH}` }, stdio: "ignore", detached: true });
+  try {
+    let command = "";
+    for (const end = Date.now() + 20_000; !command.includes("read-tree") && Date.now() < end; await sleep(100)) {
+      const pid = worktreeAddRunning(wt);
+      command = pid === null ? "" : spawnSync("/bin/ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8" }).stdout;
+    }
+    assert.ok(command.includes("read-tree"), "the process of the checkout shows the tag");
+  } finally {
+    process.kill(-child.pid!, "SIGKILL");
+  }
+});
+
+// A hook defined in the configuration (git 2.54 and later) is not found in the hooks directory that the bound calls empty.
+// It touches the marker. Returns whether this git runs such hooks: an older one ignores the keys and runs nothing.
+function configuredHook(repo: string, name: string, marker: string, events: string[]): boolean {
+  must(repo, "config", `hook.${name}.command`, `cat >/dev/null; touch '${marker}'`);
+  for (const event of events) must(repo, "config", "--add", `hook.${name}.event`, event);
+  return spawnSync("git", ["hook", "list", events[0]], { cwd: repo, encoding: "utf8" }).stdout.includes(name);
+}
+
+test("a hook that the configuration defines runs in no bound call, whatever its name, and runs in the commit of an accept", () => {
+  const { repo, wt, base } = withWorktree();
+  // The confined calls can write only the worktree, so the markers lie there. A name may hold an equals sign.
+  const marks = ["mark", "a=b"].map((name, i) => ({ name, file: join(wt, `${i}.ran`) }));
+  for (const m of marks) configuredHook(repo, m.name, m.file, ["post-index-change", "reference-transaction"]);
+  writeFileSync(join(wt, "a.txt"), "a\n");
+  isClean(repo, wt);
+  diffStat(repo, wt, base);
+  stagedDiff(repo, wt, base);
+  diffSinceBaseBytes(repo, wt, base);
+  resetHardHead(repo, wt);
+  for (const m of marks) assert.equal(existsSync(m.file), false, m.name);
+  // A ref moved by a bound call fires the reference-transaction hooks too.
+  const int = withIntegration();
+  writeFileSync(join(int.wt, "a.txt"), "a\n");
+  must(int.wt, "add", "a.txt");
+  must(int.wt, "commit", "-qm", "Add a");
+  const moved = join(int.wt, "moved.ran");
+  configuredHook(int.repo, "mark", moved, ["reference-transaction"]);
+  dropLastCommit(int.repo, int.wt, revParse(int.wt, "HEAD"));
+  assert.equal(existsSync(moved), false);
+  const accepted = temp();
+  const control = configuredHook(int.repo, "control", join(accepted, "control.ran"), ["post-commit"]);
+  writeFileSync(join(int.wt, "b.txt"), "b\n");
+  must(int.wt, "add", "b.txt");
+  commitStaged(int.repo, int.wt, ["b.txt"], "Add b", true);
+  if (control) assert.deepEqual(ran(accepted), ["control.ran"]);
+});
+
+test("a signing program that is a path relative to the worktree is refused at the commit, and an absolute or a bare one is not", () => {
+  const { repo, wt } = withIntegration();
+  const markers = temp();
+  writeFileSync(join(wt, "a.txt"), "a\n");
+  writeFileSync(join(wt, "sign.sh"), `#!/bin/sh\ntouch '${join(markers, "sign.ran")}'\nexit 1\n`, { mode: 0o755 });
+  must(wt, "add", "a.txt", "sign.sh");
+  must(repo, "config", "commit.gpgSign", "true");
+  // The program of each format, a tilde (git before 2.51 does not expand it), and the command for the default ssh key.
+  for (const [key, value] of [["gpg.program", "./sign.sh"], ["gpg.openpgp.program", "./sign.sh"], ["gpg.x509.program", "bin/sign.sh"],
+    ["gpg.ssh.program", "~/bin/sign"], ["gpg.ssh.defaultKeyCommand", "./sign.sh --flag"]]) {
+    must(repo, "config", key, value);
+    assert.throws(() => commitStaged(repo, wt, ["a.txt", "sign.sh"], "Add a", true), new RegExp(`config ${key.toLowerCase().replaceAll(".", "\\.")} "${value.replaceAll(".", "\\.")}" is relative to the worktree`), key);
+    must(repo, "config", "--unset", key);
+  }
+  assert.deepEqual(ran(markers), []);
+  // A bare name is looked up on the PATH, which is scrubbed of relative entries, and an absolute path is the user's own.
+  must(repo, "config", "commit.gpgSign", "false");
+  must(repo, "config", "gpg.program", "gpg");
+  must(repo, "config", "gpg.ssh.program", "/usr/bin/ssh-keygen");
+  must(repo, "config", "gpg.ssh.defaultKeyCommand", "ssh-add -L");
+  commitStaged(repo, wt, ["a.txt", "sign.sh"], "Add a", true);
+});
+
 test("a relative or empty PATH entry cannot run a worktree script named as a bare driver command", () => {
   const { repo, wt } = withWorktree();
   // A git call that is not bound does not refuse a bare driver; the PATH scrub is what keeps it from resolving inside the worktree.
@@ -1281,7 +1415,7 @@ test("removeOwnedWorktree removes a worktree whose .git the worker rewrote, dele
   };
   for (const [name, plant] of Object.entries(shapes)) {
     const wt = join(root, name);
-    addWorktree(repo, wt, `wip/${name}`, base);
+    plainAdd(repo, wt, `wip/${name}`, base);
     plant(join(wt, ".git"));
     removeOwnedWorktree(repo, wt, `wip/${name}`, root);
     assert.equal(existsSync(wt), false, name);
@@ -1310,7 +1444,7 @@ test("removing a worktree never writes through a link that a process left in it 
     }`;
   for (let i = 0; i < 25; i++) {
     const wt = join(root, `w${i}`);
-    addWorktree(repo, wt, `wip/w${i}`, base);
+    plainAdd(repo, wt, `wip/w${i}`, base);
     const ready = join(root, `ready-${i}`);
     const child = spawn(process.execPath, ["-e", survivor, join(wt, ".git"), victim, ready], { stdio: "ignore" });
     let refused = false;
@@ -1360,7 +1494,7 @@ for (const [shape, sub, before] of [
     for (const n of names) writeFileSync(join(victim, n), "precious\n");
     for (let i = 0; i < 40; i++) {
       const wt = join(root, `w${i}`);
-      addWorktree(repo, wt, `wip/w${i}`, base);
+      plainAdd(repo, wt, `wip/w${i}`, base);
       before(wt);
       mkdirSync(join(wt, sub), { recursive: true });
       for (const n of names) writeFileSync(join(wt, sub, n), "x\n");
@@ -1492,7 +1626,7 @@ test("a tree that cannot be removed leaves the worktree registered, and says so"
   const base = revParse(repo, "HEAD");
   const root = temp();
   const wt = join(root, "stuck");
-  addWorktree(repo, wt, "wip/stuck", base);
+  plainAdd(repo, wt, "wip/stuck", base);
   mkdirSync(join(wt, "sealed"));
   // rm names the file it could not remove, and the worker chose that name: a C1 introducer here.
   writeFileSync(join(wt, "sealed", "a\u009b2Jb.txt"), "a\n");
@@ -1515,13 +1649,13 @@ test("removeOwnedWorktree clears a locked worktree, a registered one whose direc
   const admin = (name: string) => join(repo, ".git", "worktrees", name);
 
   const locked = join(root, "locked");
-  addWorktree(repo, locked, "wip/locked", base);
+  plainAdd(repo, locked, "wip/locked", base);
   writeFileSync(join(admin("locked"), "locked"), "initializing");
   removeOwnedWorktree(repo, locked, "wip/locked", root);
   assert.deepEqual([existsSync(locked), existsSync(admin("locked"))], [false, false]);
 
   const gone = join(root, "gone");
-  addWorktree(repo, gone, "wip/gone", base);
+  plainAdd(repo, gone, "wip/gone", base);
   writeFileSync(join(admin("gone"), "locked"), "initializing");
   rmSync(gone, { recursive: true });
   removeOwnedWorktree(repo, gone, null, root);
@@ -1535,7 +1669,7 @@ test("removeOwnedWorktree clears a locked worktree, a registered one whose direc
 
   // A kill before the add wrote HEAD leaves an admin dir git will not accept as a repository.
   const early = join(root, "early");
-  addWorktree(repo, early, "wip/early", base);
+  plainAdd(repo, early, "wip/early", base);
   rmSync(join(admin("early"), "HEAD"));
   writeFileSync(join(admin("early"), "locked"), "initializing");
   assert.throws(() => must(repo, "worktree", "remove", "--force", "--force", early));

@@ -4,6 +4,20 @@ All notable changes to mandor are recorded here. The format follows [Keep a Chan
 
 ## [Unreleased]
 
+### Changed
+
+- A new worktree is checked out confined, after its own configuration was read, so the repository's `post-checkout` and `post-index-change` hooks no longer run when mandor creates one.
+
+### Fixed
+
+- A new worktree, a reset of a task worktree and a drop no longer fail when the configuration sets `submodule.recurse` and the repository has an initialized submodule.
+
+### Security
+
+- Creating a worktree no longer runs a filter or merge driver that only the worktree's own configuration defines.
+- A hook that the git configuration defines no longer runs in a git call that mandor makes in a worktree, except in the commit of an accept.
+- The commit of an accept refuses a signing program, or a default ssh key command, that is a path relative to the worktree.
+
 ## [0.2.0] - 2026-11-11
 
 ### Changed

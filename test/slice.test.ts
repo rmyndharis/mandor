@@ -735,7 +735,7 @@ test("a reset that fails after a refused commit keeps the commit's error, and th
     assert.doesNotMatch(e.message, /reset/);
     return true;
   });
-  assert.match(readFileSync(join(s.home, "logs", "runner.log"), "utf8"), /accept of hello: reset after a failed commit: .* read-tree --reset -u HEAD/);
+  assert.match(readFileSync(join(s.home, "logs", "runner.log"), "utf8"), /accept of hello: reset after a failed commit: .* read-tree --reset -u --no-recurse-submodules HEAD/);
   assert.equal(existsSync(intentOf(s)), true);
   refused(s, "hello", tip);
 
@@ -1701,14 +1701,18 @@ test("dispatch refuses a branch or a worktree path it did not create, and leaves
   assert.equal(must(s.repo, "rev-parse", "wip/mine"), must(s.repo, "rev-parse", GOAL));
 });
 
-test("a dispatch whose post-checkout hook fails removes its worktree and branch, and the next one starts clean", (t) => {
+test("a dispatch whose checkout fails removes its worktree and branch, and the next one starts clean", (t) => {
   const s = setup(t);
   fillSlots();
   goalStart(s.repo, GOAL, null);
-  hook(s.repo, "post-checkout", "exit 3");
-  assert.throws(() => send(s, "hooky", { use: null }), /worktree add/);
+  const saved = process.env.PATH;
+  t.after(() => {
+    process.env.PATH = saved;
+  });
+  process.env.PATH = wrappedGit(`case " $* " in *" read-tree "*) echo boom >&2; exit 3;; esac\nexec "$REAL" "$@"`);
+  assert.throws(() => send(s, "hooky", { use: null }), /read-tree/);
+  process.env.PATH = saved;
   assert.deepEqual([existsSync(join(worktreesDir(s.id), "task-hooky")), must(s.repo, "branch", "--list", "wip/hooky"), existsSync(reservationOf(s, "hooky"))], [false, "", false]);
-  unhook(s.repo, "post-checkout");
   assert.equal(send(s, "hooky", { use: null }).task.worktree, join(worktreesDir(s.id), "task-hooky"));
 });
 
@@ -1780,17 +1784,17 @@ for (const what of ["dispatch", "goal start"] as const) {
   });
 }
 
-test("a dispatch killed during its post-checkout hook, with the worktree whole, is recovered by the next one", async (t) => {
+test("a dispatch killed during its setup command, with the worktree whole, is recovered by the next one", async (t) => {
   const s = setup(t);
   goalStart(s.repo, GOAL, null);
-  const inHook = join(s.home, "in-hook");
-  hook(s.repo, "post-checkout", `touch "${inHook}"; exec sleep 30`);
+  const inSetup = join(s.home, "in-setup");
+  saveProjectConfig(s.id, { ...emptyProjectConfig(), setup: `touch "${inSetup}"; exec sleep 30` });
   const args = ["dispatch", "--goal", GOAL, "--task", "hello", "--tier", "light", "--brief", s.file("hello.md", "Say hello.\n")];
   const c = detached(s, t, args);
-  assert.ok(await until(() => existsSync(inHook)), "the add reaches its hook");
+  assert.ok(await until(() => existsSync(inSetup)), "provisioning runs the setup");
   kill(-c.pid!);
   await ended(c);
-  unhook(s.repo, "post-checkout");
+  saveProjectConfig(s.id, emptyProjectConfig());
   const worktree = join(worktreesDir(s.id), "task-hello");
   assert.equal(existsSync(join(worktree, "README.md")), true);
   const again = cli(s, ...args);
@@ -1802,7 +1806,9 @@ test("a failure after task.created keeps the worktree and branch the task needs"
   const s = setup(t);
   goalStart(s.repo, GOAL, null);
   // During the worktree add a directory takes the reservation's place, so removing it throws right after task.created.
-  hook(s.repo, "post-checkout", `rm -f "${reservationOf(s, "hello")}" && mkdir "${reservationOf(s, "hello")}"`);
+  // The hook runs for every ref update of the add, so it acts once.
+  const taken = reservationOf(s, "hello");
+  hook(s.repo, "reference-transaction", `cat >/dev/null\n[ -d "${taken}" ] || { rm -f "${taken}"; mkdir "${taken}"; }`);
   assert.throws(() => send(s, "hello", { use: null }), /is a directory/);
   const record = task(s, "hello");
   assert.equal(existsSync(join(record.worktree!, "README.md")), true);
@@ -1812,7 +1818,9 @@ test("a failure after task.created keeps the worktree and branch the task needs"
 test("a failure after goal.started keeps the worktree and branch the goal needs", (t) => {
   const s = setup(t);
   // During the worktree add a directory takes the reservation's place, so removing it throws right after goal.started.
-  hook(s.repo, "post-checkout", `rm -f "${goalReservation(s)}" && mkdir "${goalReservation(s)}"`);
+  // The hook runs for every ref update of the add, so it acts once.
+  const taken = goalReservation(s);
+  hook(s.repo, "reference-transaction", `cat >/dev/null\n[ -d "${taken}" ] || { rm -f "${taken}"; mkdir "${taken}"; }`);
   assert.throws(() => goalStart(s.repo, GOAL, null), /is a directory/);
   const goal = loadState(s.id).goals[GOAL];
   assert.equal(existsSync(join(goal.integrationWorktree, "README.md")), true);
@@ -1957,12 +1965,16 @@ test("a goal start that finds the lock busy after provisioning removes what it a
   assert.equal(goalStart(s.repo, GOAL, null).cursor, 0);
 });
 
-test("a goal start whose post-checkout hook fails removes what it added, and the next one starts clean", (t) => {
+test("a goal start whose checkout fails removes what it added, and the next one starts clean", (t) => {
   const s = setup(t);
-  hook(s.repo, "post-checkout", "exit 3");
-  assert.throws(() => goalStart(s.repo, GOAL, null), /worktree add/);
+  const saved = process.env.PATH;
+  t.after(() => {
+    process.env.PATH = saved;
+  });
+  process.env.PATH = wrappedGit(`case " $* " in *" read-tree "*) echo boom >&2; exit 3;; esac\nexec "$REAL" "$@"`);
+  assert.throws(() => goalStart(s.repo, GOAL, null), /read-tree/);
+  process.env.PATH = saved;
   assert.deepEqual([must(s.repo, "branch", "--list", GOAL), existsSync(join(worktreesDir(s.id), "goal-feat__slice")), existsSync(goalReservation(s)), ledgerSize(s.id)], ["", false, false, 0]);
-  unhook(s.repo, "post-checkout");
   assert.equal(goalStart(s.repo, GOAL, null).goal.branch, GOAL);
 });
 
