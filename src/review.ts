@@ -7,7 +7,7 @@ import { jobDir } from "./home.ts";
 import { loadState, now } from "./ledger.ts";
 import { loadProjectConfig } from "./provision.ts";
 import { clampDetail, withProjectLock, writeJsonAtomic } from "./store.ts";
-import { diffDeny, diffExact, recoverRebaseLocked, refuseUnsupported, resolveProject, reviewedFile } from "./tasks.ts";
+import { diffDeny, diffExact, gitStep, recoverRebaseLocked, refuseUnsupported, resolveProject, reviewedFile } from "./tasks.ts";
 
 export interface ReviewPack {
   diffStat: string;
@@ -120,7 +120,7 @@ export function reviewPack(cwd: string, slug: string): ReviewPack {
     // A rebase killed after its reset left the goal's own changes in the worktree, which the pack would read as the task's.
     recoverRebaseLocked(root, id, task);
     const project = loadProjectConfig(id);
-    const { text, stat, tree } = stagedDiff(root, task.worktree, task.base);
+    const { text, stat, tree } = gitStep(`stage task ${slug} for its review`, () => stagedDiff(root, task.worktree!, task.base!));
     // What this pack shows is what accept may commit: it checks the staged tree against this record.
     writeJsonAtomic(reviewedFile(id, slug), { tree, at: now() });
     const files = changedPaths(text);

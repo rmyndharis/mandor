@@ -33,9 +33,13 @@ function run(args: string[], cwd: string, location: Location = {}): Result {
   return { code: 1, stdout: Buffer.alloc(0), stderr: r.error ? r.error.message : `git ${args[0]} killed by ${r.signal}` };
 }
 
+// A git command that failed. Its message holds git's own words, which can quote what a worker wrote or what a hook
+// printed, so a command that shows an error to the lead keeps them out of the output.
+export class GitFailure extends Error {}
+
 function okBytes(args: string[], cwd: string, location: Location = {}): Buffer {
   const r = run(args, cwd, location);
-  if (r.code !== 0) throw new Error(`git ${args.join(" ")} failed in ${cwd}: ${r.stderr.trim()}`);
+  if (r.code !== 0) throw new GitFailure(`git ${args.join(" ")} failed in ${cwd}: ${r.stderr.trim()}`);
   return r.stdout;
 }
 
@@ -232,7 +236,7 @@ function configKeys(cwd: string, pattern: string, location: Location = {}): stri
   const r = run(["config", "-z", "--name-only", "--get-regexp", pattern], cwd, location);
   // Only a silent exit 1 is "no such key": run reports a spawn failure or a kill as exit 1 with a message.
   if (r.code === 1 && r.stdout.length === 0 && r.stderr === "") return [];
-  if (r.code !== 0) throw new Error(`cannot read the git config of ${cwd}: ${r.stderr.trim()}`);
+  if (r.code !== 0) throw new GitFailure(`cannot read the git config of ${cwd}: ${r.stderr.trim()}`);
   return r.stdout.toString().split("\0").filter(Boolean);
 }
 
@@ -299,7 +303,7 @@ export function confineProblem(): string | null {
 // Runs a confined write and throws its stderr on a non-zero exit, like ok.
 function okConfined(g: Bound, allow: [string, string][], args: string[], extra: Location = {}): string {
   const r = g.confined(allow, args, extra);
-  if (r.code !== 0) throw new Error(`git ${args.join(" ")} failed: ${r.stderr.trim()}`);
+  if (r.code !== 0) throw new GitFailure(`git ${args.join(" ")} failed: ${r.stderr.trim()}`);
   return r.stdout.toString();
 }
 
@@ -535,7 +539,7 @@ export function applyCheck(repo: string, worktree: string, patchFile: string): b
 
 export function applyToIndex(repo: string, worktree: string, patchFile: string): void {
   const r = applyConfined(bind(repo, worktree), "--index", patchFile);
-  if (r.code !== 0) throw new Error(`git apply --index failed: ${r.stderr.trim()}`);
+  if (r.code !== 0) throw new GitFailure(`git apply --index failed: ${r.stderr.trim()}`);
 }
 
 export function indexTree(repo: string, worktree: string): string {
@@ -583,7 +587,7 @@ const IN_PROGRESS_DIRS = ["rebase-merge", "rebase-apply"];
 function commitIdentity(g: Bound, worktree: string, allowTestIdentity: boolean): string[] {
   return ["GIT_AUTHOR_IDENT", "GIT_COMMITTER_IDENT"].map((v) => {
     const r = g.run([...IDENTITY, "var", v]);
-    if (r.code !== 0) throw new Error(`refusing to commit in ${worktree}: no ${v}: ${r.stderr.trim()}`);
+    if (r.code !== 0) throw new GitFailure(`refusing to commit in ${worktree}: no ${v}: ${r.stderr.trim()}`);
     const email = emailOf(r.stdout.toString().trim());
     if (isPlaceholderEmail(email, allowTestIdentity)) throw new Error(`refusing to commit in ${worktree}: ${v} email "${email}" is a placeholder`);
     return email;
@@ -624,7 +628,7 @@ function firstShellWord(value: string): string {
 function assertSafeSigning(g: Bound, worktree: string): void {
   const r = g.run(["config", "-z", "--get-regexp", "^gpg\\.(.*\\.)?program$|^gpg\\.ssh\\.defaultkeycommand$"]);
   if (r.code === 1 && r.stdout.length === 0 && r.stderr === "") return; // no such key
-  if (r.code !== 0) throw new Error(`cannot read the git config of ${worktree}: ${r.stderr.trim()}`);
+  if (r.code !== 0) throw new GitFailure(`cannot read the git config of ${worktree}: ${r.stderr.trim()}`);
   for (const entry of r.stdout.toString().split("\0").filter(Boolean)) {
     const nl = entry.indexOf("\n");
     const [key, value] = [entry.slice(0, nl), entry.slice(nl + 1)];

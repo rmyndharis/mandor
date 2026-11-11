@@ -408,7 +408,8 @@ test("a commit a hook refuses leaves the integration worktree clean, and the acc
   const hook = join(s.repo, ".git", "hooks", "pre-commit");
   mkdirSync(dirname(hook), { recursive: true });
   writeFileSync(hook, "#!/bin/sh\nexit 1\n", { mode: 0o755 });
-  assert.throws(() => accept(s, "hello"), / failed in .*goal-feat__slice/);
+  assert.throws(() => accept(s, "hello"), /^Error: could not commit the change of hello; see .*git\.stderr$/);
+  assert.match(readFileSync(join(s.home, "logs", "runner.log"), "utf8"), /commit the change of hello: .* failed in .*goal-feat__slice/s, "git's own words are in the log");
   assert.equal(must(goal.integrationWorktree, "status", "--porcelain", "--untracked-files=all"), "");
   refused(s, "hello", tip);
   rmSync(hook);
@@ -723,7 +724,7 @@ test("accept refuses, before it commits, an event too long for the ledger", (t) 
   assert.equal(existsSync(intentOf(s)), false);
 });
 
-test("a reset that fails after a refused commit keeps the commit's error, and the next accept finishes the job", (t) => {
+test("a reset that fails after a refused commit keeps the commit's error in the log, and the next accept finishes the job", (t) => {
   const s = setup(t);
   const { goal } = goalStart(s.repo, GOAL, null);
   reviewable(s, "hello", { "hello.txt": "hello\n" });
@@ -731,11 +732,13 @@ test("a reset that fails after a refused commit keeps the commit's error, and th
   // The hook refuses the commit and leaves a lock that stops the reset behind it.
   hook(s.repo, "pre-commit", 'touch "$GIT_DIR/index.lock"; exit 1');
   assert.throws(() => accept(s, "hello"), (e: Error) => {
-    assert.match(e.message, / commit .* failed in /s);
+    assert.match(e.message, /^could not commit the change of hello; see .*git\.stderr$/);
     assert.doesNotMatch(e.message, /reset/);
     return true;
   });
-  assert.match(readFileSync(join(s.home, "logs", "runner.log"), "utf8"), /accept of hello: reset after a failed commit: .* read-tree --reset -u --no-recurse-submodules HEAD/);
+  const log = readFileSync(join(s.home, "logs", "runner.log"), "utf8");
+  assert.match(log, /commit the change of hello: .* commit .* failed in /s);
+  assert.match(log, /accept of hello: reset after a failed commit: .* read-tree --reset -u --no-recurse-submodules HEAD/);
   assert.equal(existsSync(intentOf(s)), true);
   refused(s, "hello", tip);
 
@@ -754,7 +757,7 @@ test("a commit that fails because another landed keeps the marker, and the next 
   const tip = must(s.repo, "rev-parse", GOAL);
   // What a commit left running by a killed accept does to the one after it: it lands first, with the same staged tree.
   hook(s.repo, "pre-commit", 'git commit -q --no-verify -m "Add hello.txt"; exit 1');
-  assert.throws(() => accept(s, "hello"), / failed in /);
+  assert.throws(() => accept(s, "hello"), /^Error: could not commit the change of hello; see .*git\.stderr$/);
   const landed = must(s.repo, "rev-parse", GOAL);
   assert.notEqual(landed, tip);
   assert.deepEqual([task(s, "hello").status, existsSync(intentOf(s)), verdicts(s)], ["needs-review", true, []]);

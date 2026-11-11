@@ -37,6 +37,16 @@ export function readJob(jobId: string): JobRecord | null {
   }
 }
 
+// The whole text of a failed git step, which the lead is shown no word of: runner.log keeps one clamped line, and a hook
+// that printed a screenful would lose its first lines there. Private, and never pruned (L-20). Never throws.
+export const gitLogPath = () => join(mandorHome(), "logs", "git.stderr");
+export function logGit(head: string, text: string): void {
+  try {
+    ensureDir(dirname(gitLogPath()));
+    appendFileSync(gitLogPath(), `${now()} ${head}\n${text.slice(0, 64 * 1024).replace(/\n?$/, "\n")}`, { mode: 0o600 });
+  } catch {}
+}
+
 // Never throws: it runs where an error would undo a completion.
 export function logRunner(line: string): void {
   try {

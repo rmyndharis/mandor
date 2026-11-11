@@ -7,7 +7,7 @@ import { loadConfig, resolveBin, WORKER_TOOLS, type Config } from "./config.ts";
 import type { Candidate, FileRef, GoalRecord, JobKind, JobRecord, LedgerEvent, ModelInfo, Pending, ProjectState, StallReason, TaskRecord, TaskStatus, Tier, ToolName, ToolState } from "./contracts.ts";
 import {
   addWorktree, apply3way, applyCheck, applyToIndex, assertCommitIdentity, assertHeadIdentity, assertHomeOutsideRepos, assertRepoOutsideHome, branchExists, changedPaths, commitRunning, commitStaged, configuredDrivers, configuredPromisors,
-  confineProblem, deleteBranchAt, diffSinceBaseBytes, diffStat, dropLastCommit, git, indexLockPath, indexTree, isClean, PARTIAL_CLONE, projectRoot,
+  confineProblem, deleteBranchAt, diffSinceBaseBytes, diffStat, dropLastCommit, git, GitFailure, indexLockPath, indexTree, isClean, PARTIAL_CLONE, projectRoot,
   removeOwnedWorktree, resetHardHead, resetTo, revParse, stagedDiff, worktreeAddRunning,
 } from "./git.ts";
 import { checkCommitMessage, checkDiff, checkName } from "./guards.ts";
@@ -16,7 +16,7 @@ import { appendEvent, appendToolEvent, ledgerSize, listProjects, loadState, load
 import { cachedWarnings } from "./modelcache.ts";
 import { DEFAULT_DENY, loadProjectConfig, provisionWorktree, type ProjectConfig } from "./provision.ts";
 import { catalogGap, countActiveJobs, hasUsableModel, selectCandidate } from "./routing.ts";
-import { cancelMarker, completeJobLocked, failedResult, logRunner, logRunnerTail, readJob } from "./runner.ts";
+import { cancelMarker, completeJobLocked, failedResult, gitLogPath, logGit, logRunner, logRunnerTail, readJob } from "./runner.ts";
 import { spawnRunner } from "./spawn.ts";
 import { clampDetail, ensureDir, fileRef, readJson, withProjectLock, withSlotsLock, writeFileAtomic, writeJsonAtomic } from "./store.ts";
 
@@ -563,7 +563,7 @@ function recoverAcceptLocked(root: string, id: string, goal: GoalRecord, allowTe
   const goalAt = revParse(root, `refs/heads/${goal.branch}`);
   if (goalAt !== head) throw stop(`${goal.branch} is at ${goalAt}`);
   if (head === tip) {
-    resetHardHead(root, integration);
+    gitStep(`settle an earlier accept of ${goal.branch}`, () => resetHardHead(root, integration));
     rmSync(file);
     return null;
   }
@@ -594,6 +594,24 @@ function recoverAcceptLocked(root: string, id: string, goal: GoalRecord, allowTe
 }
 
 const runnerLogPath = () => join(mandorHome(), "logs", "runner.log");
+
+// What a failed git step shows the lead: a fixed sentence and the log, where git's own words go whole, as they can quote
+// file names a worker chose or the output of a hook. Every error built from git's text is a GitFailure; a refusal of
+// mandor's own is as fixed already and passes.
+export function fixedFailure(what: string, e: unknown): Error {
+  if (!(e instanceof GitFailure)) return e as Error;
+  logRunnerTail(what, e.message);
+  logGit(what, e.message);
+  return new Error(`could not ${what}; see ${gitLogPath()}`);
+}
+
+export function gitStep<T>(what: string, step: () => T): T {
+  try {
+    return step();
+  } catch (e) {
+    throw fixedFailure(what, e);
+  }
+}
 
 function taskOf(id: string, slug: string): TaskRecord {
   const task = loadState(id).tasks[slug];
@@ -776,13 +794,13 @@ export function verdictAccept(cwd: string, slug: string, evidenceFile: string, m
     const tip = revParse(root, `refs/heads/${goal.branch}`);
     // On the goal branch itself: on another branch at the same commit, the commit would miss the goal.
     const head = git(["symbolic-ref", "-q", "HEAD"], integration).stdout.trim();
-    if (head !== `refs/heads/${goal.branch}` || revParse(integration, "HEAD") !== tip || !isClean(root, integration)) {
+    if (head !== `refs/heads/${goal.branch}` || revParse(integration, "HEAD") !== tip || !gitStep(`read the integration worktree of ${goal.branch}`, () => isClean(root, integration))) {
       throw new Error(`integration worktree not clean: ${integration} must be clean and on ${goal.branch} at ${tip}`);
     }
     const unrecorded = unrecordedCommits(root, state, goal);
     if (unrecorded.length > 0) throw new Error(`refusing to accept: ${unrecordedNote(goal.branch, unrecorded)}; they passed no review and no guard, so the user removes them from the branch or adopts them with mandor goal adopt ${goal.branch}, which the lead does not run`);
     if (task.worktree === null || task.base === null) throw new Error(`task ${slug} has no worktree or base`);
-    const { bytes, text, tree } = stagedDiff(root, task.worktree, task.base);
+    const { bytes, text, tree } = gitStep(`stage task ${slug} for its accept`, () => stagedDiff(root, task.worktree!, task.base!));
     if (bytes.length === 0) throw new Error(`task ${slug} has no changes to accept`);
     // Only the tree the lead saw: a worker round, a rebase, a takeover edit or a process left in the worktree changes it.
     const pin = reviewedFile(id, slug);
@@ -826,7 +844,7 @@ export function verdictAccept(cwd: string, slug: string, evidenceFile: string, m
       } catch (r) {
         logRunner(`accept of ${slug}: reset after a failed commit: ${(r as Error).message}`);
       }
-      throw e;
+      throw fixedFailure(`commit the change of ${slug}`, e);
     }
     for (const ev of acceptedEvents(slug, task.seq, file, commit)) appendEvent(id, ev);
     rmSync(intent, { force: true });
