@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { TestContext } from "node:test";
 import { test } from "node:test";
@@ -145,6 +145,15 @@ function prepared(over: Partial<JobRecord> = {}, project = { network: true, addD
   const run = agy().prepare(job({ promptPath, worktree, ...over }), { schemaPath: join(dir, "schema.json"), lastMessagePath: join(dir, "last-message.json") }, project);
   return { home, dir, run, worktree };
 }
+
+test("prepare names the root it is handed and never follows a link at it: the runner has verified the root", () => {
+  const link = join(temp("mandor-alink-"), "wt");
+  symlinkSync(temp("mandor-asib-"), link);
+  const { run } = prepared({ worktree: link });
+  const allow = JSON.parse(run.args.at(-1)!).permissions.allow as string[];
+  assert.deepEqual(allow.slice(0, 2), [`write_file(${link})`, `read_file(${link})`]);
+  assert.equal(allow.length, 3);
+});
 
 test("prepare refuses a project without worker network, as the sandbox's proxy, not the project, decides what a command reaches", () => {
   assert.throws(() => prepared({}, { network: false, addDirs: [] }), /^Error: agy workers .*proxy.*project setup --worker-network$/);

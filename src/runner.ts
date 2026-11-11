@@ -239,14 +239,17 @@ async function work(job: JobRecord, adapter: Adapter): Promise<JobResult> {
   writeFileAtomic(files.schemaPath, JSON.stringify(REPORT_SCHEMA));
   rmSync(files.lastMessagePath, { force: true });
   const project = loadProjectConfig(job.projectId);
-  const run = adapter.prepare(job, files, { network: project.workerNetwork, addDirs: project.workerAddDirs });
+  // Verified before anything is built from it: a write boundary made from the path would name what a link at the root
+  // leads to, and the start's own check, a moment later, could pass again.
+  const root = worktreeRoot(job.worktree);
+  const run = adapter.prepare({ ...job, worktree: root }, files, { network: project.workerNetwork, addDirs: project.workerAddDirs });
   // The prompt file is the worker's stdin: opened here, so the worker needs no path to it.
   const input = run.stdinFile === undefined ? "ignore" : openSync(run.stdinFile, "r");
   const out = openSync(join(dir, "raw.log"), "w", 0o600);
   const err = openSync(join(dir, "stderr.log"), "w", 0o600);
   let child: ChildProcess;
   try {
-    child = spawnInRoot(job.worktree, run, [input, out, err]);
+    child = spawnInRoot(root, run, [input, out, err]);
   } finally {
     if (input !== "ignore") closeSync(input);
     closeSync(out);

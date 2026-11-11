@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, copyFileSync, existsSync, readFileSync, realpathSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { parseReport, REPORT_SCHEMA } from "../brief.ts";
@@ -160,7 +160,7 @@ export const fitsReport = (v: Record<string, unknown>): boolean => parseReport(J
 // directory above its file. The paths are parameters.
 function sandbox(worktree: string, jobFiles: string, addDirs: string[]): string[] {
   const user = homedir();
-  const params: [string, string][] = [["WT", realpathSync.native(worktree)], ["WH", zcodeHome()], ["JOB", jobFiles], ["STATE", mandorHome()],
+  const params: [string, string][] = [["WT", worktree], ["WH", zcodeHome()], ["JOB", jobFiles], ["STATE", mandorHome()],
     ...addDirs.map((d, i): [string, string] => [`ADD${i}`, d]), ...PRIVATE_HOME_PATHS.map((p, i): [string, string] => [`PRIV${i}`, join(user, p)])];
   const sub = (names: string[]) => names.map((n) => `(subpath (param "${n}"))`).join(" ");
   const writable = ["WT", "WH", ...addDirs.map((_, i) => `ADD${i}`)];

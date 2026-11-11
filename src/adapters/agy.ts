@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync, realpathSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseReport } from "../brief.ts";
 import type { Config } from "../config.ts";
@@ -84,7 +84,7 @@ export function createAgyAdapter(cfg: Config): Adapter {
       // run may touch: the worktree and the cache directories, and commands, which the CLI's own sandbox confines.
       // Paid credits are off for the run whatever the user's settings say: a run past the plan's quota would
       // otherwise be billed, with no quota error.
-      const roots = [realpathSync.native(job.worktree), ...project.addDirs];
+      const roots = [job.worktree, ...project.addDirs]; // the root the runner verified
       const settings = { useG1Credits: false, permissions: { allow: [...roots.flatMap((d) => [`write_file(${d})`, `read_file(${d})`]), "command(*)"] } };
       // No working directory option: the runner starts the worker in the worktree's root, which it has verified. The
       // model's id carries its effort, and the two together can be refused.

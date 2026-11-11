@@ -14,12 +14,14 @@ import { appendEvent, loadState, now, readEvents } from "../src/ledger.ts";
 import { countActiveJobs } from "../src/routing.ts";
 import { cancelMarker, pruneJobs, reconcileLocked, runJob, spawnInRoot } from "../src/runner.ts";
 import { withProjectLock, withSlotsLock, writeFileAtomic, writeJsonAtomic } from "../src/store.ts";
+import { emptyProjectConfig, saveProjectConfig } from "../src/provision.ts";
 import { startJobLocked } from "../src/tasks.ts";
-import { temp, readFakeLog, tempHome, tempRepo, writeScenarios } from "./helpers.ts";
+import { temp, readAgyLog, readFakeLog, tempHome, tempRepo, writeAgyConfig, writeAgyScenarios, writeScenarios } from "./helpers.ts";
 
 const ROOT = join(import.meta.dirname, "..");
 const LAUNCHER = join(ROOT, "bin", "mandor");
 const FAKE = join(import.meta.dirname, "fake-bin", "fake-codex.mjs");
+const FAKE_AGY = join(import.meta.dirname, "fake-bin", "fake-agy.mjs");
 const PROJECT = "demo-000000000000";
 const SLUG = "t1";
 const CANDIDATE: Candidate = { tool: "codex", model: "gpt-6-luna", effort: "medium" };
@@ -279,6 +281,37 @@ test("a root swapped for a link right after its check passes starts no worker in
   assert.match(read(join(process.env.MANDOR_HOME!, "logs", "runner.log")), /its root .* is not a directory at its own path/);
 });
 
+test("a root that is a link only while the write boundary is built starts no worker that may write where the link points", async (t) => {
+  const task = setup(t);
+  writeAgyConfig(process.env.MANDOR_HOME!);
+  saveProjectConfig(PROJECT, { ...emptyProjectConfig(), workerNetwork: true });
+  writeAgyScenarios([{}]);
+  const sibling = temp("mandor-sibling-");
+  const parked = `${task.worktree}.parked`;
+  const native = fs.realpathSync.native;
+  let looks = 0;
+  // A link for the first resolution of the root and a directory again after it, as a process an earlier round left
+  // behind can time it: a boundary built from the path before any check would name the link's target, and the
+  // start's own check would then pass.
+  t.mock.method(fs.realpathSync, "native", ((p: fs.PathLike) => {
+    if (p !== task.worktree || ++looks > 1) return native(p);
+    fs.renameSync(task.worktree!, parked);
+    symlinkSync(sibling, task.worktree!);
+    try {
+      return native(p);
+    } finally {
+      rmSync(task.worktree!);
+      fs.renameSync(parked, task.worktree!);
+    }
+  }) as typeof native);
+  const job = queueJob({ candidate: { tool: "agy", model: "gemini-3.8-flash-low", effort: "low" }, bin: FAKE_AGY });
+  await runJob(job.id);
+  const workers = readAgyLog().filter((e) => e.argv.includes("-p"));
+  assert.deepEqual(workers.filter((e) => e.argv.join(" ").includes(sibling)), [], "no worker may write where the link points");
+  assert.equal(workers.length, 0, "no worker started");
+  assert.equal((await finished(job.id)).status, "failed");
+});
+
 // The physical cwd the start verifies is the constructed path, whose parent is resolved: a home reached through a link
 // (/var for /private/var, say) still starts its workers.
 test("a worktree named through a linked parent starts its worker in the real directory", async (t) => {
@@ -291,6 +324,24 @@ test("a worktree named through a linked parent starts its worker in the real dir
   child.stdout!.on("data", (d) => (out += d));
   await new Promise((done) => child.once("close", done));
   assert.equal(out.trim(), real);
+});
+
+test("a worktree named through a linked parent gets its write rules from the root the runner verified", async (t) => {
+  const task = setup(t);
+  writeAgyConfig(process.env.MANDOR_HOME!);
+  saveProjectConfig(PROJECT, { ...emptyProjectConfig(), workerNetwork: true });
+  writeAgyScenarios([{}]);
+  // The same directory, named through a link to its parent, as a home under /var is.
+  const link = join(temp("mandor-parent-"), "wts");
+  symlinkSync(dirname(task.worktree!), link);
+  const spelled = join(link, basename(task.worktree!));
+  const job = queueJob({ worktree: spelled, candidate: { tool: "agy", model: "gemini-3.8-flash-low", effort: "low" }, bin: FAKE_AGY });
+  await runJob(job.id);
+  const [worker] = readAgyLog().filter((e) => e.argv.includes("-p"));
+  assert.ok(worker !== undefined, "the worker started");
+  const { permissions } = JSON.parse(worker.argv[worker.argv.indexOf("--settings") + 1]);
+  assert.deepEqual(permissions.allow.slice(0, 2), [`write_file(${task.worktree})`, `read_file(${task.worktree})`]);
+  assert.equal(worker.cwd, task.worktree);
 });
 
 // Swaps the root of task-a for a link to task-b and back, confined like a worker to that root: the sandbox grants the

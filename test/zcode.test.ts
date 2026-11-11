@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { TestContext } from "node:test";
 import { test } from "node:test";
@@ -234,6 +234,13 @@ test("prepare runs the CLI inside sandbox-exec, with the worker's own HOME, the 
   assert.equal(dirname(personal), dir);
   assert.deepEqual(JSON.parse(readFileSync(personal, "utf8")).config.defaultModelSelection, { providerId: PLAN, modelId: "GLM-5.3-Flash", options: { reasoningLevel: "high" } });
   assert.equal(run.env.ELECTRON_RUN_AS_NODE, undefined, "only an app bundle is started as Node");
+});
+
+test("prepare names the root it is handed and never follows a link at it: the runner has verified the root", () => {
+  const link = join(temp("mandor-zlink-"), "wt");
+  symlinkSync(temp("mandor-zsib-"), link);
+  const { run } = prepared({ worktree: link });
+  assert.ok(run.args.includes(`WT=${link}`), run.args.join(" "));
 });
 
 test("prepare resumes a session by its id, and refuses an id of another shape, a missing effort, a closed network and a prompt too long for an argument", () => {
