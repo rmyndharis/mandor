@@ -50,6 +50,27 @@ export function tierWarnings(config: Config, models: ModelInfo[]): string[] {
   });
 }
 
+export interface TierEntry { candidate: string; usable: boolean; reason: string | null; needsNetwork: boolean }
+
+// What keeps a whole tool from running, whatever its candidates say: down is why its binary cannot be used, which dispatch
+// refuses outright, and unread is the problem that the last read of its models ended with.
+export interface ToolNotes { down: Partial<Record<ToolName, string>>; unread: Partial<Record<ToolName, string>> }
+
+// Each candidate of each tier as the config writes it, with what keeps it from running whatever the project allows: its tool
+// is off, the catalog lacks it, or it is exhausted. A tool that needs worker network says so, as whether the project allows
+// it is a project setting that `tiers` does not read.
+export function tierReport(config: Config, models: ModelInfo[], tools: ToolState, notes: ToolNotes = { down: {}, unread: {} }): Record<Tier, TierEntry[]> {
+  // A tool with no model in the catalog was not read, so naming the candidate's model would blame the config for it.
+  const unlisted = (tool: ToolName) => (notes.unread[tool] === undefined ? `${tool} lists no model; run mandor models --refresh` : `${tool}: its models could not be read: ${notes.unread[tool]}`);
+  const entries = (tier: Tier) => config.tiers[tier].map((candidate): TierEntry => {
+    const c = parseCandidate(candidate);
+    const on = config.tools[c.tool].enabled;
+    const why = !on ? settle(c, { config, models, tools, network: true }) : notes.down[c.tool] ?? (models.some((m) => m.tool === c.tool) ? settle(c, { config, models, tools, network: true }) : unlisted(c.tool));
+    return { candidate, usable: typeof why !== "string", reason: typeof why === "string" ? why : null, needsNetwork: NEEDS_NETWORK.includes(c.tool) };
+  });
+  return Object.fromEntries(TIER_ORDER.map((tier) => [tier, entries(tier)])) as Record<Tier, TierEntry[]>;
+}
+
 // network: whether the project allows its workers the network.
 interface RouteContext { config: Config; models: ModelInfo[]; tools: ToolState; active: Record<ToolName, number>; use: Candidate | null; preferTool: ToolName | null; network: boolean }
 

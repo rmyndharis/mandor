@@ -83,6 +83,10 @@ test("lead skill says what to do with an accept that did not finish", () => {
   assert.ok(read("lead").includes("When `mandor status` says that an accept of a task did not finish, run `verdict accept` for that task again, which settles it"));
 });
 
+test("lead skill points at tiers for a tier with no candidate that can run", () => {
+  assert.ok(read("lead").includes("`mandor tiers` shows each candidate and what keeps it from running"));
+});
+
 test("status skill runs mandor status", () => {
   assert.ok(read("status").includes("mandor status"));
 });

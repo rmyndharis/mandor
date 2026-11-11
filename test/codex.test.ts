@@ -648,6 +648,38 @@ test("init and models warn about a tier candidate the catalog cannot run, and sa
   }
 });
 
+test("tiers prints each candidate with what keeps it from running, and its usage errors exit 2", () => {
+  const home = tempHome({ config: true });
+  const cfg = structuredClone(DEFAULT_CONFIG);
+  cfg.tools.codex.bin = FAKE;
+  cfg.tiers.light = ["codex:gpt-0-gone@medium", "codex:gpt-6-luna@medium", "zcode:GLM-5.3-Flash@high"];
+  writeFileSync(join(home, "config.json"), JSON.stringify(cfg));
+  const plain = cli(["tiers"]);
+  assert.equal(plain.status, 0, plain.stderr);
+  const lines = plain.stdout.trimEnd().split("\n");
+  assert.equal(lines[0], "light:");
+  assert.deepEqual(lines.slice(1, 4), [
+    "  codex:gpt-0-gone@medium  codex:gpt-0-gone is not in the model catalog",
+    "  codex:gpt-6-luna@medium  usable",
+    "  zcode:GLM-5.3-Flash@high  zcode is not enabled (needs worker network)",
+  ]);
+  assert.ok(lines.includes("medium:") && lines.includes("heavy:"));
+  const json = JSON.parse(cli(["tiers", "--json"]).stdout);
+  assert.deepEqual(json.light[1], { candidate: "codex:gpt-6-luna@medium", usable: true, reason: null, needsNetwork: false });
+  const bad = cli(["tiers", "--nope"]);
+  assert.equal(bad.status, 2);
+  assert.match(bad.stderr, /unknown option for tiers: --nope/);
+});
+
+test("tiers does not blame the config when no model list could be read", () => {
+  tempHome({ config: true });
+  writeFileSync(join(process.env.CODEX_HOME!, "fake", "models.json"), "not json");
+  const r = cli(["tiers"]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /^  codex:gpt-6-luna@medium  codex lists no model; run mandor models --refresh$/m);
+  assert.doesNotMatch(r.stdout, /not in the model catalog/);
+});
+
 test("init names a secret-like variable exported by the worker login shell without printing its value", () => {
   const home = tempHome();
   const userHome = temp();

@@ -152,6 +152,7 @@ const USAGE = `mandor <command>
 You run:
   init                          create the home and its config, read the model list, print warnings
   models [--refresh] [--json]   list the models read at the last refresh, as tool:model (a list older than 5 minutes is read again, and a failed read is not repeated for 5 minutes)
+  tiers [--json]                list each tier's candidates, and what keeps one from running
   login zcode [zai|bigmodel] [--api-key]
                                 sign the zcode worker in under a home of its own: in a browser, or with a
                                 Coding Plan API key piped in
@@ -248,6 +249,43 @@ export async function main(argv: string[]): Promise<number> {
       else {
         for (const m of r.models) console.log(`${m.tool}:${m.model} ${m.efforts.join(",")} default ${m.defaultEffort ?? "none"}${m.hidden ? " hidden" : ""}`);
         for (const w of r.warnings) console.log(`warning: ${w}`);
+      }
+      return 0;
+    } catch (e) {
+      console.error(`mandor: ${(e as Error).message}`);
+      return 1;
+    }
+  }
+  if (argv[0] === "tiers") {
+    const bad = argv.slice(1).find((a) => a !== "--json");
+    if (bad !== undefined) {
+      console.error(`mandor: unknown option for tiers: ${bad}`);
+      return 2;
+    }
+    try {
+      const [{ existsSync }, { loadConfig, resolveBin, WORKER_TOOLS }, { assertHomeOutsideRepos }, { loadModels, MODELS_MAX_AGE_MS, readModelCache }, { loadToolState }, { tierReport }, { TIER_ORDER }] = await Promise.all([
+        import("node:fs"), import("./config.ts"), import("./git.ts"), import("./adapters/index.ts"), import("./ledger.ts"), import("./routing.ts"), import("./contracts.ts"),
+      ]);
+      assertHomeOutsideRepos();
+      const cfg = loadConfig();
+      // As dispatch checks it: an enabled tool whose binary cannot be used refuses every dispatch.
+      const down: Record<string, string> = {};
+      for (const tool of WORKER_TOOLS.filter((t) => cfg.tools[t].enabled)) {
+        try {
+          const bin = resolveBin(tool, cfg);
+          if (!existsSync(bin)) down[tool] = `${tool} not found at ${bin}`;
+        } catch (e) {
+          down[tool] = (e as Error).message;
+        }
+      }
+      const models = loadModels(MODELS_MAX_AGE_MS, cfg);
+      const report = tierReport(cfg, models, loadToolState(Math.floor(Date.now() / 1000)), { down, unread: readModelCache()?.problems ?? {} });
+      if (argv.includes("--json")) console.log(JSON.stringify(report, null, 2));
+      else {
+        for (const tier of TIER_ORDER) {
+          console.log(`${tier}:`);
+          for (const e of report[tier]) console.log(`  ${e.candidate}  ${e.usable ? "usable" : e.reason}${e.needsNetwork ? " (needs worker network)" : ""}`);
+        }
       }
       return 0;
     } catch (e) {

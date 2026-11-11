@@ -146,6 +146,7 @@ The lead's commands print JSON; `status`, `show` and `logs` print plain text.
 | --- | --- |
 | `mandor init` | Create `~/.mandor`, read the Codex model list, print warnings |
 | `mandor models [--refresh] [--json]` | List the models that the enabled tools offered when the list was last read, each as `tool:model` with its efforts. It is read again when it is older than five minutes, or with `--refresh`. A read that no tool answered is not repeated for five minutes, and the last list stays |
+| `mandor tiers [--json]` | List the candidates of each tier as `config.json` writes them, with what keeps one from running: its tool is off, the model list lacks it, or it is exhausted. A ZCode or Antigravity candidate is marked as needing worker network |
 | `mandor login zcode [--api-key]` | Sign the ZCode worker in under a home of its own: in a browser, or with a Coding Plan API key piped in |
 | `mandor project setup [flags]` | Record what workers need in this repository. Each run replaces the whole configuration |
 | `mandor project show` | Print the configuration that `project setup` stored, which a new setup has to repeat |

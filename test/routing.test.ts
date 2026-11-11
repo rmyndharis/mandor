@@ -12,7 +12,7 @@ import { DEFAULT_CONFIG, parseCandidate } from "../src/config.ts";
 import type { Candidate, JobRecord, LedgerEvent, ModelInfo, TaskRecord, Tier, ToolName, ToolState, WaitItem } from "../src/contracts.ts";
 import { jobDir, processStart, projectDir, projectIdFor, scratchDir, worktreesDir } from "../src/home.ts";
 import { appendEvent, appendToolEvent, ledgerSize, loadState, now, readEvents } from "../src/ledger.ts";
-import { catalogGap, countActiveJobs, selectCandidate, tierWarnings } from "../src/routing.ts";
+import { catalogGap, countActiveJobs, selectCandidate, tierReport, tierWarnings } from "../src/routing.ts";
 import { decideStallLocked, readJob } from "../src/runner.ts";
 import { withProjectLock, writeFileAtomic, writeJsonAtomic } from "../src/store.ts";
 import { emptyProjectConfig, saveProjectConfig } from "../src/provision.ts";
@@ -225,6 +225,34 @@ test("tierWarnings names each candidate of an enabled tool that the catalog cann
   assert.deepEqual(tierWarnings(withZcode(), CATALOG.filter((m) => m.model !== "GLM-5.3-Flash")), ["tier light: zcode:GLM-5.3-Flash is not in the model catalog"]);
   // No catalog at all is another fault, which the commands report on their own.
   for (const [name, models] of UNUSABLE) assert.deepEqual(tierWarnings(DEFAULT_CONFIG, models), [], name);
+});
+
+test("tierReport lists each candidate as the config writes it, with what keeps it from running", () => {
+  const report = tierReport(withZcode(), CATALOG.filter((m) => m.model !== "GLM-5.3-Flash"), spent("codex:gpt-6-luna"));
+  assert.deepEqual(report.light, [
+    { candidate: "codex:gpt-6-luna@medium", usable: false, reason: "codex:gpt-6-luna is exhausted", needsNetwork: false },
+    { candidate: "zcode:GLM-5.3-Flash@high", usable: false, reason: "zcode:GLM-5.3-Flash is not in the model catalog", needsNetwork: true },
+    { candidate: "agy:gemini-3.8-flash-medium", usable: false, reason: "agy is not enabled", needsNetwork: true },
+  ]);
+  assert.deepEqual(report.medium.map((e) => [e.candidate, e.usable]), [
+    ["codex:gpt-6.1-sol@high", true], ["zcode:GLM-5.3@high", true], ["agy:gemini-4-argon-medium", false], ["codex:gpt-6-luna@high", false],
+  ]);
+  assert.deepEqual(Object.keys(report), ["light", "medium", "heavy"]);
+});
+
+test("tierReport names a tool that cannot run at all, or whose models were never read, instead of blaming the config", () => {
+  const cfg = withZcode();
+  // dispatch refuses outright while an enabled tool has no usable binary, whatever the catalog says.
+  const down = tierReport(cfg, CATALOG, {}, { down: { codex: "codex not found at /nowhere/codex" }, unread: {} });
+  assert.deepEqual(down.light[0], { candidate: "codex:gpt-6-luna@medium", usable: false, reason: "codex not found at /nowhere/codex", needsNetwork: false });
+  assert.equal(down.light[1].usable, true, "the other tool is judged on its own");
+  // A tool with no model in the catalog was not read: the reason says so, with the problem when one was recorded.
+  const none = tierReport(cfg, [], {}, { down: {}, unread: { codex: "codex debug models failed" } });
+  assert.equal(none.light[0].reason, "codex: its models could not be read: codex debug models failed");
+  assert.equal(none.light[1].reason, "zcode lists no model; run mandor models --refresh");
+  assert.equal(none.light[2].reason, "agy is not enabled", "a tool that is off stays off");
+  // A catalog that lists some of a tool's models still blames the missing one.
+  assert.equal(tierReport(cfg, [model("codex", "gpt-6-astra", ["high"])], {}, { down: {}, unread: {} }).light[0].reason, "codex:gpt-6-luna is not in the model catalog");
 });
 
 // Projects

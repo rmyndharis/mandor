@@ -6,7 +6,7 @@ const NAME = ["man", "dor"].join("");
 export const TOOL_VARS: readonly string[] = ["HOME", "CODEX_BIN", "JOB"].map((v) => `${NAME.toUpperCase()}_${v}`);
 // The top-level commands src/cli.ts and src/status.ts dispatch on.
 export const TOOL_COMMANDS: readonly string[] = ["_run", "--help", "--version", "cancel", "confirm", "dispatch", "drop", "goal", "hook", "init",
-  "login", "logs", "models", "plan", "project", "ready", "reassign", "review", "scratch", "show", "status", "verdict", "wait"];
+  "login", "logs", "models", "plan", "project", "ready", "reassign", "review", "scratch", "show", "status", "tiers", "verdict", "wait"];
 // The commands no sentence about a foreman holds. Every other one is an ordinary word after the name (a foreman's
 // status, plan or review), so in a repository whose own subject uses the name it is a trace only as a real invocation.
 const DISTINCT_COMMANDS: readonly string[] = ["_run", "--help", "--version", "reassign", "scratch", "verdict"];
