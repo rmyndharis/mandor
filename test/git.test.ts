@@ -967,14 +967,17 @@ test("commitStaged refuses a detached HEAD", () => {
   assert.equal(must(wt, "status", "--porcelain"), "A  a.txt\n");
 });
 
-test("a worktree-relative filter or merge driver in the user's config is refused by every bound call", () => {
-  const { repo, wt, base } = withWorktree();
-  // Build a patch for the apply calls before the repo carries the relative config.
+// A patch for the apply calls of `bound`, built before the repo carries a driver: a bound call refuses one afterwards.
+function patchBeforeDrivers(repo: string, base: string): string {
   const src = join(owned(), "src");
   addWorktree(repo, src, "wip/src", base);
   writeFileSync(join(src, "p.txt"), "x\n");
-  const patch = join(temp(), "p.patch");
-  writeFileSync(patch, diffSinceBaseBytes(repo, src, base));
+  return patchOf(repo, src, base);
+}
+
+test("a filter or merge driver with a worktree-relative command is refused by every bound call", () => {
+  const { repo, wt, base } = withWorktree();
+  const patch = patchBeforeDrivers(repo, base);
   // The user's own config names worktree-relative driver commands (the ./tools/*.sh husky or lfs mistake).
   must(repo, "config", "filter.foo.clean", "./tools/clean.sh");
   must(repo, "config", "filter.foo.smudge", "./tools/smudge.sh");
@@ -984,40 +987,84 @@ test("a worktree-relative filter or merge driver in the user's config is refused
   for (const s of ["clean", "smudge", "merge"]) writeFileSync(join(wt, "tools", `${s}.sh`), `#!/bin/sh\ntouch '${join(markers, `${s}.ran`)}'\ncat\n`, { mode: 0o755 });
   writeFileSync(join(wt, ".gitattributes"), "*.dat filter=foo\nmerged.txt merge=bar\n");
   writeFileSync(join(wt, "data.dat"), "payload\n");
-  for (const call of bound) assert.throws(() => call(repo, wt, patch), /config (filter\.foo\.(clean|smudge)|merge\.bar\.driver) command ".*" is worktree-relative/);
+  for (const call of bound) assert.throws(() => call(repo, wt, patch), /defines .*filter\.foo\.clean.*merge\.bar\.driver; filter and merge drivers are not supported/);
   assert.deepEqual(ran(markers), []);
 });
 
-test("an absolute filter command, and a bare driver with a slashed argument, still pass", () => {
+test("a driver with an absolute or a bare command is refused by every bound call too, until it is removed", () => {
   const { repo, wt, base } = withWorktree();
+  const patch = patchBeforeDrivers(repo, base);
   const clean = join(temp(), "clean.sh");
   writeFileSync(clean, "#!/bin/sh\ncat\n", { mode: 0o755 });
-  must(repo, "config", "filter.foo.clean", clean); // absolute path, so it is the user's own, not the worker's
-  // A bare executable with a path-like argument: only the first word must be safe, so this is allowed.
-  must(repo, "config", "merge.bar.driver", "true some/path %A");
-  writeFileSync(join(wt, ".gitattributes"), "*.dat filter=foo\n");
-  writeFileSync(join(wt, "data.dat"), "payload\n");
-  writeFileSync(join(wt, "task.txt"), "t\n");
-  const paths = changedPaths(diffSinceBase(repo, wt, base)).map((c) => c.path).sort();
-  assert.deepEqual(paths, [".gitattributes", "data.dat", "task.txt"]);
+  for (const [key, value] of [["filter.foo.clean", clean], ["merge.bar.driver", "true some/path %A"], ["filter.baz.process", "git-lfs filter-process"]]) {
+    must(repo, "config", key, value);
+    for (const call of bound) assert.throws(() => call(repo, wt, patch), new RegExp(`defines ${key.replaceAll(".", "\\.")}; filter and merge drivers are not supported`), key);
+    must(repo, "config", "--unset", key);
+    assert.doesNotThrow(() => isClean(repo, wt), key);
+  }
+});
+
+test("a driver that only the worktree's configuration defines is refused by every bound call", () => {
+  const { repo, wt, base } = withWorktree();
+  const patch = patchBeforeDrivers(repo, base);
+  // The include applies while HEAD is a wip/ branch, as in every task worktree, and not in the main checkout.
+  const include = join(temp(), "drivers.gitconfig");
+  writeFileSync(include, '[filter "foo"]\n\tclean = /bin/cat\n');
+  must(repo, "config", "includeIf.onbranch:wip/**.path", include);
+  assert.deepEqual(configuredDrivers(repo), []);
+  for (const call of bound) assert.throws(() => call(repo, wt, patch), /defines filter\.foo\.clean; filter and merge drivers are not supported/);
+});
+
+test("a driver that only the worktree's own configuration file defines is refused by every bound call", () => {
+  const { repo, wt, base } = withWorktree();
+  const patch = patchBeforeDrivers(repo, base);
+  must(repo, "config", "core.repositoryformatversion", "1");
+  must(repo, "config", "extensions.worktreeConfig", "true");
+  must(wt, "config", "--worktree", "filter.foo.clean", "/bin/cat");
+  assert.deepEqual(configuredDrivers(repo), []);
+  for (const call of bound) assert.throws(() => call(repo, wt, patch), /defines filter\.foo\.clean; filter and merge drivers are not supported/);
+});
+
+test("a bound call reads the configuration through the worktree's admin dir, not through its own .git file", () => {
+  const { repo, wt, base } = withWorktree();
+  const patch = patchBeforeDrivers(repo, base);
+  must(repo, "config", "filter.foo.clean", "/bin/cat");
+  // A worker may rewrite the pointer file of its worktree to name a repository that holds no driver.
+  writeFileSync(join(wt, ".git"), `gitdir: ${join(tempRepo(), ".git")}\n`);
+  for (const call of bound) assert.throws(() => call(repo, wt, patch), /defines filter\.foo\.clean; filter and merge drivers are not supported/);
+});
+
+test("a configuration that cannot be read refuses every bound call", () => {
+  const { repo, wt, base } = withWorktree();
+  const patch = patchBeforeDrivers(repo, base);
+  const broken = join(temp(), "broken.gitconfig");
+  writeFileSync(broken, "[filter\n");
+  // Read only where HEAD is a wip/ branch, so the main checkout still reads its configuration.
+  must(repo, "config", "includeIf.onbranch:wip/**.path", broken);
+  assert.deepEqual(configuredDrivers(repo), []);
+  for (const call of bound) assert.throws(() => call(repo, wt, patch), /cannot read the git config of /);
+});
+
+test("a GIT_CONFIG in the environment does not hide the drivers that git itself reads", () => {
+  const { repo, wt, base } = withWorktree();
+  const patch = patchBeforeDrivers(repo, base);
+  must(repo, "config", "filter.foo.clean", "/bin/cat");
+  withEnv({ GIT_CONFIG: "/dev/null" }, () => {
+    assert.deepEqual(configuredDrivers(repo), ["filter.foo.clean"]);
+    for (const call of bound) assert.throws(() => call(repo, wt, patch), /defines filter\.foo\.clean; filter and merge drivers are not supported/);
+  });
 });
 
 test("a relative or empty PATH entry cannot run a worktree script named as a bare driver command", () => {
-  const { repo, wt, base } = withWorktree();
-  // A bare command passes the driver check; the PATH scrub is what keeps it from resolving inside the worktree.
+  const { repo, wt } = withWorktree();
+  // A git call that is not bound does not refuse a bare driver; the PATH scrub is what keeps it from resolving inside the worktree.
   must(repo, "config", "filter.foo.clean", "evilcmd");
   const markers = temp();
   writeFileSync(join(wt, "evilcmd"), `#!/bin/sh\ntouch '${join(markers, "evil.ran")}'\ncat\n`, { mode: 0o755 });
   writeFileSync(join(wt, ".gitattributes"), "*.dat filter=foo\n");
   writeFileSync(join(wt, "data.dat"), "payload\n");
   // '.' and the empty entry both mean the current directory; without the scrub, evilcmd resolves to ./evilcmd.
-  withEnv({ PATH: `.:${delimiter}${process.env.PATH}` }, () => {
-    try {
-      diffSinceBase(repo, wt, base);
-    } catch {
-      // The filter command is not found once PATH is scrubbed, so git add fails; that is the safe outcome.
-    }
-  });
+  withEnv({ PATH: `.:${delimiter}${process.env.PATH}` }, () => git(["add", "-A"], wt));
   assert.deepEqual(ran(markers), []);
 });
 

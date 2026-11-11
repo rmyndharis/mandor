@@ -18,6 +18,8 @@ type Result = { code: number; stdout: Buffer; stderr: string };
 function gitEnv(location: Location): Record<string, string | undefined> {
   const env = { ...process.env };
   for (const k of LOCATION_VARS) delete env[k];
+  // Only git config reads this, so with it set the read of the drivers would see a file that no other git command does.
+  delete env.GIT_CONFIG;
   // An empty or relative PATH entry resolves a bare command (a filter or driver name) against cwd, the worktree.
   if (env.PATH !== undefined) env.PATH = env.PATH.split(delimiter).filter(isAbsolute).join(delimiter);
   return { ...env, ...location };
@@ -199,41 +201,23 @@ export function deleteBranchAt(repo: string, branch: string, tip: string): void 
   if (branchExists(repo, branch)) ok(["update-ref", "-d", `refs/heads/${branch}`, tip], repo);
 }
 
-// The first shell word of a driver command: its executable, honouring a single pair of surrounding quotes.
-function firstShellWord(value: string): string {
-  const s = value.replace(/^\s+/, "");
-  if (s[0] === '"' || s[0] === "'") {
-    const close = s.indexOf(s[0], 1);
-    return close === -1 ? s.slice(1) : s.slice(1, close);
-  }
-  return s.split(/\s/)[0];
-}
-
 const DRIVER_KEYS = "^(filter\\..*\\.(clean|smudge|process)|merge\\..*\\.driver)$";
 
-// The filter and merge driver commands the repository's effective config defines. Throws when that config
-// cannot be read, so a caller never takes an unreadable config for one without drivers.
-export function configuredDrivers(repo: string): string[] {
-  const r = run(["config", "-z", "--name-only", "--get-regexp", DRIVER_KEYS], repo);
+// The filter and merge driver commands that the configuration cwd sees defines. With a location that is the
+// configuration of a worktree: an include that depends on its branch and its own config.worktree count, which a read
+// from the main checkout does not see. Throws when the configuration cannot be read, so a caller never takes an
+// unreadable one for one without drivers.
+function driverKeys(cwd: string, location: Location = {}): string[] {
+  const r = run(["config", "-z", "--name-only", "--get-regexp", DRIVER_KEYS], cwd, location);
   // Only a silent exit 1 is "no such key": run reports a spawn failure or a kill as exit 1 with a message.
   if (r.code === 1 && r.stdout.length === 0 && r.stderr === "") return [];
-  if (r.code !== 0) throw new Error(`cannot read the git config of ${repo}: ${r.stderr.trim()}`);
+  if (r.code !== 0) throw new Error(`cannot read the git config of ${cwd}: ${r.stderr.trim()}`);
   return r.stdout.toString().split("\0").filter(Boolean);
 }
 
-// git runs a filter or merge driver command with the worktree as cwd, so a worktree-relative executable
-// (./tools/clean.sh, which the worker supplies along with the .gitattributes naming it) is worker code in the
-// lead. Refuse any such command before running anything; an absolute path or a bare name on PATH is fine.
-function assertSafeDrivers(cwd: string, location: Location): void {
-  const r = run(["config", "-z", "--get-regexp", DRIVER_KEYS], cwd, location);
-  if (r.code !== 0) return; // exit 1 is "no such key": no driver commands configured
-  for (const entry of r.stdout.toString().split("\0").filter(Boolean)) {
-    const nl = entry.indexOf("\n");
-    const [key, word] = [entry.slice(0, nl), firstShellWord(entry.slice(nl + 1))];
-    if (word.includes("/") && !word.startsWith("/") && !word.startsWith("~")) {
-      throw new Error(`refusing ${cwd}: config ${key} command "${word}" is worktree-relative; use an absolute path or a bare name on PATH`);
-    }
-  }
+// What the main checkout sees, for the commands that refuse before they touch a worktree.
+export function configuredDrivers(repo: string): string[] {
+  return driverKeys(repo);
 }
 
 interface Bound {
@@ -358,7 +342,10 @@ function bind(repo: string, worktree: string, userConfig = false): Bound {
   const named = adminDirs(commonDir, real);
   if (named.length !== 1) throw new Error(`refusing ${worktree}: ${named.length === 0 ? "not a worktree of" : "named by more than one admin dir of"} ${repo}`);
   const location = { GIT_DIR: named[0], GIT_WORK_TREE: real };
-  assertSafeDrivers(real, location);
+  // git runs a driver command with the worktree as cwd, where a worker-written attributes file and script can steer it
+  // into running worker code in the lead. No bound call goes on under one, whichever scope of the configuration defines it.
+  const drivers = driverKeys(real, location);
+  if (drivers.length > 0) throw new Error(`refusing ${real}: its git config defines ${drivers.join(", ")}; filter and merge drivers are not supported`);
   // Hardened callers point git at an empty hooks dir and turn fsmonitor off (both reach a submodule child through
   // GIT_CONFIG_PARAMETERS). diff.ignoreSubmodules=dirty makes the apply calls ignore submodule work-tree state too;
   // diff-index and status pass the flag explicitly, and stageAll excludes gitlinks from `add`, which the flag cannot.

@@ -22,6 +22,8 @@ All notable changes to mandor are recorded here. The format follows [Keep a Chan
 
 - A repository inside the mandor home is refused before any git command writes to it.
 - A filter or merge driver configured after dispatch is refused by a handoff, by a dependent task's move to a new goal tip and by `confirm`, as the other steps that stage or check out a worktree already do.
+- Git calls inside an existing worktree refuse any filter or merge driver that the worktree's configuration defines, even one set only by an include conditional on its branch or in its own configuration file, and fail when that configuration cannot be read.
+- A `GIT_CONFIG` in the environment no longer hides a filter or merge driver from the check.
 
 ## [0.1.0] - 2026-11-11
 
