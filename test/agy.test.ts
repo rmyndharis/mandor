@@ -95,6 +95,16 @@ test("a tool the run had no permission for fails the job by name, though the CLI
   assert.deepEqual([early.status, early.detail], ["failed", "the run stopped early: MAX_TOKENS"]);
 });
 
+test("any refused action fails the run, whatever it is called, and only a name that is safe to print is in the detail", () => {
+  const run = (denied: unknown) => agy().classify(raw(stream({ status: "SUCCESS", response: "", structured_output: REPORT, denied_actions: denied })));
+  for (const denied of [[{ action: "mcp_call:x" }], [{}], [{ action: 7 }], [{ action: "Write-File" }]]) {
+    const r = run(denied);
+    assert.deepEqual([r.status, r.detail], ["failed", "the run lacked a permission its tools needed"], JSON.stringify(denied));
+  }
+  assert.equal(run([{ action: "write_file" }, { action: "mcp_call:x" }]).detail, "the run lacked a permission its tools needed: write_file");
+  assert.equal(run([]).status, "done");
+});
+
 test("a failed run is a quota stop, a model's own limit or a plain failure by fixed phrases on stderr, which is never copied", () => {
   const failed = (stderr: string, exitCode = 3) => agy().classify(raw(stream({ status: "ERROR", response: "" }), { exitCode, stderr: `${stderr}\n${SECRET}\n` }));
   for (const text of ['AGY_ERROR: {"short_error":"RESOURCE_EXHAUSTED"}', 'AGY_ERROR: {"reason":"QUOTA_EXHAUSTED"}', "Your AI credits balance is too low to continue."]) {

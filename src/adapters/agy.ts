@@ -109,10 +109,13 @@ export function createAgyAdapter(cfg: Config): Adapter {
       const exit = raw.exitCode ?? raw.signal;
       if (get(end, "status") === "SUCCESS") {
         if (raw.exitCode !== 0) return result("failed", `exit ${exit} after the run finished; see stderr.log`);
-        // A refused tool leaves the run a success with an empty answer.
+        // A refused tool leaves the run a success with an empty answer. Whatever a refusal is called, the run failed;
+        // only a name that is safe to print goes into the detail.
         const denied = get(end, "denied_actions");
-        const names = (Array.isArray(denied) ? denied : []).map((d) => get(d, "action")).filter((a): a is string => typeof a === "string" && /^[a-z_]+$/.test(a));
-        if (names.length > 0) return result("failed", `the run lacked a permission its tools needed: ${names.join(", ")}`);
+        if (Array.isArray(denied) && denied.length > 0) {
+          const names = denied.map((d) => get(d, "action")).filter((a): a is string => typeof a === "string" && /^[a-z_]+$/.test(a));
+          return result("failed", `the run lacked a permission its tools needed${names.length > 0 ? `: ${names.join(", ")}` : ""}`);
+        }
         const early = get(end, "finished_reason");
         if (typeof early === "string" && /^[A-Za-z_]+$/.test(early)) return result("failed", `the run stopped early: ${early}`);
         const structured = get(end, "structured_output");
