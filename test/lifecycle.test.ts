@@ -1502,6 +1502,70 @@ test("account-mismatch on a ready resume starts one fresh handoff", async (t) =>
   assert.equal(execs().length, 3);
 });
 
+test("a handoff after an account mismatch starts only on a candidate that is usable then, and stalls the task like any other when none is", async (t) => {
+  const s = setup(t);
+  tasks.goalStart(s.repo, GOAL, null);
+  writeScenarios([
+    { stdout: "generated:quota", threadId: THREAD, writeFile: [{ path: "a.txt", content: "a\n" }] },
+    { stdout: "generated:account-mismatch", delayMs: 2000 },
+    { ...DONE, threadId: "00000000-0000-7000-8000-000000000602" },
+  ]);
+  send(s, "hello");
+  await stalled(s, "hello", "all-exhausted");
+  tasks.ready("codex");
+  assert.equal(readJob(task(s, "hello").jobIds[1])!.kind, "resume");
+  // The tool reaches its limit again while the resume runs, so the handoff that its mismatch calls for has nowhere to go.
+  exhaust("codex");
+  const settled = () => (task(s, "hello").status === "stalled" && task(s, "hello").stallReason === "all-exhausted") || task(s, "hello").jobIds.length === 3;
+  assert.ok(await until(settled), "the mismatch is settled");
+  withProjectLock(s.id, () => {});
+  assert.deepEqual([task(s, "hello").status, task(s, "hello").stallReason, task(s, "hello").jobIds.length, execs().length], ["stalled", "all-exhausted", 2, 2], "no handoff started on a tool at its limit");
+});
+
+test("a handoff that its own tool cannot take goes to another usable tool", async (t) => {
+  const s = setup(t);
+  const config = structuredClone(DEFAULT_CONFIG);
+  config.tools.codex.bin = process.env.MANDOR_CODEX_BIN!;
+  config.tools.zcode = { ...config.tools.zcode, enabled: true, bin: FAKE_ZCODE };
+  writeJsonAtomic(join(s.home, "config.json"), config);
+  const model = (tool: ToolName, name: string, efforts: string[]): ModelInfo => ({ tool, model: name, label: name, efforts, defaultEffort: efforts[0], hidden: false });
+  writeCatalog([model("codex", "gpt-6-luna", ["medium"]), model("zcode", "GLM-5.3-Flash", ["high"])]);
+  tasks.goalStart(s.repo, GOAL, null);
+  writeScenarios([
+    { stdout: "generated:quota", threadId: THREAD, writeFile: [{ path: "a.txt", content: "a\n" }] },
+    { stdout: "generated:account-mismatch", delayMs: 2000 },
+  ]);
+  send(s, "hello");
+  await stalled(s, "hello", "all-exhausted");
+  // The project allows the network only now, and the tool reaches its limit again while the resume runs.
+  saveProjectConfig(s.id, { ...loadProjectConfig(s.id), workerNetwork: true });
+  tasks.ready("codex");
+  assert.equal(readJob(task(s, "hello").jobIds[1])!.kind, "resume");
+  exhaust("codex");
+  assert.ok(await until(() => task(s, "hello").jobIds.length === 3), "the pump gave the handoff to a tool");
+  const handoff = readJob(task(s, "hello").jobIds[2])!;
+  assert.deepEqual([handoff.kind, handoff.candidate.tool], ["start", "zcode"]);
+});
+
+test("a handoff whose routing context cannot be read stalls the task, as any failure to build it does", async (t) => {
+  const s = setup(t);
+  tasks.goalStart(s.repo, GOAL, null);
+  writeScenarios([
+    { stdout: "generated:quota", threadId: THREAD, writeFile: [{ path: "a.txt", content: "a\n" }] },
+    { stdout: "generated:account-mismatch", delayMs: 2000 },
+    DONE,
+  ]);
+  send(s, "hello");
+  await stalled(s, "hello", "all-exhausted");
+  tasks.ready("codex");
+  assert.equal(readJob(task(s, "hello").jobIds[1])!.kind, "resume");
+  // The runner read the project's configuration when it started, so the file breaks only what the completion reads.
+  await workersRunning([task(s, "hello").jobIds[1]]);
+  writeFileSync(join(projectDir(s.id), "project.json"), "{");
+  assert.ok(await until(() => task(s, "hello").status === "stalled" && task(s, "hello").stallReason === "account-mismatch"), "the mismatch is settled");
+  assert.equal(lastUpdate(s, "hello").reason, "could not build the handoff");
+});
+
 test("ready gives a task with a candidate and no session a handoff, and leaves other tools and reasons alone", async (t) => {
   const s = setup(t);
   tasks.goalStart(s.repo, GOAL, null);

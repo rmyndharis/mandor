@@ -140,16 +140,23 @@ export function decideStallLocked(projectId: string, task: TaskRecord, status: J
   return "none" in left && catalogGap(task.tier, config, models, network) === null ? "all-exhausted" : stallFor(status);
 }
 
-// A session the current account cannot resume restarts once, fresh, from the work so far.
-// false: the tool has no free slot.
-function startHandoffLocked(projectId: string, task: TaskRecord, job: JobRecord): boolean {
+// A session the current account cannot resume restarts once, fresh, from the work so far, on the candidate that held it.
+// false: that candidate cannot take it now, because the tool has no free slot, or was marked exhausted meanwhile, or the
+// project no longer allows it; the pump then gives the handoff to whatever routing finds usable.
+function startHandoffLocked(projectId: string, task: TaskRecord, job: JobRecord, models: ModelInfo[]): boolean {
   const prompt = handoffPrompt(projectId, task);
-  const { tool } = job.candidate;
   return withSlotsLock(() => {
     // job.json turned terminal outside the slots lock, so another project may already hold the freed slot.
-    if (countActiveJobs()[tool] >= loadConfig().tools[tool].maxParallel) return false;
+    const ctx = { config: loadConfig(), models, tools: loadToolState(Math.floor(Date.now() / 1000)), active: countActiveJobs(), preferTool: null, network: loadProjectConfig(projectId).workerNetwork };
+    let picked: ReturnType<typeof selectCandidate>;
+    try {
+      picked = selectCandidate(task.tier, { ...ctx, use: job.candidate });
+    } catch {
+      return false; // routing refuses the candidate: not enabled, not listed, exhausted, or passed over
+    }
+    if (!("candidate" in picked)) return false;
     saveRoundFile(projectId, task.id, task.seq + 1, "handoff.md", prompt);
-    startJobLocked(projectId, task, "start", job.candidate, prompt, null);
+    startJobLocked(projectId, task, "start", picked.candidate, prompt, null);
     return true;
   });
 }
@@ -209,7 +216,7 @@ function settleTaskLocked(job: JobRecord, status: JobStatus, result: JobResult, 
     stall(stallReason ?? decideStallLocked(projectId, task, status, models));
   } else if (status === "account-mismatch" && job.kind === "resume" && !jobs.some((j) => j.id !== jobId && j.outcome?.status === "account-mismatch")) {
     try {
-      if (!startHandoffLocked(projectId, task, job)) handoffLater("the handoff waits for a slot");
+      if (!startHandoffLocked(projectId, task, job, models)) handoffLater("the handoff waits for a slot or a usable tool");
     } catch (e) {
       const message = (e as Error).message;
       logRunnerTail(`handoff after job ${jobId}`, message);
