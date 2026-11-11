@@ -7,6 +7,7 @@ All notable changes to mandor are recorded here. The format follows [Keep a Chan
 ### Changed
 
 - A task slug or a goal branch made only of digits is refused.
+- The README and SECURITY.md state accurately what confines a worker and where its reads and writes can go.
 
 ### Fixed
 

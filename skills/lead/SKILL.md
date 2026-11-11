@@ -7,7 +7,7 @@ description: Use when leading coding work through mandor workers. Plans a goal, 
 
 You lead, the workers write code. Run every command as `mandor <command>`, from the repository's checkout: run from the scratch directory, a command finds no repository. `mandor --help` lists every command with its options.
 
-mandor confines every worker and every write to a worktree with `sandbox-exec`, which cannot run inside Claude Code's own Bash sandbox. If a command says it cannot confine with sandbox-exec, tell the user that mandor needs Claude Code's Bash sandbox off, and stop until it is.
+mandor runs each worker in a sandbox (its tool's own for Codex and Antigravity, a `sandbox-exec` profile for ZCode) and its own writes into a worktree (checkout, clean, apply, removal) under `sandbox-exec`, which cannot run inside Claude Code's own Bash sandbox. If a command says it cannot confine with sandbox-exec, tell the user that mandor needs Claude Code's Bash sandbox off, and stop until it is.
 
 ## 1. Scratch files
 

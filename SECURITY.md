@@ -20,7 +20,7 @@ Fixes go into the latest release only.
 
 ## What counts
 
-- A worker that writes outside its task worktree and the temporary directories, or reaches the network in a project that has not allowed it.
+- A worker whose commands or edits write outside its task worktree, the temporary directories, the cache directories the project opens and, for ZCode, its own home and the per-user cache directory, or whose commands reach the network in a project that has not allowed it. Antigravity is the exception for the network: its sandbox's proxy decides, as the README says.
 - A credential, token or agent socket that reaches a worker's environment.
 - A change that is committed without the review that accept requires, or a tree that differs from the one the review showed.
 - A guard that can be bypassed: a denied path, a symlink to one, or a hostile git configuration that is not refused.
@@ -31,6 +31,6 @@ Fixes go into the latest release only.
 
 The README states these limits under [Before you start](README.md#before-you-start), and they are not vulnerabilities in mandor:
 
-- A worker can read any file your account can read. With `--worker-network` it can also send one out.
-- Workers run on your own logins to their tools and inherit what those tools load.
+- A worker can read any file your account can read, and what its model reads reaches the worker's vendor. With `--worker-network`, or with Antigravity at whatever its sandbox's proxy lets through, its commands can also send one out.
+- Workers run on your own accounts at their tools, and a Codex worker inherits what Codex loads for you.
 - A flaw in Codex, ZCode, Antigravity, Claude Code or `sandbox-exec` itself belongs with its vendor. A way mandor makes such a flaw worse is in scope.

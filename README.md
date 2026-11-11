@@ -16,7 +16,7 @@
   <a href="https://buymeacoffee.com/rmyndharis"><img src="https://img.shields.io/badge/Buy_Me_a_Coffee-support-FFDD00?logo=buymeacoffee&logoColor=black" alt="Buy Me a Coffee"></a>
 </p>
 
-> **Read [Before you start](#before-you-start) first.** mandor confines workers with `sandbox-exec`, so it runs on macOS only, and the Claude Code session that leads must have its own Bash sandbox turned off.
+> **Read [Before you start](#before-you-start) first.** Every worker runs in a sandbox, its tool's own for Codex and Antigravity and a `sandbox-exec` profile from mandor for ZCode, and mandor's own writes into a worktree (checkout, clean, apply and removal) run under `sandbox-exec` too, so it runs on macOS only. The Claude Code session that leads must have its own Bash sandbox turned off.
 
 ## TL;DR
 
@@ -27,17 +27,17 @@ cd ~/your-project
 claude --plugin-dir ~/mandor      # then ask Claude to lead the work
 ```
 
-*Mandor* is Indonesian for foreman. The session you talk to is the foreman: it plans the goal, hands the coding to Codex, ZCode and Antigravity workers that run in parallel, each in its own git worktree under a kernel sandbox, reads what comes back, and accepts it as one local commit on a goal branch. You push when you are satisfied.
+*Mandor* is Indonesian for foreman. The session you talk to is the foreman: it plans the goal, hands the coding to Codex, ZCode and Antigravity workers that run in parallel, each in its own git worktree inside a sandbox, reads what comes back, and accepts it as one local commit on a goal branch. You push when you are satisfied.
 
 ## The problem
 
 Leading AI coding workers by hand comes down to three chores: keep each worker inside its task, read what it wrote before it reaches your branch, and pick the work back up when a quota runs out or you switch accounts. Skip one and a stray file, a deleted test or a leaked credential ends up in your history.
 
-mandor turns the chores into a loop the lead follows, and enforces the parts that must not depend on anyone's attention. A worker's sandbox limits its writes to its own worktree. The lead cannot accept a result it has not reviewed, and the commit holds exactly the tree that review showed. Nothing is pushed. State lives on disk, so a quota wall or an account switch pauses the work instead of losing it.
+mandor turns the chores into a loop the lead follows, and enforces the parts that must not depend on anyone's attention. A worker's sandbox limits its writes to its worktree, the temporary directories and the cache directories the project opens (`--worker-add-dir`), and for a ZCode worker its own home and the per-user cache directory. The lead cannot accept a result it has not reviewed, and the commit holds exactly the tree that review showed. Nothing is pushed. State lives on disk, so a quota wall or an account switch pauses the work instead of losing it.
 
 ## How it works
 
-The Claude Code session you are in is the **lead**. It plans the goal and decides every outcome. **Workers** are Codex, ZCode or Antigravity CLI processes, one per task, each in its own git worktree under a kernel sandbox, writing code and running the proof commands the lead gave them. The **mandor** CLI sits between them: it keeps the state on disk, launches the workers, builds the review pack and enforces the guards. Independent tasks run in parallel, up to `maxParallel` workers per tool (two by default).
+The Claude Code session you are in is the **lead**. It plans the goal and decides every outcome. **Workers** are Codex, ZCode or Antigravity CLI processes, one per task, each in its own git worktree, writing code and running the proof commands the lead gave them. Each is confined by a sandbox: the tool's own around the commands the model runs for Codex and Antigravity, and a `sandbox-exec` profile from mandor around the whole process for ZCode. The **mandor** CLI sits between them: it keeps the state on disk, launches the workers, builds the review pack and enforces the guards. Independent tasks run in parallel, up to `maxParallel` workers per tool (two by default).
 
 ```mermaid
 flowchart TD
@@ -71,7 +71,7 @@ flowchart TD
 1. **Plan.** `goal start <branch>` creates the goal branch and an integration worktree for it. The lead splits the goal into tasks, each with scope globs, a tier and proof commands, and writes a brief for every task.
 2. **Work.** `dispatch` makes a task worktree from the goal tip and starts a worker on it. The tier (`light`, `medium` or `heavy`) picks a model from its list of candidates, in order. `--use` pins one. `wait` returns when a task needs the lead.
 3. **Review.** `review <slug>` prints the diff stat, the changed files, the red flags and the violations, and records the tree it showed. The lead reads every changed file and runs the proof commands itself. The worker's report is not evidence.
-4. **Decide.** `accept` makes one local commit in the integration worktree. `fix` sends specific notes back to the same worker, for three rounds by default. `takeover` lets the lead make the change itself; after a stall it needs your approval.
+4. **Decide.** `accept` makes one local commit in the integration worktree. `fix` sends specific notes back to the same worker, for three rounds by default. `takeover` lets the lead make the change itself; after every candidate is exhausted or the fix rounds run out, it needs your approval.
 5. **Confirm.** The lead reruns the proofs in the integration worktree. `confirm` closes the task. `drop` removes the commit and sends the notes back to the worker as a fix round.
 
 When a worker hits a quota, a model limit or an account mismatch, the task moves to the next candidate for its tier. When every candidate is exhausted the lead asks you to choose: switch the worker account and run `mandor ready codex`, wait for the reset time that `mandor status` shows, or approve a takeover. A goal that moved while a task was in flight gets the change merged onto its new tip first, and the lead reviews again.
@@ -87,10 +87,10 @@ mandor registers two Claude Code hooks. Both do nothing outside a repository tha
 
 | Concern | What mandor does |
 | --- | --- |
-| A worker reaching beyond its task | Workers run under `sandbox-exec`, which limits their writes to their own worktree and the temporary directories. Each task carries scope globs, and the review flags files outside them. Denied paths make accept refuse: `.env` files other than their templates, keystores, signing properties, agent instruction files and `_docs/`. The commit message is held to the same list, except that it may name the secret files themselves, such as `.env` or a keystore. |
-| Credentials | A worker's environment is an allowlist: no API keys, agent sockets or tokens, and a git and gh that cannot prompt or reach credentials. The network is closed unless the project allows it. Files your account can read are not hidden from a worker: see [Before you start](#before-you-start). |
+| A worker reaching beyond its task | Each worker runs in a sandbox (its tool's own for Codex and Antigravity, a `sandbox-exec` profile from mandor for ZCode) that limits its writes to its worktree, the temporary directories and the cache directories the project opens, and for ZCode its own home and the per-user cache directory. Each task carries scope globs, and the review flags files outside them. Denied paths make accept refuse: `.env` files other than their templates, keystores, signing properties, agent instruction files and `_docs/`. The commit message is held to the same list, except that it may name the secret files themselves, such as `.env` or a keystore. |
+| Credentials | A worker's environment is an allowlist: no API keys, agent sockets or tokens, and a git and gh that cannot prompt or reach credentials. The network is closed unless the project allows it; Antigravity is the exception, as its sandbox's proxy decides. Files your account can read are not hidden from a worker: see [Before you start](#before-you-start). |
 | Unreviewed code | Accept commits only the tree the last `review` showed. An edit, a worker round, a rebase or a process left in the worktree changes that tree, and accept refuses until the lead reviews again. |
-| A hostile repository config | A repository whose git config defines a filter or merge driver is refused, because such a command would run in the directory the worker writes to. A change under a relative `core.hooksPath` is refused too. The repository's other hooks still run at commit. |
+| A hostile repository config | A repository is refused when the git configuration that applies to it, your global and system files included, defines a filter or merge driver, because such a command would run in the directory the worker writes to. A change under a relative `core.hooksPath` is refused too. The repository's own hooks still run, with your privileges and no sandbox: its commit hooks at accept, its `post-checkout` and `post-index-change` hooks when a worktree is created, and its `reference-transaction` hook when mandor creates, resets or deletes a branch. |
 | Traces of tooling in your history | The diff guards and the commit-message check refuse agent instruction files and directories (`CLAUDE.md`, `AGENTS.md`, `.claude/`, `.cursor/` and the like), symlinks that lead to denied paths, attribution to a tool or model (credits, author tags, trailers, the robot emoji), the dash glyphs U+2014, U+2013 and U+2015, and mandor's own forms of its name: the `.mandor` home path, the three `MANDOR_` variables, a command such as `mandor wait`, and the skill ids. The bare word *mandor* passes. Accept has no override. A repository about foremen says so once, with `--name-is-a-word` at `project setup`. |
 | Pushing | mandor never pushes. It commits locally with the repository's own identity and refuses a placeholder identity (`example.com`, `localhost`, `.invalid`). |
 
@@ -100,7 +100,7 @@ mandor registers two Claude Code hooks. Both do nothing outside a repository tha
 
 ### Requirements
 
-- **macOS.** Workers and every write to a worktree run under `sandbox-exec`, which exists only there.
+- **macOS.** mandor's own writes into a worktree (checkout, clean, apply and removal) and its ZCode workers run under `sandbox-exec`, which exists only there. The Codex and Antigravity CLIs confine their workers themselves.
 - **Node 22.18 or newer.** The CLI is TypeScript run directly through Node's type stripping: no build step and no runtime dependency.
 - **Codex CLI** (`codex`) on your `PATH`, logged in. Tested with 0.166.0; `mandor init` warns about any other version.
 - **ZCode** (optional): the ZCode app in `/Applications`. Tested with its CLI 0.17.1. Its workers sign in on their own: see [ZCode workers](#zcode-workers).
@@ -122,7 +122,7 @@ This repository does not ship a marketplace listing yet, so `--plugin-dir` is ho
 ## First use
 
 1. **Set up the home.** `mandor init` creates `~/.mandor` and its `config.json`, reads the Codex model list, and prints warnings: an untested Codex version, secret-like variables exported by your login shell, a sandbox that cannot be applied, or a tier candidate the model list cannot run.
-2. **Describe the repository (optional).** `mandor project setup`, run in the repository, records what workers need. Without it every list is empty and workers get no network. Each run states the whole configuration:
+2. **Describe the repository (optional).** `mandor project setup`, run in the repository, records what workers need. Without it every list is empty and workers get no network, except Antigravity, whose sandbox's proxy decides. Each run states the whole configuration:
    - `--clone <path>`: an ignored path copied from the main checkout into each worktree (build caches, downloaded SDKs). Denied and agent paths inside it are skipped. The copy is an APFS clone, so `~/.mandor` (or `MANDOR_HOME`) must be on the same volume as the repository.
    - `--setup "<command>"`: run once in each new worktree, with the worker's environment variables but without a sandbox, so it can write and reach the network like any command you run yourself. Give it only a command you trust.
    - `--shared <path or glob>`: paths more than one task touches (a changelog, a lockfile). The review flags changes to them.
@@ -172,10 +172,10 @@ The lead's commands print JSON; `status`, `show` and `logs` print plain text.
 
 ## Before you start
 
-- **Turn off Claude Code's Bash sandbox for the session that leads.** `sandbox-exec` cannot run inside another sandbox, so `goal start` and `dispatch` refuse while the session's sandbox is on, and `init` warns. The workers stay confined by mandor's own sandbox.
+- **Turn off Claude Code's Bash sandbox for the session that leads.** `sandbox-exec` cannot run inside another sandbox, so `goal start` and `dispatch` refuse while the session's sandbox is on, and `init` warns. The workers stay confined: by their tool's own sandbox for Codex and Antigravity, and by a `sandbox-exec` profile from mandor for ZCode.
 - **Workers run on your Codex login.** They inherit your Codex instructions, rules, hooks, skills and plugins: `--ignore-user-config` skips only `config.toml`.
-- **A worker can read what you can read.** Codex's `workspace-write` sandbox confines a worker's writes to its worktree and the temporary directories, not its reads, and the worker runs with your home directory. With the network closed, which is the default, what it reads can go nowhere but into its own worktree, where the review sees it, or into a temporary directory. With `--worker-network` it can send a file such as a key or a credential out, so turn that on only for a repository whose tasks you trust.
-- **Workers have no network** unless you pass `--worker-network` to `project setup`. ZCode workers only run in a project that has it: see [ZCode workers](#zcode-workers).
+- **A worker can read what you can read.** Codex's `workspace-write` sandbox confines a worker's writes to its worktree, the temporary directories and the cache directories the project opens, not its reads, and the worker runs with your home directory. Whatever a worker's model reads reaches the worker's vendor as model context. With the network closed, which is the default, the commands it runs can write what they read only into its worktree, a temporary directory or a cache directory the project opens. With `--worker-network` it can send a file such as a key or a credential out, so turn that on only for a repository whose tasks you trust. Antigravity's commands can reach whatever its sandbox's proxy lets through even without it.
+- **Workers have no network** unless you pass `--worker-network` to `project setup`. Antigravity is the exception: its sandbox's proxy decides, whatever the project says (see [Antigravity workers](#antigravity-workers)). ZCode workers only run in a project that has it: see [ZCode workers](#zcode-workers).
 - **Your repository gets branches and worktree registrations.** The goal branch, the `wip/` task branches and the worktree registrations stay until you remove them (see [State and uninstall](#state-and-uninstall)).
 
 ## Configuration
@@ -215,10 +215,10 @@ ZCode is off until you switch it on. Set `tools.zcode.enabled` to `true` in `~/.
 A ZCode worker differs from a Codex worker in five ways:
 
 - **A home of its own.** The worker runs with `~/.mandor/zcode/home` as its `HOME` and signs in there, so the sign-in of your ZCode app is never touched. The ZCode CLI reads your MCP servers, plugins, hooks, skills and instructions from `HOME`: a worker on your own home would load all of them into every turn.
-- **mandor's own sandbox.** ZCode has no sandbox of its own, so the worker runs under a `sandbox-exec` profile: it writes only to its worktree, its own home and the temporary directories.
+- **mandor's own sandbox.** ZCode has no sandbox of its own, so the worker runs under a `sandbox-exec` profile: it writes only to its worktree, its own home, the cache directories of `--worker-add-dir`, the temporary directories and the per-user cache directory (under `/var/folders`).
 - **The network is always open.** The profile cannot close the network for the worker's commands and leave it open for the CLI that runs them. A ZCode job therefore refuses to start in a project without `--worker-network`. To make up for it, the profile keeps the worker from reading what your credential directories hold (`~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gh`, the homes of the other tools and the like) and the rest of `~/.mandor`. Any other file your account can read is still readable.
 - **A browser sign-in runs out.** It lasts an hour and the CLI does not renew it. Every run then fails at once, so mandor sets the tool aside as it does one out of quota, and its tasks can move to another tool. Sign in again, then run `mandor ready zcode`. An API key does not run out. Either sign-in sits in the worker's home, which the worker's own commands can read: revoke the key at Z.ai if a run ever looks wrong.
-- **The report is checked, not enforced.** ZCode has no output schema, so the prompt states the report's format and mandor takes the last JSON object of the answer. A run that ends on another model than the task asked for is failed: ZCode falls back to your plan's default model without saying so.
+- **The report is checked, not enforced.** ZCode has no output schema, so the prompt states the report's format and mandor takes the last object of the answer that fits that format. A run that ends on another model than the task asked for is failed: ZCode falls back to your plan's default model without saying so.
 
 A bare `tools.zcode.bin` means the app's own executable in `/Applications`; give a path for an app kept elsewhere.
 
@@ -229,14 +229,14 @@ Antigravity is off until you switch it on, and Google's terms are the reason to 
 What mandor does for an Antigravity worker:
 
 - **A configuration directory of its own.** The worker runs with `~/.mandor/agy/home` in place of `~/.gemini`, so your plugins, MCP servers, hooks and rules stay out of it. A hook of yours would otherwise rewrite the worker's commands.
-- **Antigravity's own sandbox.** The worker's commands run in the CLI's sandbox: no write outside the worktree or into its git directory, and a network that reaches only what the sandbox's proxy lets through, whatever `--worker-network` says. A build that downloads its dependencies may fail there.
+- **Antigravity's own sandbox.** The worker's commands run in the CLI's sandbox. They write nowhere outside the worktree and nothing into its git directory; the cache directories of `--worker-add-dir` are the one other place they may write, if the sandbox lets them (not yet confirmed). Their network reaches only what the sandbox's proxy lets through, whatever `--worker-network` says. A build that downloads its dependencies may fail there.
 - **Narrow permissions.** Without a person to ask, the CLI refuses any tool that needs a permission and still reports success. Each run is given rules for exactly its worktree, the cache directories of `--worker-add-dir`, and commands. A run that was refused a tool is failed.
 - **Paid credits are off.** Every run switches AI credits off for itself, whatever your settings say. Past the plan's quota the CLI would otherwise bill them, with no quota error.
 - **A lost conversation starts over.** When the conversation of a fix round is gone, the CLI starts a new one without failing. mandor sees the new id and starts the task over once, from the work so far.
 
 ## State and uninstall
 
-Everything lives under `~/.mandor`, or `MANDOR_HOME` when it is set: `config.json`, the model catalog, the ZCode worker's home with its sign-in, the Antigravity worker's configuration directory, one directory per project with its event ledger, tasks, rounds and scratch files, the task and integration worktrees, the job logs, and `logs/runner.log` and `logs/hooks.log`. A repository itself gets only the worktree registrations, the goal branch, the `wip/` task branches and the commits the lead accepted.
+mandor's own state lives under `~/.mandor`, or `MANDOR_HOME` when it is set: `config.json`, the model catalog, the ZCode worker's home with its sign-in, the Antigravity worker's configuration directory, one directory per project with its event ledger, tasks, rounds and scratch files, the task and integration worktrees, the job logs, and `logs/runner.log` and `logs/hooks.log`. A repository itself gets the worktree registrations, the goal branch, the `wip/` task branches, the commits the lead accepted and, in its object store, the files mandor staged to read a task's changes (at a review, an accept, a handoff and a takeover after a failed rebase), which stay there until git prunes them. Codex also keeps its own record of each Codex worker's session in its home (`~/.codex`, or `CODEX_HOME`), among your own sessions, and mandor never removes it.
 
 A job's directory, its logs included, is removed 30 days after the job ended, unless it is the newest job of a task that is still open.
 
@@ -248,6 +248,7 @@ To stop using mandor, stop passing `--plugin-dir`. To remove its state, delete `
 - You switch worker accounts yourself. mandor keeps the record of the work and resumes it with `mandor ready <tool>`.
 - No dashboard: `mandor status`, the lead's reports in chat and the log files are the interface.
 - A repository whose git directory is kept outside its work tree, made with `git init --separate-git-dir`, works from its main checkout. A linked worktree of it is a project of its own, because git does not say where the main checkout is.
+- A filter or merge driver anywhere in the git configuration that applies to a repository makes mandor refuse it. That includes your global file: `git lfs install` writes Git LFS's filters there, and after it every repository is refused.
 
 ## Development
 
