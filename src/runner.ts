@@ -134,8 +134,9 @@ const stallFor = (status: JobStatus): StallReason => (STALLS.includes(status) ? 
 export function decideStallLocked(projectId: string, task: TaskRecord, status: JobStatus, models: ModelInfo[]): StallReason {
   const config = loadConfig();
   const preferTool = status === "model-limit" ? task.candidate?.tool ?? null : null;
-  const left = selectCandidate(task.tier, { config, models, tools: loadToolState(Math.floor(Date.now() / 1000)), active: countActiveJobs(), use: null, preferTool });
-  return "none" in left && catalogGap(task.tier, config, models) === null ? "all-exhausted" : stallFor(status);
+  const network = loadProjectConfig(projectId).workerNetwork;
+  const left = selectCandidate(task.tier, { config, models, tools: loadToolState(Math.floor(Date.now() / 1000)), active: countActiveJobs(), use: null, preferTool, network });
+  return "none" in left && catalogGap(task.tier, config, models, network) === null ? "all-exhausted" : stallFor(status);
 }
 
 // A session the current account cannot resume restarts once, fresh, from the work so far.

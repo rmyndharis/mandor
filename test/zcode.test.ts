@@ -445,12 +445,11 @@ test("a claimed command the zcode log does not show is flagged", async (t) => {
   assert.deepEqual(reviewPack(p.repo, "claim").redFlags.filter((f) => f.kind === "unrun-claim"), [{ kind: "unrun-claim", detail: "commands_run[0] has no command_execution item in the job's raw.log" }]);
 });
 
-test("dispatch refuses while an enabled tool's binary is missing, and a zcode job without the network fails with the reason in the log", async (t) => {
+test("dispatch refuses while an enabled tool's binary is missing, and a zcode candidate in a project without the network", (t) => {
   const p = project(t, { network: false });
   writeZcodeScenarios([{}]);
-  p.send("closed");
-  assert.ok(await until(() => loadState(p.id).tasks.closed.status === "stalled"), showTask(p.id, "closed"));
-  assert.match(readFileSync(join(p.home, "logs", "runner.log"), "utf8"), /zcode workers need the network/);
+  assert.throws(() => p.send("closed"), /^Error: cannot use zcode:GLM-5.3-Flash@high: zcode needs worker network, which this project does not allow$/);
+  assert.equal(loadState(p.id).tasks.closed, undefined, "no task is left behind");
   assert.equal(readZcodeLog().length, 0, "the worker never started");
   const cfg = JSON.parse(readFileSync(join(p.home, "config.json"), "utf8"));
   cfg.tools.zcode.bin = "/nonexistent/zcode";

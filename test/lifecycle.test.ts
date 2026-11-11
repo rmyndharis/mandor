@@ -1220,6 +1220,8 @@ test("reassign prefers the tool only after a model-limit", async (t) => {
   config.tools.zcode = { ...config.tools.zcode, enabled: true, bin: FAKE_ZCODE };
   config.tiers.medium = ["zcode:GLM-5.3@high", "codex:gpt-6.1-sol@high"];
   writeJsonAtomic(join(s.home, "config.json"), config);
+  // Routing passes over zcode in a project without worker network, which would leave the tier's own order untested.
+  saveProjectConfig(s.id, { ...loadProjectConfig(s.id), workerNetwork: true });
   const model = (tool: ToolName, name: string, efforts: string[]): ModelInfo => ({ tool, model: name, label: name, efforts, defaultEffort: efforts[0], hidden: false });
   writeCatalog([model("codex", "gpt-6-luna", ["medium"]), model("codex", "gpt-6.1-sol", ["high"]), model("zcode", "GLM-5.3", ["high"])]);
   tasks.goalStart(s.repo, GOAL, null);
@@ -1233,7 +1235,7 @@ test("reassign prefers the tool only after a model-limit", async (t) => {
   await workersRunning(moved.jobIds.slice(1));
   kill(-readJob(moved.jobIds[1])!.workerPid!);
   await stalled(s, "hello", "failed");
-  // After anything else the tier's own order holds; the zcode job fails without the network, which is not the point.
+  // After anything else the tier's own order holds; the zcode job fails without a sign-in, which is not the point.
   assert.deepEqual(tasks.reassign(s.repo, "hello").task.candidate, { tool: "zcode", model: "GLM-5.3", effort: "high" });
 });
 

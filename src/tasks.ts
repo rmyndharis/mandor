@@ -146,11 +146,12 @@ function takeTurnLocked(projectId: string, task: TaskRecord, preferTool: ToolNam
   const pending = task.pending!;
   // A session belongs to the candidate that holds it; a handoff is a fresh session on whatever is free.
   const use = pending.kind === "start" ? task.use : pending.kind === "resume" ? task.candidate : null;
+  const network = loadProjectConfig(projectId).workerNetwork;
   let tools: ToolState = {};
   // Reads the tools again: the wait for the lock and the git work give a tool time to be marked exhausted.
   const select = () => {
     tools = readTools();
-    return selectCandidate(task.tier, { config, models, tools, active: countActiveJobs(), use, preferTool });
+    return selectCandidate(task.tier, { config, models, tools, active: countActiveJobs(), use, preferTool, network });
   };
   const stall = (stallReason: StallReason, reason: string) => appendEvent(projectId, { t: "task.updated", at: now(), taskId: task.id, patch: { status: "stalled", stallReason }, reason });
   let step = COULD_NOT_PREPARE;
@@ -162,7 +163,7 @@ function takeTurnLocked(projectId: string, task: TaskRecord, preferTool: ToolNam
     withSlotsLock(() => {
       const picked = select();
       if ("none" in picked) {
-        const gap = catalogGap(task.tier, config, models);
+        const gap = catalogGap(task.tier, config, models, network);
         stall(gap === null ? "all-exhausted" : "failed", gap ?? `no candidate left from tier ${task.tier} up`);
       } else if ("candidate" in picked && prompt !== null) {
         const resume = pending.kind === "resume";
@@ -194,6 +195,7 @@ export function pumpLocked(projectId: string, models: ModelInfo[]): void {
   // Up front, so a bad file throws here and not inside a turn, where it would stall that task.
   readTools();
   countActiveJobs();
+  loadProjectConfig(projectId);
   for (const task of turns) if (!takeTurnLocked(projectId, task, null, config, models)) return;
 }
 
@@ -407,9 +409,9 @@ export function planSet(cwd: string, goal: string, planFile: string, description
 // Checked before task.created, so a candidate that can never start is refused rather than left waiting. Counting no
 // job active, the answer is the candidate itself with an empty effort settled, so every later pump runs the same one;
 // a full tool is the pump's to wait out.
-function checkUse(use: Candidate, tier: Tier, models: ModelInfo[]): Candidate {
+function checkUse(use: Candidate, tier: Tier, models: ModelInfo[], network: boolean): Candidate {
   const active = { codex: 0, zcode: 0, agy: 0 };
-  const checked = selectCandidate(tier, { config: loadConfig(), models, tools: loadToolState(Math.floor(Date.now() / 1000)), active, use, preferTool: null });
+  const checked = selectCandidate(tier, { config: loadConfig(), models, tools: loadToolState(Math.floor(Date.now() / 1000)), active, use, preferTool: null, network });
   return (checked as { candidate: Candidate }).candidate;
 }
 
@@ -452,16 +454,16 @@ export function dispatch(cwd: string, o: { goal: string; slug: string; tier: Tie
     if (!existsSync(bin)) throw new Error(`${tool} not found at ${bin}`);
   }
   if (!hasUsableModel(models)) throw new Error("no model catalog; run mandor models --refresh");
-  const use = o.use === null ? null : checkUse(o.use, o.tier, models);
+  const project = loadProjectConfig(id);
+  const use = o.use === null ? null : checkUse(o.use, o.tier, models, project.workerNetwork);
   // A use never reads the tier's list, so only a routed task needs a candidate there.
-  const gap = use === null ? catalogGap(o.tier, config, models) : null;
+  const gap = use === null ? catalogGap(o.tier, config, models, project.workerNetwork) : null;
   if (gap !== null) throw new Error(gap);
   // What the enabled tools said when their models were read, which the lead sees nowhere else before work starts.
   const warnings = cachedWarnings(config);
   refuseUnsupported(root);
   assertRepoOutsideHome(root);
   const body = readFileSync(o.briefFile, "utf8");
-  const project = loadProjectConfig(id);
   const all = worktreesDir(id);
   const worktree = join(all, `task-${slug}`);
   const branch = `wip/${slug}`;
@@ -966,10 +968,11 @@ export function reassign(cwd: string, slug: string): { task: TaskRecord; cursor:
     // All-exhausted says candidates exist and their limits stopped them, so a catalog holding none of them must not reach it.
     if (!hasUsableModel(models)) throw new Error("no model catalog; run mandor models --refresh");
     const config = loadConfig();
-    const gap = catalogGap(task.tier, config, models);
+    const network = loadProjectConfig(id).workerNetwork;
+    const gap = catalogGap(task.tier, config, models, network);
     if (gap !== null) throw new Error(gap);
     const preferTool = task.stallReason === "model-limit" ? task.candidate?.tool ?? null : null;
-    const left = selectCandidate(task.tier, { config, models, tools: readTools(), active: countActiveJobs(), use: null, preferTool });
+    const left = selectCandidate(task.tier, { config, models, tools: readTools(), active: countActiveJobs(), use: null, preferTool, network });
     const update = (patch: Partial<TaskRecord>, reason: string) => appendEvent(id, { t: "task.updated", at: now(), taskId: slug, patch, reason });
     if ("none" in left) update({ status: "stalled", stallReason: "all-exhausted" }, `no candidate left from tier ${task.tier} up`);
     else {

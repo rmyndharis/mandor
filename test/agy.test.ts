@@ -10,11 +10,12 @@ import { cachedWarnings } from "../src/modelcache.ts";
 import { DEFAULT_CONFIG, resolveBin } from "../src/config.ts";
 import type { Candidate, JobRecord, RawRun } from "../src/contracts.ts";
 import { processStart, projectIdFor, scratchDir } from "../src/home.ts";
-import { loadState, loadToolState } from "../src/ledger.ts";
+import { appendEvent, loadState, loadToolState, now } from "../src/ledger.ts";
 import { emptyProjectConfig, saveProjectConfig } from "../src/provision.ts";
 import { reviewPack } from "../src/review.ts";
 import { showTask } from "../src/status.ts";
-import { dispatch, goalStart, verdictFix } from "../src/tasks.ts";
+import { withProjectLock } from "../src/store.ts";
+import { dispatch, goalStart, loadCatalog, pumpLocked, reassign, verdictFix } from "../src/tasks.ts";
 import { readAgyLog, temp, tempHome, tempRepo, writeAgyConfig, writeAgyScenarios } from "./helpers.ts";
 
 const FAKE = join(import.meta.dirname, "fake-bin", "fake-agy.mjs");
@@ -253,12 +254,36 @@ function project(t: TestContext, opts: { network?: boolean } = {}) {
   return { home, repo, id, send };
 }
 
-test("an agy job in a project without worker network never starts the worker and says why in the log", async (t) => {
+test("the pump and reassign read the project's worker network when they route", async (t) => {
+  const p = project(t);
+  writeAgyScenarios([{}, {}, {}]);
+  const set = (slug: string, patch: object) => appendEvent(p.id, { t: "task.updated", at: now(), taskId: slug, patch, reason: "test" });
+  const net = (workerNetwork: boolean) => saveProjectConfig(p.id, { ...emptyProjectConfig(), workerNetwork });
+  p.send("first");
+  assert.ok(await until(() => loadState(p.id).tasks.first.status === "needs-review"), showTask(p.id, "first"));
+  // A task that waits for the first, pinned to agy; the project then stops allowing the network.
+  dispatch(p.repo, { goal: GOAL, slug: "later", tier: "light", briefFile: join(scratchDir(p.id, "t"), "brief.md"), scope: [], use: FLASH, after: "first" });
+  set("first", { status: "accepted" });
+  net(false);
+  withProjectLock(p.id, () => pumpLocked(p.id, loadCatalog()));
+  const later = loadState(p.id).tasks.later;
+  assert.deepEqual([later.status, later.stallReason], ["stalled", "failed"], "the pump did not start it");
+  assert.match(readFileSync(join(p.home, "logs", "runner.log"), "utf8"), /agy needs worker network, which this project does not allow/);
+  // Reassign routes by the same setting: a tier that only agy lists has no candidate without the network.
+  const config = JSON.parse(readFileSync(join(p.home, "config.json"), "utf8"));
+  config.tiers = { light: ["agy:gemini-3.8-flash-medium"], medium: ["agy:gemini-3.8-flash-medium"], heavy: ["agy:gemini-3.8-flash-medium"] };
+  writeFileSync(join(p.home, "config.json"), JSON.stringify(config));
+  set("first", { status: "stalled", stallReason: "failed" });
+  assert.throws(() => reassign(p.repo, "first"), /^Error: no candidate for tier light can run in this project, which allows no worker network: allow it with mandor project setup --worker-network$/);
+  net(true);
+  assert.equal(reassign(p.repo, "first").task.status, "working");
+});
+
+test("dispatch refuses an agy candidate in a project without worker network, and no worker starts", (t) => {
   const p = project(t, { network: false });
   writeAgyScenarios([{}]);
-  p.send("closed");
-  assert.ok(await until(() => loadState(p.id).tasks.closed.status === "stalled"), showTask(p.id, "closed"));
-  assert.match(readFileSync(join(p.home, "logs", "runner.log"), "utf8"), /agy workers .*project setup --worker-network/);
+  assert.throws(() => p.send("closed"), /^Error: cannot use agy:gemini-3\.8-flash-low.*: agy needs worker network, which this project does not allow$/);
+  assert.equal(loadState(p.id).tasks.closed, undefined, "no task is left behind");
   // Reading the model list runs the CLI too, so only a run with a prompt is a worker.
   assert.equal(readAgyLog().filter((e) => e.argv.includes("-p")).length, 0, "the worker never started");
 });

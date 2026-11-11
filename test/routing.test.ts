@@ -15,6 +15,7 @@ import { appendEvent, appendToolEvent, ledgerSize, loadState, now, readEvents } 
 import { catalogGap, countActiveJobs, selectCandidate, tierWarnings } from "../src/routing.ts";
 import { decideStallLocked, readJob } from "../src/runner.ts";
 import { withProjectLock, writeFileAtomic, writeJsonAtomic } from "../src/store.ts";
+import { emptyProjectConfig, saveProjectConfig } from "../src/provision.ts";
 import { reviewPack } from "../src/review.ts";
 import { confirm, dispatch, goalStart, loadCatalog, pumpLocked, verdictAccept } from "../src/tasks.ts";
 import { waitForNext } from "../src/wait.ts";
@@ -69,7 +70,7 @@ function withZcode(): Config {
 }
 
 const route = (tier: Tier, over: Partial<Context> = {}) =>
-  selectCandidate(tier, { config: DEFAULT_CONFIG, models: CATALOG, tools: {}, active: IDLE, use: null, preferTool: null, ...over });
+  selectCandidate(tier, { config: DEFAULT_CONFIG, models: CATALOG, tools: {}, active: IDLE, use: null, preferTool: null, network: true, ...over });
 
 // One candidate in one tier, so nothing else can answer.
 function only(candidate: string, models: ModelInfo[]) {
@@ -168,8 +169,39 @@ test("a use that cannot run throws the reason, also when its tool is full", () =
   assert.throws(use("codex:gpt-6-luna@high", { tools: spent("codex"), active: CODEX_FULL }), /codex is exhausted/);
 });
 
+test("a tool that needs worker network is passed over in a project without it, and a use of one is refused", () => {
+  const cfg = withZcode();
+  const codexSpent = spent("codex");
+  assert.deepEqual(route("heavy", { config: cfg, tools: codexSpent }), picked("zcode:GLM-5.3@max"));
+  assert.deepEqual(route("heavy", { config: cfg, tools: codexSpent, network: false }), { none: true }, "ZCode needs the network");
+  // Antigravity too: a candidate in the light tier, a model in the catalog, and nothing else that could run.
+  const agyConfig = structuredClone(DEFAULT_CONFIG);
+  agyConfig.tools.agy.enabled = true;
+  const agyModels = [...CATALOG, model("agy", "gemini-3.8-flash-medium", ["medium"])];
+  const agy = { candidate: { tool: "agy", model: "gemini-3.8-flash-medium", effort: "medium" } };
+  assert.deepEqual(route("light", { config: agyConfig, models: agyModels, tools: codexSpent }), agy);
+  assert.deepEqual(route("light", { config: agyConfig, models: agyModels, tools: codexSpent, network: false }), { none: true });
+  assert.deepEqual(route("heavy", { config: cfg, network: false }), picked("codex:gpt-6-astra@ultra"), "Codex does not");
+  assert.throws(() => route("light", { config: cfg, use: parseCandidate("zcode:GLM-5.3-Flash@high"), network: false }),
+    /^Error: cannot use zcode:GLM-5.3-Flash@high: zcode needs worker network, which this project does not allow$/);
+  assert.deepEqual(route("light", { config: cfg, use: parseCandidate("zcode:GLM-5.3-Flash@high") }), picked("zcode:GLM-5.3-Flash@high"));
+});
+
+test("catalogGap says that worker network is what a tier lacks when only tools that need it could run", () => {
+  const cfg = withZcode();
+  cfg.tiers = { light: ["zcode:GLM-5.3-Flash@high"], medium: ["zcode:GLM-5.3@high"], heavy: ["zcode:GLM-5.3@max"] };
+  assert.equal(catalogGap("light", cfg, CATALOG, true), null);
+  assert.equal(catalogGap("light", cfg, CATALOG, false), "no candidate for tier light can run in this project, which allows no worker network: allow it with mandor project setup --worker-network");
+  // Without a candidate that could run at all, the catalog is the fault, whatever the network.
+  cfg.tiers.light = ["zcode:GLM-renamed@high"];
+  cfg.tiers.medium = ["zcode:GLM-renamed@high"];
+  cfg.tiers.heavy = ["zcode:GLM-renamed@high"];
+  assert.equal(catalogGap("light", cfg, CATALOG, false), gapFor("light"));
+  assert.equal(catalogGap("light", DEFAULT_CONFIG, CATALOG, false), null, "a tier with a Codex candidate needs no network");
+});
+
 test("catalogGap names a tier when no candidate of it or a heavier one could run, whatever the tool state", () => {
-  const gap = (tier: Tier, models: ModelInfo[], config = DEFAULT_CONFIG) => catalogGap(tier, config, models);
+  const gap = (tier: Tier, models: ModelInfo[], config = DEFAULT_CONFIG) => catalogGap(tier, config, models, true);
   assert.equal(gap("light", CATALOG), null);
   assert.equal(gap("light", [model("codex", "gpt-6-astra", ["ultra"])]), null, "a heavier tier's candidate counts");
   assert.equal(gap("heavy", [model("codex", "gpt-6-luna", ["medium"])]), gapFor("heavy"), "a lighter tier's does not");
@@ -965,5 +997,7 @@ test("decideStallLocked gives all-exhausted only when routing has nothing left",
   assert.equal(decide("model-limit", RENAMED_CATALOG), "model-limit");
 
   writeJsonAtomic(join(process.env.MANDOR_HOME!, "config.json"), withZcode());
+  assert.equal(decide("quota"), "all-exhausted", "zcode is left, but the project allows no worker network");
+  saveProjectConfig(p.id, { ...emptyProjectConfig(), workerNetwork: true });
   assert.equal(decide("quota"), "quota", "another tool is left");
 });

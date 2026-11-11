@@ -16,6 +16,11 @@ export function countActiveJobs(): Record<ToolName, number> {
   return active;
 }
 
+// Tools whose commands reach the network whatever the project says: ZCode's sandbox cannot close it for them, and
+// Antigravity's own proxy decides. A job of theirs is refused in a project without worker network, so routing passes
+// them over there.
+const NEEDS_NETWORK: readonly ToolName[] = ["zcode", "agy"];
+
 // A catalog with nothing it could run says something is wrong with the catalog, not with the account. Routing's answer
 // from it must never read as every candidate gone: all-exhausted sends the user to switch accounts.
 export function hasUsableModel(models: ModelInfo[]): boolean {
@@ -24,9 +29,11 @@ export function hasUsableModel(models: ModelInfo[]): boolean {
 
 // What is wrong when no candidate of the tier or a heavier one could run, whatever the tool state: a model the vendor
 // renamed, or a typo in the config. Null otherwise, and only then does `none` mean the candidates are exhausted.
-export function catalogGap(tier: Tier, config: Config, models: ModelInfo[]): string | null {
+export function catalogGap(tier: Tier, config: Config, models: ModelInfo[], network: boolean): string | null {
   const candidates = TIER_ORDER.slice(TIER_ORDER.indexOf(tier)).flatMap((t) => config.tiers[t]);
-  if (candidates.some((s) => typeof settle(parseCandidate(s), { config, models, tools: {} }) !== "string")) return null;
+  const runs = (allowed: boolean) => candidates.some((s) => typeof settle(parseCandidate(s), { config, models, tools: {}, network: allowed }) !== "string");
+  if (runs(network)) return null;
+  if (!network && runs(true)) return `no candidate for tier ${tier} can run in this project, which allows no worker network: allow it with mandor project setup --worker-network`;
   return `no candidate for tier ${tier} can run: no listed model and effort match the config; see mandor models`;
 }
 
@@ -37,18 +44,20 @@ export function tierWarnings(config: Config, models: ModelInfo[]): string[] {
   if (!hasUsableModel(models)) return [];
   return TIER_ORDER.flatMap((tier) => {
     const unusable = config.tiers[tier].map(parseCandidate).filter((c) => config.tools[c.tool].enabled)
-      .map((c) => settle(c, { config, models, tools: {} })).filter((why) => typeof why === "string").map((why) => `tier ${tier}: ${why}`);
-    const gap = catalogGap(tier, config, models);
+      .map((c) => settle(c, { config, models, tools: {}, network: true })).filter((why) => typeof why === "string").map((why) => `tier ${tier}: ${why}`);
+    const gap = catalogGap(tier, config, models, true);
     return gap === null ? unusable : [...unusable, gap];
   });
 }
 
-interface RouteContext { config: Config; models: ModelInfo[]; tools: ToolState; active: Record<ToolName, number>; use: Candidate | null; preferTool: ToolName | null }
+// network: whether the project allows its workers the network.
+interface RouteContext { config: Config; models: ModelInfo[]; tools: ToolState; active: Record<ToolName, number>; use: Candidate | null; preferTool: ToolName | null; network: boolean }
 
 // The candidate with its effort settled, or the reason it cannot run whatever the slots say.
-function settle(c: Candidate, { config, models, tools }: Pick<RouteContext, "config" | "models" | "tools">): Candidate | string {
+function settle(c: Candidate, { config, models, tools, network }: Pick<RouteContext, "config" | "models" | "tools" | "network">): Candidate | string {
   const name = `${c.tool}:${c.model}`;
   if (!config.tools[c.tool].enabled) return `${c.tool} is not enabled`;
+  if (!network && NEEDS_NETWORK.includes(c.tool)) return `${c.tool} needs worker network, which this project does not allow`;
   const model = models.find((m) => m.tool === c.tool && m.model === c.model);
   if (model === undefined) return `${name} is not in the model catalog`;
   if (model.hidden) return `${name} is hidden`;
