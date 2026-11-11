@@ -10,17 +10,24 @@ All notable changes to mandor are recorded here. The format follows [Keep a Chan
 - The README says that the commit hooks at accept can run scripts that the reviewed change altered, that a commit which a hook changes is rolled back, and that mandor starts no git command that names a remote.
 - The help and the README describe `mandor models` as the list read at the last refresh.
 - The lead's playbook covers a task that stalls on a filter or merge driver, as it covers a command that refuses one.
+- An Antigravity job is refused in a project without `--worker-network`, as a ZCode job is. Run `mandor project setup --worker-network` to allow it.
+- `init`, `models`, `project setup`, `goal start` and `dispatch` refuse a `MANDOR_HOME` inside a git working tree.
 
 ### Fixed
 
 - A new worktree, a reset of a task worktree and a drop no longer fail when the configuration sets `submodule.recurse` and the repository has an initialized submodule.
 - A task stalled because the handoff after an account mismatch could not be built says so in `wait` and `show`, and names the runner log, instead of repeating the account mismatch.
+- `reassign`, `ready`, a fix round and `drop` refuse to start work where `sandbox-exec` cannot confine, and a runner there fails its job before the worker starts, with the cause in the runner log.
 
 ### Security
 
 - Creating a worktree no longer runs a filter or merge driver that only the worktree's own configuration defines.
 - A hook that the git configuration defines no longer runs in a git call that mandor makes in a worktree, except in the commit of an accept.
 - The commit of an accept refuses a signing program, or a default ssh key command, that is a path relative to the worktree.
+- A relative path in `tools.<tool>.bin` or `MANDOR_CODEX_BIN` is refused instead of resolved against the directory of the command, which can be a task worktree.
+- A partial clone is refused, as git would fetch missing objects from its remote by itself.
+- A `--deny` entry that names a directory covers everything under it in a commit, as a glob that matches a directory already did in a clone. An entry that ends in a slash names a directory in both.
+- The worktree root is verified before the Antigravity settings or the ZCode profile are built from it.
 
 ## [0.2.0] - 2026-11-11
 
