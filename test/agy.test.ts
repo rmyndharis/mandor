@@ -6,6 +6,7 @@ import { test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { agyHome, createAgyAdapter, TESTED_AGY_VERSION } from "../src/adapters/agy.ts";
 import { getAdapter, modelsReport, readModelCache, refreshModels } from "../src/adapters/index.ts";
+import { cachedWarnings } from "../src/modelcache.ts";
 import { DEFAULT_CONFIG, resolveBin } from "../src/config.ts";
 import type { Candidate, JobRecord, RawRun } from "../src/contracts.ts";
 import { processStart, projectIdFor, scratchDir } from "../src/home.ts";
@@ -278,6 +279,38 @@ test("the catalog holds agy's models next to codex's, and the report says what u
   assert.ok(modelsReport(cfg, false).warnings.includes(`agy 1.6.0 is not the tested version ${TESTED_AGY_VERSION}`));
   cfg.tools.agy.enabled = false;
   assert.ok(!modelsReport(cfg, true).warnings.some((w) => w.startsWith("agy")), "a tool that is off has nothing to say");
+});
+
+test("a refresh stores each enabled tool's warnings, and only an enabled tool has any to say", () => {
+  const home = tempHome();
+  writeAgyConfig(home);
+  const cfg = JSON.parse(readFileSync(join(home, "config.json"), "utf8"));
+  refreshModels(cfg);
+  const stored = readModelCache()!.warnings;
+  assert.deepEqual(Object.keys(stored ?? {}).sort(), ["agy", "codex"]);
+  assert.ok(stored!.agy!.some((w) => /^agy is on: /.test(w)), JSON.stringify(stored));
+  assert.ok(stored!.codex!.includes("codex has no per-run switch to keep workers off workspace credits"), JSON.stringify(stored));
+  assert.deepEqual(cachedWarnings(cfg), [...stored!.codex!, ...stored!.agy!]);
+  assert.deepEqual(modelsReport(cfg, false).warnings.filter((w) => !w.includes("login shell")), cachedWarnings(cfg).filter((w) => !w.includes("login shell")));
+  // A tool that is off says nothing, to the commands that print and to the ones that only read the stored text.
+  cfg.tools.codex.enabled = false;
+  for (const warnings of [modelsReport(cfg, false).warnings, cachedWarnings(cfg)]) assert.ok(!warnings.some((w) => w.startsWith("codex") || w.includes("login shell")), JSON.stringify(warnings));
+  assert.deepEqual(cachedWarnings(cfg), stored!.agy);
+  cfg.tools.agy.enabled = false;
+  assert.deepEqual(cachedWarnings(cfg), []);
+  // A tool switched on since the refresh has its warnings worked out, and a problem of one switched off is not printed.
+  const later = JSON.parse(readFileSync(join(home, "config.json"), "utf8"));
+  later.tools.agy.enabled = false;
+  refreshModels(later);
+  later.tools.agy.enabled = true;
+  assert.ok(modelsReport(later, false).warnings.some((w) => /^agy is on: /.test(w)), "agy was off at the refresh");
+  const cache = JSON.parse(readFileSync(join(home, "models.json"), "utf8"));
+  writeFileSync(join(home, "models.json"), JSON.stringify({ ...cache, problems: { agy: "agy models listed no model" } }));
+  later.tools.agy.enabled = false;
+  assert.ok(!modelsReport(later, false).warnings.some((w) => w.startsWith("agy")), "agy is off now");
+  // A cache from before the warnings were stored has none to give, and is no error.
+  writeFileSync(join(home, "models.json"), JSON.stringify({ fetchedAt: new Date().toISOString(), codexVersion: "0.166.0", models: [] }));
+  assert.deepEqual(cachedWarnings(config()), []);
 });
 
 test("a task sent to agy runs in its worktree, a fix resumes its conversation, and each run shows what it added to the conversation's usage", async (t) => {

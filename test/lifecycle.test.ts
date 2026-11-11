@@ -774,6 +774,14 @@ test("modify/delete: rebase-failed, worker changes restored, base unchanged", as
   assert.ok(!lastUpdate(s, "hello").reason.includes("f.txt"));
 });
 
+test("dispatch hands the lead the warnings of the enabled tools, which it would not otherwise see before work starts", (t) => {
+  const s = setup(t);
+  tasks.goalStart(s.repo, GOAL, null);
+  writeScenarios([DONE]);
+  const sent = send(s, "hello") as { warnings?: string[] };
+  assert.ok(sent.warnings?.includes("codex has no per-run switch to keep workers off workspace credits"), JSON.stringify(sent));
+});
+
 test("accept refuses while the goal branch holds a commit mandor did not record, and status names it", async (t) => {
   const s = setup(t);
   const { goal } = tasks.goalStart(s.repo, GOAL, null);

@@ -158,7 +158,7 @@ You run:
   project setup [--clone <path>]... [--setup <command>] [--shared <glob>]... [--deny <glob>]...
                 [--generator <clone path>=<glob>]... [--worker-network] [--worker-add-dir <dir>]...
                 [--name-is-a-word]
-  status [--json]               goals, tasks, jobs and exhausted tools of this repository
+  status [--json]               goals, tasks, jobs, exhausted tools (with the reason) and unrecorded goal commits
   show <slug>                   a task's outcome, its jobs with the usage of each run, and its round files
   logs <slug>                   the paths of a task's job logs
   goal adopt <branch>           keep, as your own, the commits on a goal branch that mandor did not make

@@ -100,7 +100,7 @@ After the user approves a takeover, run `mandor verdict <slug> takeover --approv
 
 ## 11. Reporting
 
-Report each event to the user in their language, one short line per event.
+Report each event to the user in their language, one short line per event. The session-start summary lists `Warnings:`, and `dispatch` prints `warnings`, for the tools that are switched on: tell the user each warning once in a conversation, before work that depends on it.
 
 ## 12. What is the user's to change
 

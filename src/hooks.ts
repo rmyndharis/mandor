@@ -2,7 +2,8 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { formatCandidate } from "./config.ts";
+import { formatCandidate, readConfig } from "./config.ts";
+import { cachedWarnings } from "./modelcache.ts";
 import type { TaskRecord } from "./contracts.ts";
 import { processAlive, projectDir } from "./home.ts";
 import { loadState, loadToolState, readEvents, replay } from "./ledger.ts";
@@ -12,9 +13,10 @@ import { resolveProject } from "./tasks.ts";
 import { commandAt, commandIn, endsOpen, looseCommand, mayStart, replaceTraces } from "./toolname.ts";
 import { nextFor } from "./wait.ts";
 
-// With the other lines of the summary, two lists of this size stay under its limit of 9,000 characters.
-const LIST_CHARS = 4000;
+// With the other lines of the summary, the lists of these sizes stay under its limit of 9,000 characters.
+const LIST_CHARS = 3400;
 const MAX_TASKS = 30;
+const WARNING_CHARS = 1400;
 // Under clampDetail's limit even with "+N more" after it, so the clamp never cuts a key.
 const KEY_CHARS = 280;
 const STDIN_MS = 2000;
@@ -93,13 +95,17 @@ export function sessionStartText(input: { cwd: string }): string {
     return `- ${t.id}: ${t.status}${t.stallReason === null ? "" : ` (${t.stallReason})`}, ${t.candidate === null ? "no candidate" : formatCandidate(t.candidate)}, seq ${t.seq}, fix rounds ${t.fixRounds}${next === null ? "" : `; next: ${next}`}`;
   });
   const exhausted = Object.keys(loadToolState(Date.now() / 1000));
+  // Fixed phrases of mandor's, kept with the model list, so no tool runs here.
+  const config = readConfig();
+  const warningLines = config === null ? [] : cachedWarnings(config).map((w) => `- ${w}`);
   return [
     ...list("Goals:", fit(goalLines, LIST_CHARS)),
     ...list("Tasks:", fit(taskLines, LIST_CHARS, MAX_TASKS)),
     ...(exhausted.length > 0 ? [`Exhausted: ${clampDetail(fit(exhausted, KEY_CHARS).join(", "))}`] : []),
+    ...list("Warnings:", fit(warningLines, WARNING_CHARS)),
     `Cursor: ${cursor}`,
     "mandor is active in this project. Run `mandor status` for details. If you are leading this work, load the `mandor:lead` skill, then handle every task above that gives a next action.",
-    `After that, if a job is queued or running, run \`mandor wait --since ${cursor}\` in the background.`,
+    `After that, if a job is queued or running, or a task waits to start, run \`mandor wait --since ${cursor}\` in the background.`,
   ].join("\n");
 }
 

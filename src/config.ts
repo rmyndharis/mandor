@@ -113,6 +113,16 @@ function withTierNames(raw: unknown): unknown {
   return { ...raw, tiers };
 }
 
+// The config as it stands, for what must write nothing (the hooks): null when there is none or it cannot be read.
+export function readConfig(): Config | null {
+  try {
+    const config = withTierNames(readJson(join(mandorHome(), "config.json")));
+    return validateConfig(config).length === 0 ? (config as Config) : null;
+  } catch {
+    return null;
+  }
+}
+
 // A present file is the whole config: it is not merged with the defaults.
 export function loadConfig(): Config {
   const file = join(mandorHome(), "config.json");

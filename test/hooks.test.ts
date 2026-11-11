@@ -137,7 +137,7 @@ function taskRecord(slug: string, status: TaskStatus, over: Partial<TaskRecord> 
 
 const finalLines = (cursor: number) => [
   "mandor is active in this project. Run `mandor status` for details. If you are leading this work, load the `mandor:lead` skill, then handle every task above that gives a next action.",
-  `After that, if a job is queued or running, run \`mandor wait --since ${cursor}\` in the background.`,
+  `After that, if a job is queued or running, or a task waits to start, run \`mandor wait --since ${cursor}\` in the background.`,
 ];
 
 // Outside a project a hook costs the session nothing, whatever the environment.
@@ -359,6 +359,9 @@ test("the summary stays under 9000 chars however long the goals and tasks, and k
   for (let i = 0; i < 200; i++) appendEvent(s.id, { t: "task.created", at: now(), task: taskRecord(`${i}-${"s".repeat(240)}`, "working") });
   const keys = Array.from({ length: 100 }, (_, i) => `codex:${"m".repeat(40)}-${i}`);
   for (const key of keys) appendToolEvent({ t: "tool.exhausted", at: now(), key, resetsAt: null, detail: "x" });
+  // A model list that holds more warnings than fit: the login shell's secret-like names alone can be that many.
+  const warned = Array.from({ length: 60 }, (_, i) => `the worker login shell exports secret-like variables that worker commands can read: ${"V".repeat(60)}_${i}`);
+  writeJsonAtomic(join(s.home, "models.json"), { fetchedAt: now(), codexVersion: "0.1.0", versions: { codex: "0.1.0" }, problems: {}, warnings: { codex: warned }, models: [] });
   const cursor = ledgerSize(s.id);
   const r = hook("session-start", { cwd: s.repo });
   assert.equal(r.status, 0, r.stderr);
@@ -376,9 +379,11 @@ test("the summary stays under 9000 chars however long the goals and tasks, and k
   assert.equal(listed.length + parseInt(unlisted.slice(1)), 100);
   assert.ok(exhausted.length <= "Exhausted: ".length + 300, `${exhausted.length} chars`);
   const more = lines.filter((l) => /^\+\d+ more$/.test(l)).map((l) => Number(l.slice(1, l.indexOf(" "))));
-  assert.equal(more.length, 2, "both cut lists say so");
+  assert.equal(more.length, 3, "all three cut lists say so");
+  assert.ok(lines.includes("Warnings:") && lines.some((l) => l.startsWith("- the worker login shell exports")), "the warnings have room too");
   assert.equal(lines.filter((l) => l.startsWith("- feat/long-")).length + more[0], 41, "the 40 long goals and the project's first");
   assert.equal(lines.filter((l) => /^- \d+-/.test(l)).length + more[1], 200);
+  assert.equal(lines.filter((l) => l.startsWith("- the worker login shell exports")).length + more[2], 60);
 });
 
 test("the summary lists exhausted keys, and no detail, excerpt or reason", () => {
@@ -398,6 +403,23 @@ test("the summary lists exhausted keys, and no detail, excerpt or reason", () =>
   const lines = r.stdout.trimEnd().split("\n");
   assert.ok(lines.includes("Exhausted: codex, codex:gpt-6-luna"), r.stdout);
   assert.ok(lines.includes("- a: stalled, no candidate, seq 1, fix rounds 0"), r.stdout);
+});
+
+test("the summary lists what the enabled tools warned of when their models were last read, and reads nothing else for it", () => {
+  const s = project();
+  const text = () => hook("session-start", { cwd: s.repo }).stdout;
+  assert.doesNotMatch(text(), /Warnings:/, "no model list, nothing to say");
+  const codex = ["codex has no per-run switch to keep workers off workspace credits", "codex 0.1.0 is not the tested version 0.166.0"];
+  writeJsonAtomic(join(s.home, "models.json"), {
+    fetchedAt: now(), codexVersion: "0.1.0", versions: { codex: "0.1.0" }, problems: { codex: "codex debug models failed: LEAKED-TEXT" }, models: [],
+    warnings: { codex, agy: ["agy is on: Google's terms for consumer plans do not cover driving the Antigravity CLI from another tool"] },
+  });
+  const lines = text().trimEnd().split("\n");
+  const at = lines.indexOf("Warnings:");
+  assert.deepEqual(lines.slice(at, at + 3), ["Warnings:", `- ${codex[0]}`, `- ${codex[1]}`], "only codex is enabled, so agy has none to say");
+  assert.equal(lines[at + 3], `Cursor: ${ledgerSize(s.id)}`);
+  assert.doesNotMatch(text(), /LEAKED-TEXT/, "the text of a failed listing is for models to print, not for a summary");
+  assert.deepEqual(hookLog(s.home), []);
 });
 
 test("the summary gives a task that needs the lead its stall reason and next action, integrating and takeover included", () => {

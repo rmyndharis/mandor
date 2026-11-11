@@ -13,6 +13,7 @@ import {
 import { checkCommitMessage, checkDiff, checkName } from "./guards.ts";
 import { assertOutsideRepos, jobDir, mandorHome, processAlive, processStart, projectDir, projectIdFor, roundDir, workerEnv, worktreesDir } from "./home.ts";
 import { appendEvent, appendToolEvent, ledgerSize, listProjects, loadState, loadToolState, now, readEvents } from "./ledger.ts";
+import { cachedWarnings } from "./modelcache.ts";
 import { DEFAULT_DENY, loadProjectConfig, provisionWorktree, type ProjectConfig } from "./provision.ts";
 import { catalogGap, countActiveJobs, hasUsableModel, selectCandidate } from "./routing.ts";
 import { cancelMarker, completeJobLocked, failedResult, logRunner, logRunnerTail, readJob } from "./runner.ts";
@@ -435,7 +436,7 @@ export function goalAdopt(cwd: string, branch: string): { branch: string; adopte
 
 // Three phases, so git and provisioning run without the project lock: reserve the slug, build the worktree, record.
 export function dispatch(cwd: string, o: { goal: string; slug: string; tier: Tier; briefFile: string;
-  scope: string[]; use: Candidate | null; after: string | null }): { task: TaskRecord; cursor: number } {
+  scope: string[]; use: Candidate | null; after: string | null }): { task: TaskRecord; cursor: number; warnings?: string[] } {
   const { root, id } = resolveProject(cwd);
   refuseUnconfined();
   assertHomeOutsideRepos();
@@ -455,6 +456,8 @@ export function dispatch(cwd: string, o: { goal: string; slug: string; tier: Tie
   // A use never reads the tier's list, so only a routed task needs a candidate there.
   const gap = use === null ? catalogGap(o.tier, config, models) : null;
   if (gap !== null) throw new Error(gap);
+  // What the enabled tools said when their models were read, which the lead sees nowhere else before work starts.
+  const warnings = cachedWarnings(config);
   refuseUnsupported(root);
   assertRepoOutsideHome(root);
   const body = readFileSync(o.briefFile, "utf8");
@@ -495,7 +498,7 @@ export function dispatch(cwd: string, o: { goal: string; slug: string; tier: Tie
       created = true;
       rmSync(reserved, { force: true });
       pumpAfterCommand(id, models, `dispatch of ${slug}`);
-      return { task: loadState(id).tasks[slug], cursor };
+      return { task: loadState(id).tasks[slug], cursor, ...(warnings.length > 0 ? { warnings } : {}) };
     })!;
   } catch (e) {
     if (!created) {

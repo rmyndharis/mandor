@@ -47,6 +47,10 @@ test("lead skill tells a new conversation to handle integrating and takeover tas
   assert.ok(lead.includes("(needs-review, stalled, integrating or takeover), then wait from the summary's cursor"));
 });
 
+test("lead skill has the user told each warning of a session summary or a dispatch", () => {
+  assert.ok(read("lead").includes("tell the user each warning once in a conversation"));
+});
+
 test("status skill runs mandor status", () => {
   assert.ok(read("status").includes("mandor status"));
 });

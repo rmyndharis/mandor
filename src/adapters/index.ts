@@ -5,22 +5,37 @@ import { WORKER_TOOLS } from "../config.ts";
 import type { Adapter, ModelInfo, ToolName } from "../contracts.ts";
 import { mandorHome } from "../home.ts";
 import { clampDetail, ensureDir, readJson, writeJsonAtomic } from "../store.ts";
+import type { ModelCache } from "../modelcache.ts";
+import { cacheFile, readModelCache } from "../modelcache.ts";
 import { agyWarnings, createAgyAdapter, TESTED_AGY_VERSION } from "./agy.ts";
 import { codexWarnings, createCodexAdapter } from "./codex.ts";
 import { createZcodeAdapter, zcodeWarnings } from "./zcode.ts";
 
 export const MODELS_MAX_AGE_MS = 5 * 60 * 1000;
 
-// problems: why a tool's models are the ones of an earlier refresh, or none.
-export interface ModelCache { fetchedAt: string; codexVersion: string; versions: Partial<Record<ToolName, string>>; problems: Partial<Record<ToolName, string>>; models: ModelInfo[] }
-
-const cacheFile = () => join(mandorHome(), "models.json");
+export { readModelCache };
+export type { ModelCache };
 
 export function getAdapter(tool: ToolName, cfg: Config): Adapter {
   if (tool === "codex") return createCodexAdapter(cfg);
   if (tool === "zcode") return createZcodeAdapter(cfg);
   if (tool === "agy") return createAgyAdapter(cfg);
   throw new Error(`adapter for ${tool} is not available`);
+}
+
+// What a tool says about its version and its terms. A tool with a problem of its own has that to say, not a word about
+// its version.
+function toolWarnings(tool: ToolName, versions: ModelCache["versions"], problems: ModelCache["problems"]): string[] {
+  if (tool === "codex") return codexWarnings(versions.codex || null);
+  if (tool === "zcode") return problems.zcode === undefined ? zcodeWarnings(versions.zcode ?? null) : [];
+  return agyWarnings(problems.agy === undefined ? versions.agy ?? null : TESTED_AGY_VERSION);
+}
+
+const enabledTools = (cfg: Config) => WORKER_TOOLS.filter((t) => cfg.tools[t].enabled);
+
+// What each enabled tool says; a tool that is off says nothing.
+function warningsOf(cfg: Config, versions: ModelCache["versions"], problems: ModelCache["problems"]): ModelCache["warnings"] {
+  return Object.fromEntries(enabledTools(cfg).map((t) => [t, toolWarnings(t, versions, problems)]));
 }
 
 // Asks every enabled tool for its models. A tool that cannot list them keeps the ones it listed last, as a task may
@@ -47,18 +62,8 @@ export function refreshModels(cfg: Config): ModelInfo[] {
     }
   }
   if (listed === 0 && failure !== undefined) throw failure;
-  writeJsonAtomic(cacheFile(), { fetchedAt: new Date().toISOString(), codexVersion: versions.codex ?? "", versions, problems, models });
+  writeJsonAtomic(cacheFile(), { fetchedAt: new Date().toISOString(), codexVersion: versions.codex ?? "", versions, problems, warnings: warningsOf(cfg, versions, problems), models });
   return models;
-}
-
-// A file from before a field existed reads as one without it.
-export function readModelCache(): ModelCache | null {
-  try {
-    const c = readJson<ModelCache>(cacheFile());
-    return Array.isArray(c?.models) && typeof c.fetchedAt === "string" ? { ...c, versions: c.versions ?? { codex: c.codexVersion }, problems: c.problems ?? {} } : null;
-  } catch {
-    return null;
-  }
 }
 
 // Never throws: routing keeps the last good list while codex is broken, and an empty one
@@ -83,9 +88,10 @@ export function modelsReport(cfg: Config, refresh: boolean): { codexVersion: str
   const models = refresh ? refreshModels(cfg) : loadModels(MODELS_MAX_AGE_MS, cfg);
   const cache = readModelCache();
   const codexVersion = cache?.codexVersion || null;
-  const problems = Object.entries(cache?.problems ?? {}).map(([tool, why]) => `${tool}: ${why}`);
-  // A tool with a problem of its own has that to say, not a word about its version.
-  const zcode = cfg.tools.zcode.enabled && cache?.problems.zcode === undefined ? zcodeWarnings(cache?.versions.zcode ?? null) : [];
-  const agy = cfg.tools.agy.enabled ? agyWarnings(cache?.problems.agy === undefined ? cache?.versions.agy ?? null : TESTED_AGY_VERSION) : [];
-  return { codexVersion, fetchedAt: cache?.fetchedAt ?? null, models, warnings: [...codexWarnings(codexVersion), ...zcode, ...agy, ...problems] };
+  const on = enabledTools(cfg);
+  const problems = Object.entries(cache?.problems ?? {}).filter(([tool]) => on.includes(tool as ToolName)).map(([tool, why]) => `${tool}: ${why}`);
+  // What the refresh stored for a tool, so a refresh reads the login shell once. One the cache holds nothing for (a tool
+  // switched on since, or a cache from before the warnings were stored, or none) has them worked out here.
+  const warnings = on.flatMap((t) => cache?.warnings[t] ?? toolWarnings(t, cache?.versions ?? {}, cache?.problems ?? {}));
+  return { codexVersion, fetchedAt: cache?.fetchedAt ?? null, models, warnings: [...warnings, ...problems] };
 }

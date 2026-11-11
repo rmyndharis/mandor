@@ -617,6 +617,19 @@ test("init names a secret-like variable exported by the worker login shell witho
   for (const f of filesUnder(home)) assert.ok(!readFileSync(f, "utf8").includes(SECRET), f);
 });
 
+test("init and models read the worker login shell once per refresh, from a directory that is no worktree", () => {
+  tempHome();
+  const userHome = temp();
+  const log = join(temp(), "login.log");
+  writeFileSync(join(userHome, ".zprofile"), `pwd -P >> '${log}'\n`);
+  assert.equal(cli(["init"], userHome).status, 0);
+  assert.deepEqual(readFileSync(log, "utf8").trim().split("\n"), ["/"], "one read, and not in the directory the command ran in");
+  assert.equal(cli(["models", "--refresh"], userHome).status, 0);
+  assert.equal(readFileSync(log, "utf8").trim().split("\n").length, 2, "a refresh reads it once more");
+  assert.equal(cli(["models"], userHome).status, 0);
+  assert.equal(readFileSync(log, "utf8").trim().split("\n").length, 2, "a fresh list needs no read");
+});
+
 test("init warns where sandbox-exec cannot apply a profile, and only there", () => {
   tempHome();
   const plain = cli(["init"]);

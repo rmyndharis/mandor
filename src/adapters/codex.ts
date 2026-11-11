@@ -231,7 +231,8 @@ const SECRET_NAME = /TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|API_KEY|PRIVATE_KEY
 // that workerEnv never passes. Only names are kept; values are never read past the split.
 function loginShellSecretNames(): string[] | null {
   const env = workerEnv(null);
-  const r = spawnSync(env.SHELL ?? "/bin/zsh", ["-lc", "env -0"], { env, timeout: 10000, encoding: "utf8" });
+  // From a directory of no repository: the command may run in a task worktree, which holds files a worker wrote.
+  const r = spawnSync(env.SHELL ?? "/bin/zsh", ["-lc", "env -0"], { env, cwd: "/", timeout: 10000, encoding: "utf8" });
   if (r.status !== 0 || typeof r.stdout !== "string") return null;
   const names = r.stdout.split("\0").map((entry) => {
     const eq = entry.indexOf("=");
