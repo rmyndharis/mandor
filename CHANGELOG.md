@@ -4,6 +4,8 @@ All notable changes to mandor are recorded here. The format follows [Keep a Chan
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-11
+
 ### Added
 
 - The `mandor` CLI and the `/mandor:lead` and `/mandor:status` skills: a Claude Code session plans a goal, dispatches its tasks to workers, reviews each result and accepts it as one local commit on a goal branch.
