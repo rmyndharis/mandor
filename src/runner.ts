@@ -37,6 +37,8 @@ export function readJob(jobId: string): JobRecord | null {
   }
 }
 
+export const runnerLogPath = () => join(mandorHome(), "logs", "runner.log");
+
 // The whole text of a failed git step, which the lead is shown no word of: runner.log keeps one clamped line, and a hook
 // that printed a screenful would lose its first lines there. Private, and never pruned (L-20). Never throws.
 export const gitLogPath = () => join(mandorHome(), "logs", "git.stderr");
@@ -50,9 +52,8 @@ export function logGit(head: string, text: string): void {
 // Never throws: it runs where an error would undo a completion.
 export function logRunner(line: string): void {
   try {
-    const logs = join(mandorHome(), "logs");
-    ensureDir(logs);
-    appendFileSync(join(logs, "runner.log"), `${now()} ${clampDetail(line)}\n`, { mode: 0o600 });
+    ensureDir(dirname(runnerLogPath()));
+    appendFileSync(runnerLogPath(), `${now()} ${clampDetail(line)}\n`, { mode: 0o600 });
   } catch {}
 }
 
@@ -353,7 +354,8 @@ export async function runJob(jobId: string): Promise<void> {
     return running;
   }, { maxWaitMs: null });
   if (job === null) return; // finished, another runner's, or past the grace
-  let result = failedResult("runner error");
+  // The cause is a line of the runner log, and the detail says where, as a fixed sentence cannot say what.
+  let result = failedResult(`runner error; see ${runnerLogPath()}`);
   let models: ModelInfo[] = [];
   try {
     // A runner started where sandbox-exec cannot apply a profile (inside Claude Code's Bash sandbox) cannot confine

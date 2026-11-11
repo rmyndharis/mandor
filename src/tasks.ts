@@ -16,7 +16,7 @@ import { appendEvent, appendToolEvent, ledgerSize, listProjects, loadState, load
 import { cachedWarnings } from "./modelcache.ts";
 import { DEFAULT_DENY, loadProjectConfig, provisionWorktree, type ProjectConfig } from "./provision.ts";
 import { catalogGap, countActiveJobs, hasUsableModel, selectCandidate } from "./routing.ts";
-import { cancelMarker, completeJobLocked, failedResult, gitLogPath, logGit, logRunner, logRunnerTail, readJob } from "./runner.ts";
+import { cancelMarker, completeJobLocked, failedResult, gitLogPath, logGit, logRunner, logRunnerTail, readJob, runnerLogPath } from "./runner.ts";
 import { spawnRunner } from "./spawn.ts";
 import { clampDetail, ensureDir, fileRef, readJson, withProjectLock, withSlotsLock, writeFileAtomic, writeJsonAtomic } from "./store.ts";
 
@@ -595,7 +595,6 @@ function recoverAcceptLocked(root: string, id: string, goal: GoalRecord, allowTe
   return { slug, commit: head };
 }
 
-const runnerLogPath = () => join(mandorHome(), "logs", "runner.log");
 
 // What a failed git step shows the lead: a fixed sentence and the log, where git's own words go whole, as they can quote
 // file names a worker chose or the output of a hook. Every error built from git's text is a GitFailure; a refusal of

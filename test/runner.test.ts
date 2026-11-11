@@ -625,7 +625,7 @@ test("a runner error after the worker started kills the worker before the job co
   assert.ok(Date.now() - started < 10_000, "the run does not wait out the worker's 30 s");
   assert.equal(spawnSync("/usr/bin/pgrep", ["-f", task.worktree!]).status, 1, "no worker is left running");
   const outcome = finishedEvents(job.id)[0].outcome;
-  assert.deepEqual([outcome.status, outcome.detail], ["failed", "runner error"]);
+  assert.deepEqual([outcome.status, outcome.detail], ["failed", `runner error; see ${join(process.env.MANDOR_HOME!, "logs", "runner.log")}`]);
   assert.match(read(join(process.env.MANDOR_HOME!, "logs", "runner.log")), /injected write error/);
 });
 
