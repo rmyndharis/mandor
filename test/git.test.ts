@@ -779,7 +779,7 @@ test("an old git that echoes the unknown --path-format flag is refused", () => {
   writeFileSync(join(bin, "git"), `${fake.join("\n")}\n`, { mode: 0o755 });
   withEnv({ PATH: `${bin}:${process.env.PATH}` }, () => {
     assert.equal(must(repo, "rev-parse", "--path-format=absolute", "--git-common-dir"), "--path-format-unknown\n.git\n");
-    for (const call of bound) assert.throws(() => call(repo, wt, base), /did not give one absolute common dir/);
+    for (const call of bound) assert.throws(() => call(repo, wt, base), /did not give one absolute common dir; mandor needs git 2\.31 or later, so update git$/);
   });
   assert.equal(must(wt, "status", "--porcelain", "--untracked-files=all"), "?? u.txt\n");
 });
