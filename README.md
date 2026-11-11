@@ -81,7 +81,7 @@ When a worker hits a quota, a model limit or an account mismatch, the task moves
 mandor registers two Claude Code hooks. Both do nothing outside a repository that already has a goal, with one exception below, and neither can break a session: a failure goes to `~/.mandor/logs/hooks.log` instead of reaching you. The exception is a Node the hooks cannot use. With no Node 22.18 or newer on the PATH the hooks run with, they do nothing and write nothing, as they cannot tell which directories have a goal. That PATH can differ from the one of Claude Code's Bash tool, for instance when an editor starts Claude Code. If you already have mandor state under `~/.mandor`, SessionStart then says in the session, in any directory, that the hooks are off.
 
 - **SessionStart** prints a short summary of the goals, the tasks with their status, and any exhausted tool, so a new, resumed or compacted session can pick the work up. It also refreshes the Codex model list in the background.
-- **Stop** blocks Claude from ending its turn, once, with a reminder to run `mandor wait` in the background, when this session has been leading, jobs are still running and no `wait` is watching them.
+- **Stop** blocks Claude from ending its turn, once, with a reminder to run `mandor wait` in the background, when this session has been leading, jobs are still running or waiting to start and no `wait` is watching them.
 
 ## Safety model
 

@@ -20,7 +20,7 @@ const NODE_ARGS = ["--disable-warning=ExperimentalWarning"];
 const HOOKS = ["session-start", "stop"];
 const GOAL = "feat/hooks";
 const LUNA: Candidate = { tool: "codex", model: "gpt-6-luna", effort: "medium" };
-const BLOCK = { decision: "block", reason: "Jobs are still running. Run mandor wait in the background before stopping." };
+const BLOCK = { decision: "block", reason: "Jobs are still running or waiting to start. Run mandor wait in the background before stopping." };
 const LONG_AGO = "Thu Jan  1 00:00:00 1970";
 
 interface Run { status: number | null; stdout: string; stderr: string; ms: number }
@@ -749,6 +749,27 @@ test("every command that can start or change a job marks a lead's transcript", (
   for (const command of ["status", "show", "logs", "scratch", "wait", "models"]) {
     silent(hook("stop", { ...s.input, transcript_path: transcript(`mandor ${command}`) }), command);
   }
+});
+
+test("stop blocks the lead while a task waits with a pending entry and its dependency, if any, is accepted, and not otherwise", () => {
+  const s = project();
+  const input = { cwd: s.repo, transcript_path: transcript("mandor dispatch --goal feat/hooks --task a --tier light --brief b.md") };
+  const add = (slug: string, status: TaskStatus, over: Partial<TaskRecord> = {}) => appendEvent(s.id, { t: "task.created", at: now(), task: taskRecord(slug, status, over) });
+  const set = (slug: string, patch: Partial<TaskRecord>) => appendEvent(s.id, { t: "task.updated", at: now(), taskId: slug, patch, reason: "test" });
+  const turn = { kind: "start", message: null } as const;
+  silent(hook("stop", input), "no task");
+  add("held", "waiting", { pending: null });
+  silent(hook("stop", input), "a waiting task with no pending entry");
+  add("dep", "working");
+  add("later", "waiting", { pending: turn, after: "dep" });
+  silent(hook("stop", input), "a pending task whose dependency is still open");
+  set("dep", { status: "accepted" });
+  blocks(hook("stop", input), "its dependency is accepted: the pump starts it");
+  set("later", { status: "cancelled", pending: null });
+  silent(hook("stop", input), "cancelled");
+  add("free", "waiting", { pending: turn });
+  blocks(hook("stop", input), "a pending task with no dependency");
+  assert.deepEqual(hookLog(s.home), []);
 });
 
 test("stop allows when stop_hook_active is set", () => {

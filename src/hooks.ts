@@ -102,6 +102,13 @@ function hasLiveJob(id: string): boolean {
   });
 }
 
+// A task whose turn has come: waiting with a pending entry and, if it follows another, that one accepted. The pump starts
+// it as soon as a slot is free, so a lead that stops now leaves work that nobody waits for.
+function hasPendingTurn(id: string): boolean {
+  const { tasks } = loadState(id);
+  return Object.values(tasks).some((t) => t.status === "waiting" && t.pending !== null && (t.after === null || tasks[t.after]?.status === "accepted"));
+}
+
 // A waiter is alive by a runner's rule, so a failed ps read counts it alive and never turns into a block.
 function hasLiveWaiter(id: string): boolean {
   const dir = join(projectDir(id), "waiters");
@@ -192,8 +199,8 @@ const isLeadTranscript = (path: string | undefined) => path !== undefined && nam
 export function stopDecision(input: { cwd: string; stop_hook_active?: boolean; transcript_path?: string }): { decision: "block"; reason: string } | null {
   if (input.stop_hook_active === true) return null;
   const id = activeProject(input.cwd);
-  if (id === null || !hasLiveJob(id) || hasLiveWaiter(id) || !isLeadTranscript(input.transcript_path)) return null;
-  return { decision: "block", reason: "Jobs are still running. Run mandor wait in the background before stopping." };
+  if (id === null || !(hasLiveJob(id) || hasPendingTurn(id)) || hasLiveWaiter(id) || !isLeadTranscript(input.transcript_path)) return null;
+  return { decision: "block", reason: "Jobs are still running or waiting to start. Run mandor wait in the background before stopping." };
 }
 
 // Claude Code closes stdin after writing the input. One that never closes must not use up the hook's whole timeout.
