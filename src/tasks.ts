@@ -416,6 +416,23 @@ function checkUse(use: Candidate, tier: Tier, models: ModelInfo[]): Candidate {
 // name would reorder the tasks that wait for a slot and the session summary.
 const SLUG = /^(?!\d+$)[a-z0-9][a-z0-9-]*$/;
 
+// The user vouches for the commits at the top of a goal branch that mandor did not make: from then on accept counts the tip
+// as recorded. A commit that lands above it without an accept is unrecorded again.
+export function goalAdopt(cwd: string, branch: string): { branch: string; adopted: string; commits: string[]; cursor: number } {
+  const { root, id } = resolveProject(cwd);
+  return withProjectLock(id, () => {
+    const cursor = ledgerSize(id);
+    const state = loadState(id);
+    const goal = state.goals[branch];
+    if (goal === undefined) throw new Error(`no goal ${branch}`);
+    if (acceptInDoubt(id, goal)) throw new Error(`an earlier accept of goal ${branch} did not finish; accept settles it first`);
+    const commits = unrecordedCommits(root, state, goal);
+    if (commits.length === 0) throw new Error(`goal ${branch} holds no commit that mandor did not record`);
+    appendEvent(id, { t: "goal.adopted", at: now(), branch, commit: commits[0] });
+    return { branch, adopted: commits[0], commits, cursor };
+  })!;
+}
+
 // Three phases, so git and provisioning run without the project lock: reserve the slug, build the worktree, record.
 export function dispatch(cwd: string, o: { goal: string; slug: string; tier: Tier; briefFile: string;
   scope: string[]; use: Candidate | null; after: string | null }): { task: TaskRecord; cursor: number } {
@@ -522,6 +539,9 @@ function acceptedEvents(slug: string, seq: number, file: FileRef | null, commit:
 
 const intentFile = (id: string, goal: string) => join(projectDir(id), "goals", pathSlug(goal), "accept-intent.json");
 
+// A killed accept leaves its marker until the next accept settles it: the commit it made may not be on record yet.
+export const acceptInDoubt = (id: string, goal: GoalRecord): boolean => existsSync(intentFile(id, goal.branch));
+
 // A killed accept leaves its marker. Under the project lock nothing else moves the goal, so what the marker and HEAD
 // say decides: nothing landed and it is undone, or one commit landed from the recorded tip and tree and it stands, or
 // the user decides. Returns a commit it adopted.
@@ -576,6 +596,31 @@ function taskOf(id: string, slug: string): TaskRecord {
   const task = loadState(id).tasks[slug];
   if (task === undefined) throw new Error(`no task ${slug}`);
   return task;
+}
+
+// The commits at the top of a goal branch that no accept of the goal made and the user has not adopted, newest first: a
+// commit made by hand passed no review and no guard, so an accept goes no further while the branch ends in one. It reads
+// the goal's own line down to the first commit that is recorded or adopted, so a merge counts as one commit, whatever it
+// brings in, and one that lies under a recorded commit, which an earlier version allowed, is no refusal. Throws when git
+// cannot list them.
+export function unrecordedCommits(root: string, state: ProjectState, goal: GoalRecord): string[] {
+  const r = git(["rev-list", "--first-parent", `${goal.from}..refs/heads/${goal.branch}`], root);
+  if (r.code !== 0) throw new Error(`cannot list the commits of goal ${goal.branch}: ${r.stderr.trim()}`);
+  const known = new Set(Object.values(state.tasks).flatMap((t) => (t.goalBranch === goal.branch && t.integratedCommit !== null ? [t.integratedCommit] : [])));
+  for (const c of goal.adopted ?? []) known.add(c);
+  const unrecorded: string[] = [];
+  for (const c of r.stdout.split("\n")) {
+    if (c === "") continue;
+    if (known.has(c)) break;
+    unrecorded.push(c);
+  }
+  return unrecorded;
+}
+
+// Five of them at most, and how many more: a goal rebased or merged outside mandor holds hundreds.
+export function unrecordedNote(branch: string, commits: string[]): string {
+  const more = commits.length > 5 ? ` and ${commits.length - 5} more` : "";
+  return `goal ${branch} holds ${commits.length} commit${commits.length === 1 ? "" : "s"} that mandor did not record (${commits.slice(0, 5).map((c) => c.slice(0, 12)).join(", ")}${more})`;
 }
 
 function refuseOpenJob(state: ProjectState, slug: string): void {
@@ -731,6 +776,8 @@ export function verdictAccept(cwd: string, slug: string, evidenceFile: string, m
     if (head !== `refs/heads/${goal.branch}` || revParse(integration, "HEAD") !== tip || !isClean(root, integration)) {
       throw new Error(`integration worktree not clean: ${integration} must be clean and on ${goal.branch} at ${tip}`);
     }
+    const unrecorded = unrecordedCommits(root, state, goal);
+    if (unrecorded.length > 0) throw new Error(`refusing to accept: ${unrecordedNote(goal.branch, unrecorded)}; they passed no review and no guard, so the user removes them from the branch or adopts them with mandor goal adopt ${goal.branch}, which the lead does not run`);
     if (task.worktree === null || task.base === null) throw new Error(`task ${slug} has no worktree or base`);
     const { bytes, text, tree } = stagedDiff(root, task.worktree, task.base);
     if (bytes.length === 0) throw new Error(`task ${slug} has no changes to accept`);

@@ -90,8 +90,8 @@ test("status lists tasks", async (t) => {
   const json = cli(s.repo, "status", "--json");
   assert.equal(json.code, 0, json.err);
   const data = JSON.parse(json.out);
-  assert.deepEqual(Object.keys(data), ["project", "cursor", "tasks", "jobs", "tools"]);
-  assert.deepEqual([data.project, data.cursor, data.tools], [s.id, ledgerSize(s.id), {}]);
+  assert.deepEqual(Object.keys(data), ["project", "cursor", "tasks", "jobs", "tools", "unrecorded"]);
+  assert.deepEqual([data.project, data.cursor, data.tools, data.unrecorded], [s.id, ledgerSize(s.id), {}, {}]);
   assert.deepEqual(data.tasks.map((x: TaskRecord) => [x.id, x.status]), [["hello", "needs-review"]]);
   assert.equal(data.jobs.length, 1);
   assert.deepEqual([data.jobs[0].taskId, data.jobs[0].status], ["hello", "done"]);

@@ -36,7 +36,7 @@ test("lead skill leaves the user's settings, git identity and sign-ins to the us
   for (const term of [
     "Never edit `config.json`", "git identity", "switch a worker tool on", "`mandor login`", "`mandor project setup`", "`mandor init`",
     "`config.json` is invalid", "binary is missing", "commit identity", "no candidate the catalog can run", "setup command", "clone path",
-    "state home is on another volume", "ledger or a lock file", "earlier accept", "index lock", "remote-tracking branch",
+    "state home is on another volume", "ledger or a lock file", "earlier accept", "index lock", "remote-tracking branch", "did not record", "`mandor goal adopt`",
   ]) {
     assert.ok(section.includes(term), term);
   }

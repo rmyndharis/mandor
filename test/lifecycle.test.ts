@@ -12,7 +12,7 @@ import { renderConflictMessage, renderFixMessage } from "../src/brief.ts";
 import { DEFAULT_CONFIG } from "../src/config.ts";
 import type { Candidate, GoalRecord, JobRecord, LedgerEvent, ModelInfo, StallReason, TaskRecord, ToolName } from "../src/contracts.ts";
 import { jobDir, processStart, projectDir, projectIdFor, scratchDir } from "../src/home.ts";
-import { appendEvent, appendToolEvent, ledgerSize, loadState, loadToolState, now, readEvents } from "../src/ledger.ts";
+import { appendEvent, appendToolEvent, ledgerSize, listProjects, loadState, loadToolState, now, readEvents } from "../src/ledger.ts";
 import { cancelMarker, readJob } from "../src/runner.ts";
 import { loadProjectConfig, saveProjectConfig } from "../src/provision.ts";
 import { reviewPack } from "../src/review.ts";
@@ -170,12 +170,21 @@ function tenLineGoal(s: Lab): GoalRecord {
   return tasks.goalStart(s.repo, GOAL, null).goal;
 }
 
-// Another task's work landing on the goal branch.
-function moveGoal(goal: GoalRecord, write: (dir: string) => void): string {
+// Another task's work landing on the goal branch, recorded as the accept of that task leaves it: a goal whose tip is a
+// commit mandor did not record refuses every accept. Not recorded, it is the commit a killed accept leaves.
+function moveGoal(goal: GoalRecord, write: (dir: string) => void, record = true): string {
   write(goal.integrationWorktree);
   must(goal.integrationWorktree, "add", "-A");
   must(goal.integrationWorktree, "commit", "-qm", "Move the tip");
-  return must(goal.integrationWorktree, "rev-parse", "HEAD");
+  const commit = must(goal.integrationWorktree, "rev-parse", "HEAD");
+  if (!record) return commit;
+  const other = `other-${commit.slice(0, 8)}`;
+  const task: TaskRecord = {
+    id: other, goalBranch: goal.branch, tier: "light", after: null, status: "accepted", stallReason: null, pending: null, base: null, worktree: null,
+    branch: `wip/${other}`, scope: [], seq: 1, fixRounds: 0, candidate: null, sessionId: null, use: null, jobIds: [], integratedCommit: commit, briefPath: "/nowhere",
+  };
+  appendEvent(listProjects()[0], { t: "task.created", at: now(), task });
+  return commit;
 }
 
 const rebaseFile = (s: Lab, name: "rebase.json" | "rebase.patch") => join(projectDir(s.id), "tasks", "hello", name);
@@ -763,6 +772,135 @@ test("modify/delete: rebase-failed, worker changes restored, base unchanged", as
   const woke = await waitForNext(s.repo, { since: before, timeoutMs: 30_000 });
   assert.deepEqual(woke.kind === "events" && woke.items.map((i) => [i.task, i.next, i.detail]), [["hello", "inspect", lastUpdate(s, "hello").reason]]);
   assert.ok(!lastUpdate(s, "hello").reason.includes("f.txt"));
+});
+
+test("accept refuses while the goal branch holds a commit mandor did not record, and status names it", async (t) => {
+  const s = setup(t);
+  const { goal } = tasks.goalStart(s.repo, GOAL, null);
+  writeScenarios([{ ...DONE, writeFile: [{ path: "a.txt", content: "a\n" }] }, { ...DONE, writeFile: [{ path: "b.txt", content: "b\n" }] }]);
+  send(s, "first");
+  await needsReview(s, "first");
+  const first = committed(s, "first");
+  confirmed(s, "first");
+  send(s, "second");
+  await needsReview(s, "second");
+  const plain = () => spawnSync(LAUNCHER, ["status"], { cwd: s.repo, encoding: "utf8" }).stdout;
+  assert.doesNotMatch(plain(), /did not record/, "every commit of the goal is recorded");
+  // A commit made by hand in the integration worktree, which stands on the goal branch.
+  writeFileSync(join(goal.integrationWorktree, "by-hand.txt"), "x\n");
+  must(goal.integrationWorktree, "add", "by-hand.txt");
+  must(goal.integrationWorktree, "-c", "user.name=Hand", "-c", "user.email=hand@example.test", "commit", "-qm", "By hand");
+  const byHand = must(s.repo, "rev-parse", GOAL);
+  reviewPack(s.repo, "second");
+  assert.throws(() => unreviewedAccept(s, "second"), new RegExp(`refusing to accept: goal ${GOAL} holds 1 commit that mandor did not record \\(${byHand.slice(0, 12)}\\); they passed no review and no guard, so the user removes them from the branch or adopts them with mandor goal adopt ${GOAL}`));
+  assert.equal(task(s, "second").status, "needs-review");
+  assert.match(plain(), new RegExp(`goal ${GOAL} holds 1 commit that mandor did not record \\(${byHand.slice(0, 12)}\\)`));
+  assert.deepEqual(JSON.parse(spawnSync(LAUNCHER, ["status", "--json"], { cwd: s.repo, encoding: "utf8" }).stdout).unrecorded, { [GOAL]: [byHand] });
+  // Once the user has taken it off the branch, the accept goes through.
+  must(goal.integrationWorktree, "reset", "-q", "--hard", first);
+  assert.doesNotMatch(plain(), /did not record/);
+  accept(s, "second");
+  assert.equal(task(s, "second").status, "integrating");
+});
+
+// A commit made by hand in the integration worktree, which stands on the goal branch.
+function byHandOn(goal: GoalRecord, name: string): string {
+  writeFileSync(join(goal.integrationWorktree, name), `${name}\n`);
+  must(goal.integrationWorktree, "add", name);
+  must(goal.integrationWorktree, "-c", "user.name=Hand", "-c", "user.email=hand@example.test", "commit", "-qm", `By hand: ${name}`);
+  return must(goal.integrationWorktree, "rev-parse", "HEAD");
+}
+
+const plainStatus = (s: Lab) => spawnSync(LAUNCHER, ["status"], { cwd: s.repo, encoding: "utf8" }).stdout;
+
+test("goal adopt keeps the commits on a goal branch as the user's own, and only a commit above the adopted one is unrecorded after that", async (t) => {
+  const s = setup(t);
+  const { goal } = tasks.goalStart(s.repo, GOAL, null);
+  writeScenarios([{ ...DONE, writeFile: [{ path: "a.txt", content: "a\n" }] }]);
+  send(s, "first");
+  await needsReview(s, "first");
+  assert.throws(() => tasks.goalAdopt(s.repo, GOAL), /goal feat\/lifecycle holds no commit that mandor did not record/);
+  assert.throws(() => tasks.goalAdopt(s.repo, "no/such"), /no goal no\/such/);
+  const first = byHandOn(goal, "one.txt");
+  const second = byHandOn(goal, "two.txt");
+  reviewPack(s.repo, "first");
+  assert.throws(() => unreviewedAccept(s, "first"), new RegExp(`holds 2 commits that mandor did not record \\(${second.slice(0, 12)}, ${first.slice(0, 12)}\\)`));
+  const out = JSON.parse(spawnSync(LAUNCHER, ["goal", "adopt", GOAL], { cwd: s.repo, encoding: "utf8" }).stdout);
+  assert.deepEqual([out.branch, out.adopted, out.commits], [GOAL, second, [second, first]]);
+  assert.doesNotMatch(plainStatus(s), /did not record/);
+  const commit = (unreviewedAccept(s, "first") as { commit: string }).commit;
+  assert.equal(task(s, "first").status, "integrating");
+  confirmed(s, "first");
+  // What lands by hand above the adopted tip and the recorded commit is unrecorded again.
+  const third = byHandOn(goal, "three.txt");
+  assert.deepEqual(JSON.parse(spawnSync(LAUNCHER, ["status", "--json"], { cwd: s.repo, encoding: "utf8" }).stdout).unrecorded, { [GOAL]: [third] });
+  assert.notEqual(third, commit);
+});
+
+test("an adoption stands when the branch goes back to the adopted commit, whatever was adopted above it later", (t) => {
+  const s = setup(t);
+  const { goal } = tasks.goalStart(s.repo, GOAL, null);
+  const first = byHandOn(goal, "h1.txt");
+  tasks.goalAdopt(s.repo, GOAL);
+  byHandOn(goal, "h2.txt");
+  tasks.goalAdopt(s.repo, GOAL);
+  assert.doesNotMatch(plainStatus(s), /did not record/);
+  must(goal.integrationWorktree, "reset", "-q", "--hard", first);
+  assert.doesNotMatch(plainStatus(s), /did not record/, "the first adoption is not forgotten");
+});
+
+test("goal adopt refuses while an accept of the goal did not finish", async (t) => {
+  const s = setup(t);
+  const { goal } = tasks.goalStart(s.repo, GOAL, null);
+  writeScenarios([{ ...DONE, writeFile: [{ path: "hello.txt", content: "hello\n" }] }]);
+  send(s, "hello");
+  await needsReview(s, "hello");
+  const tip = must(s.repo, "rev-parse", GOAL);
+  const commit = moveGoal(goal, (dir) => writeFileSync(join(dir, "hello.txt"), "hello\n"), false);
+  writeJsonAtomic(join(projectDir(s.id), "goals", "feat__lifecycle", "accept-intent.json"), { slug: "hello", tip, tree: must(s.repo, "rev-parse", `${commit}^{tree}`) });
+  assert.throws(() => tasks.goalAdopt(s.repo, GOAL), /an earlier accept of goal feat\/lifecycle did not finish; accept settles it first/);
+  assert.equal(loadState(s.id).goals[GOAL].adopted, undefined);
+});
+
+test("a hand-made commit under a recorded one is no refusal, a merge is the one commit on the goal's own line, and the list is cut", async (t) => {
+  const s = setup(t);
+  const { goal } = tasks.goalStart(s.repo, GOAL, null);
+  writeScenarios([{ ...DONE, writeFile: [{ path: "a.txt", content: "a\n" }] }]);
+  send(s, "first");
+  await needsReview(s, "first");
+  // A goal that already holds a hand-made commit under an accepted one, as an earlier version allowed.
+  byHandOn(goal, "buried.txt");
+  moveGoal(goal, (dir) => writeFileSync(join(dir, "above.txt"), "above\n"));
+  assert.doesNotMatch(plainStatus(s), /did not record/);
+  assert.equal((accept(s, "first") as { commit: string }).commit.length, 40);
+  confirmed(s, "first");
+  // A merge of another line, which brings three commits, is the one commit of the goal's own line.
+  must(goal.integrationWorktree, "checkout", "-q", "-b", "side", "HEAD~1");
+  for (const name of ["s1.txt", "s2.txt", "s3.txt"]) byHandOn(goal, name);
+  must(goal.integrationWorktree, "checkout", "-q", GOAL);
+  must(goal.integrationWorktree, "-c", "user.name=Hand", "-c", "user.email=hand@example.test", "merge", "-q", "--no-ff", "-m", "Merge side", "side");
+  const merge = must(goal.integrationWorktree, "rev-parse", "HEAD");
+  assert.deepEqual(JSON.parse(spawnSync(LAUNCHER, ["status", "--json"], { cwd: s.repo, encoding: "utf8" }).stdout).unrecorded, { [GOAL]: [merge] });
+  tasks.goalAdopt(s.repo, GOAL);
+  // Eight commits on the line: the note lists five of them and counts the rest.
+  const made = Array.from({ length: 8 }, (_, i) => byHandOn(goal, `n${i}.txt`)).reverse();
+  assert.match(plainStatus(s), new RegExp(`goal ${GOAL} holds 8 commits that mandor did not record \\(${made.slice(0, 5).map((c) => c.slice(0, 12)).join(", ")} and 3 more\\)`));
+  assert.equal(JSON.parse(spawnSync(LAUNCHER, ["status", "--json"], { cwd: s.repo, encoding: "utf8" }).stdout).unrecorded[GOAL].length, 8, "the JSON lists every commit");
+});
+
+test("status says nothing of the commit of an accept that was killed before it was recorded", async (t) => {
+  const s = setup(t);
+  const { goal } = tasks.goalStart(s.repo, GOAL, null);
+  writeScenarios([{ ...DONE, writeFile: [{ path: "hello.txt", content: "hello\n" }] }]);
+  send(s, "hello");
+  await needsReview(s, "hello");
+  const tip = must(s.repo, "rev-parse", GOAL);
+  const commit = moveGoal(goal, (dir) => writeFileSync(join(dir, "hello.txt"), "hello\n"), false);
+  const intent = join(projectDir(s.id), "goals", "feat__lifecycle", "accept-intent.json");
+  writeJsonAtomic(intent, { slug: "hello", tip, tree: must(s.repo, "rev-parse", `${commit}^{tree}`) });
+  assert.doesNotMatch(plainStatus(s), /did not record/, "the next accept adopts it");
+  rmSync(intent);
+  assert.match(plainStatus(s), /did not record/, "without the marker it is a commit made by hand");
 });
 
 test("accept on a goal that has not moved never rebases: a change that does not apply is an error, not an endless rebased", async (t) => {
@@ -1804,7 +1942,7 @@ test("an accept that adopts a killed accept's commit keeps its result when the p
   send(s, "hello");
   await needsReview(s, "hello");
   const tip = must(s.repo, "rev-parse", GOAL);
-  const commit = moveGoal(goal, (dir) => writeFileSync(join(dir, "hello.txt"), "hello\n"));
+  const commit = moveGoal(goal, (dir) => writeFileSync(join(dir, "hello.txt"), "hello\n"), false);
   writeJsonAtomic(join(projectDir(s.id), "goals", "feat__lifecycle", "accept-intent.json"), { slug: "hello", tip, tree: must(s.repo, "rev-parse", `${commit}^{tree}`) });
   ledgerTask(s, "other");
   const bad = jobDir("j-20261108100000-0bad");

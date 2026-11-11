@@ -27,7 +27,8 @@ export interface WorkerReport {
   open_issues: string[]; questions_for_lead: string[];
 }
 
-export interface GoalRecord { branch: string; from: string; integrationWorktree: string; createdAt: string }
+// adopted: the tips the user vouched for, which mandor did not make (goal adopt), the earliest first.
+export interface GoalRecord { branch: string; from: string; integrationWorktree: string; createdAt: string; adopted?: string[] }
 export interface TaskRecord {
   id: string;                       // the slug, unique per project
   goalBranch: string; tier: Tier; after: string | null; status: TaskStatus;
@@ -72,6 +73,7 @@ export interface FileRef { path: string; sha256: string; excerpt: string }  // e
 export type LedgerEvent =
   | { t: "goal.started"; at: string; goal: GoalRecord }
   | { t: "plan.set"; at: string; goal: string; description: string; plan: FileRef }
+  | { t: "goal.adopted"; at: string; branch: string; commit: string }
   | { t: "task.created"; at: string; task: TaskRecord }
   | { t: "task.updated"; at: string; taskId: string; patch: Partial<TaskRecord>; reason: string }
   | { t: "job.started"; at: string; job: { id: string; taskId: string; seq: number; kind: JobKind; candidate: Candidate } }

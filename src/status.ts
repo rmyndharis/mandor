@@ -7,7 +7,7 @@ import { jobDir, projectDir, roundDir } from "./home.ts";
 import { ledgerSize, loadState, loadToolState } from "./ledger.ts";
 import { readJob, reconcileLocked } from "./runner.ts";
 import { readJson, withProjectLock } from "./store.ts";
-import { loadCatalog, newerReason, resolveProject } from "./tasks.ts";
+import { acceptInDoubt, loadCatalog, newerReason, resolveProject, unrecordedCommits, unrecordedNote } from "./tasks.ts";
 
 const NO_PROJECT = "mandor: no project here";
 
@@ -121,9 +121,9 @@ export function logPaths(projectId: string, slug: string): string[] {
 // Outside a project it reads and creates nothing: the lock would create the project directory, and a stray one
 // must not arm the hooks. The models load before the lock, as in every command.
 function statusReport(cwd: string, json: boolean): string {
-  let id: string;
+  let id: string, root: string;
   try {
-    id = resolveProject(cwd).id;
+    ({ id, root } = resolveProject(cwd));
   } catch (e) {
     if (/is not inside a git repository$/.test((e as Error).message)) return NO_PROJECT;
     throw e;
@@ -132,16 +132,28 @@ function statusReport(cwd: string, json: boolean): string {
   const models = loadCatalog();
   const nowMs = Date.now();
   // The cursor is taken before reconcile appends, so a wait from it still reports what reconcile found.
-  const { cursor, state, jobs } = withProjectLock(id, () => {
+  const { cursor, state, jobs, unrecorded } = withProjectLock(id, () => {
     const cursor = ledgerSize(id);
     reconcileLocked(id, models);
     const state = loadState(id);
-    return { cursor, state, jobs: Object.keys(state.jobs).flatMap((j) => readJob(j) ?? []) };
+    // Under the lock, with the state it was read from, so an accept cannot land between them. A goal whose branch cannot
+    // be read says nothing here, as the commands that need it say why they fail, and one with an accept that was killed
+    // says nothing until the next accept has settled it: the commit it made may not be on record yet.
+    const unrecorded: Record<string, string[]> = {};
+    for (const goal of Object.values(state.goals)) {
+      if (acceptInDoubt(id, goal)) continue;
+      try {
+        const commits = unrecordedCommits(root, state, goal);
+        if (commits.length > 0) unrecorded[goal.branch] = commits;
+      } catch {}
+    }
+    return { cursor, state, jobs: Object.keys(state.jobs).flatMap((j) => readJob(j) ?? []), unrecorded };
   })!;
   const tools = loadToolState(Math.floor(nowMs / 1000));
   // A job's env is the worker's environment and never reaches output.
-  if (json) return JSON.stringify({ project: id, cursor, tasks: Object.values(state.tasks), jobs: jobs.map(({ env, ...rest }) => rest), tools }, null, 2);
-  return `${statusTable(state, jobs, tools, nowMs)}\ncursor: ${cursor}`;
+  if (json) return JSON.stringify({ project: id, cursor, tasks: Object.values(state.tasks), jobs: jobs.map(({ env, ...rest }) => rest), tools, unrecorded }, null, 2);
+  const notes = Object.entries(unrecorded).map(([branch, commits]) => `${unrecordedNote(branch, commits)}; accept refuses until the user removes them or runs mandor goal adopt ${branch}, which the lead does not run`);
+  return `${[statusTable(state, jobs, tools, nowMs), ...notes].join("\n")}\ncursor: ${cursor}`;
 }
 
 // argv is status [--json], show <slug> or logs <slug>. Prints, and returns the exit code.

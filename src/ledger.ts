@@ -65,6 +65,11 @@ export function replay(events: LedgerEvent[]): ProjectState {
         }
         break;
       }
+      case "goal.adopted": {
+        const g = s.goals[ev.branch];
+        if (g) g.adopted = [...(g.adopted ?? []), ev.commit];
+        break;
+      }
       case "task.created":
         // A task recorded under an alias of its tier routes as that tier.
         s.tasks[ev.task.id] = { ...ev.task, tier: tierName(ev.task.tier) as Tier };

@@ -94,6 +94,7 @@ async function leadCommand(argv: string[]): Promise<unknown> {
   if (cmd === "goal" && sub === "start" && rest.length % 2 === 1) {
     return (await tasks()).goalStart(cwd, rest[0], optional(flags(rest.slice(1), ["--from"]), "--from"));
   }
+  if (cmd === "goal" && sub === "adopt" && rest.length === 1) return (await tasks()).goalAdopt(cwd, rest[0]);
   if (cmd === "plan" && sub === "set") {
     const f = flags(rest, ["--goal", "--file", "--description"]);
     return (await tasks()).planSet(cwd, required(f, "--goal"), required(f, "--file"), required(f, "--description"));
@@ -160,6 +161,7 @@ You run:
   status [--json]               goals, tasks, jobs and exhausted tools of this repository
   show <slug>                   a task's outcome, its jobs with the usage of each run, and its round files
   logs <slug>                   the paths of a task's job logs
+  goal adopt <branch>           keep, as your own, the commits on a goal branch that mandor did not make
   --version
   --help
 
