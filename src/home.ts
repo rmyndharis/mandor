@@ -30,8 +30,11 @@ export function jobDir(jobId: string): string {
 // tool keeps there between runs, and whatever a worker leaves in it, reaches the later jobs of that project and of no other.
 export const zcodeHomesDir = (): string => join(mandorHome(), "zcode", "homes");
 export function zcodeProjectHome(projectId: string): string {
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(projectId) || projectId.includes("..")) throw new Error(`refusing the project id ${projectId}: it is not a plain name; this is a bug in mandor: tell the user`);
-  return join(zcodeHomesDir(), projectId);
+  // The id is a directory's own name and a hash (projectIdFor), so a space, a quote or a letter of any script belongs in it. What is
+  // refused is a name that is not one entry of the homes directory: join resolves "..", "." and a slash, and basename then differs.
+  const home = join(zcodeHomesDir(), projectId);
+  if (projectId.includes("\0") || basename(home) !== projectId) throw new Error(`refusing the project id ${projectId}: it is not one name; this is a bug in mandor: tell the user`);
+  return home;
 }
 
 // The one temporary directory a Codex or ZCode worker may write besides its worktree: the shared ones (/tmp, $TMPDIR) are

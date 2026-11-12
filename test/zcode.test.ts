@@ -281,6 +281,20 @@ test("a job runs on a home of its project's own, and the home that holds the sig
   assert.throws(() => zcodeProjectHome("../escape"), /^Error: refusing the project id \.\.\/escape: .*; this is a bug in mandor: tell the user$/);
 });
 
+test("a repository directory with a space, a quote or a non-ASCII letter in its name gets a home, and an id that leaves the homes directory does not", () => {
+  // projectIdFor keeps the directory's own name, so such characters reach the id.
+  for (const name of ["My App", "Proyek Saya", "caf\u00e9", "it's", "-dash", "tab\there", "v1.2.3"]) {
+    const repo = join(temp("mandor-zname-"), name);
+    mkdirSync(repo);
+    const { home, run, j } = prepared({ projectId: projectIdFor(repo) });
+    const mine = join(home, "zcode", "homes", j.projectId);
+    assert.equal(zcodeProjectHome(j.projectId), mine, name);
+    assert.equal(run.env.HOME, mine, name);
+    assert.ok(run.args.includes(`WH=${mine}`), name);
+  }
+  for (const id of ["", ".", "..", "../x", "a/b", "a/../b", "x\0y"]) assert.throws(() => zcodeProjectHome(id), /^Error: refusing the project id .*; this is a bug in mandor: tell the user$/s, JSON.stringify(id));
+});
+
 test("each job start copies the sign-in into the project's home, and what a worker changed of it is put back", () => {
   const { dir, j } = prepared();
   zcodeUseApiKey("zai", "k-secret-1");
