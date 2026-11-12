@@ -8,7 +8,7 @@ import { basename, delimiter, dirname, isAbsolute, join, sep } from "node:path";
 // has entered it, so only an absolute one is taken.
 export function mandorHome(): string {
   const home = process.env.MANDOR_HOME;
-  if (home && !isAbsolute(home)) throw new Error(`MANDOR_HOME must be an absolute path, not ${JSON.stringify(home)}`);
+  if (home && !isAbsolute(home)) throw new Error(`MANDOR_HOME must be an absolute path, not ${JSON.stringify(home)}; set it to one, or unset it`);
   return home || join(homedir(), ".mandor");
 }
 
@@ -48,7 +48,7 @@ export function worktreesDir(id: string): string {
 }
 
 export function scratchDir(id: string, name: string): string {
-  if (name === "" || name === "." || name === ".." || name !== basename(name)) throw new Error(`invalid scratch name: ${name}`);
+  if (name === "" || name === "." || name === ".." || name !== basename(name)) throw new Error(`invalid scratch name: ${name}; use a name that is not a path`);
   const dir = join(projectDir(id), "scratch", name);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   return dir;

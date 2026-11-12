@@ -51,7 +51,7 @@ export function statusTable(state: ProjectState, jobs: JobRecord[], tools: ToolS
 
 function taskOf(state: ProjectState, slug: string): TaskRecord {
   const t = state.tasks[slug];
-  if (t === undefined) throw new Error(`no task ${slug}`);
+  if (t === undefined) throw new Error(`no task ${slug}; mandor status lists the tasks`);
   return t;
 }
 
@@ -127,7 +127,7 @@ function statusReport(cwd: string, json: boolean): string {
   try {
     ({ id, root } = resolveProject(cwd));
   } catch (e) {
-    if (/is not inside a git repository$/.test((e as Error).message)) return NO_PROJECT;
+    if (/is not inside a git repository/.test((e as Error).message)) return NO_PROJECT;
     throw e;
   }
   if (ledgerSize(id) === 0) return NO_PROJECT;

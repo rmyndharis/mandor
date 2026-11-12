@@ -226,7 +226,7 @@ test("mandorHome takes an absolute MANDOR_HOME, defaults when it is unset or emp
   assert.equal(mandorHome(), join(homedir(), ".mandor"));
   for (const rel of ["rel/home", "./home", "../home", "~/home"]) {
     setEnv(t, { MANDOR_HOME: rel });
-    assert.throws(mandorHome, new RegExp(`^Error: MANDOR_HOME must be an absolute path, not ${JSON.stringify(rel).replace(/[./]/g, "\\$&")}$`), rel);
+    assert.throws(mandorHome, new RegExp(`^Error: MANDOR_HOME must be an absolute path, not ${JSON.stringify(rel).replace(/[./]/g, "\\$&")}; set it to one, or unset it$`), rel);
   }
 });
 
@@ -309,7 +309,7 @@ test("an unparsable lock counts as held", () => {
     let ran = false;
     assert.equal(withProjectLock("p-bad", () => (ran = true), { tryOnce: true }), null);
     // The path in the error lets a user find a lock a crash left unparsable.
-    assert.throws(() => withProjectLock("p-bad", () => (ran = true), { maxWaitMs: 120 }), { message: `project busy (${lock})` });
+    assert.throws(() => withProjectLock("p-bad", () => (ran = true), { maxWaitMs: 120 }), { message: `project busy (${lock}); retry shortly, and if it stays, tell the user: the lock file may be damaged or its holder stuck` });
     assert.equal(ran, false);
     assert.equal(readFileSync(lock, "utf8"), garbage);
   }
@@ -326,7 +326,7 @@ test("a lock file that cannot be read counts as held, even when its holder is go
   t.after(() => chmodSync(lock, 0o600));
   let ran = false;
   assert.equal(withProjectLock("p-unreadable", () => (ran = true), { tryOnce: true }), null);
-  assert.throws(() => withProjectLock("p-unreadable", () => (ran = true), { maxWaitMs: 120 }), { message: `project busy (${lock})` });
+  assert.throws(() => withProjectLock("p-unreadable", () => (ran = true), { maxWaitMs: 120 }), { message: `project busy (${lock}); retry shortly, and if it stays, tell the user: the lock file may be damaged or its holder stuck` });
   assert.equal(ran, false);
   assert.ok(!existsSync(join(home, "logs", "locks.log")), "the unreadable lock was not broken as stale");
 });
@@ -402,7 +402,7 @@ test("a dangling symlink at the lock path counts as held without spinning", () =
   // In a child with a timeout, so endless retries fail the test instead of hanging the run.
   const r = spawnSync(process.execPath, [join(procs, "try-lock.ts"), "p-dangle"], { encoding: "utf8", timeout: 5000 });
   assert.deepEqual([r.signal, r.status, r.stdout.trim()], [null, 0, "null"], r.stderr);
-  assert.throws(() => withProjectLock("p-dangle", () => 1, { maxWaitMs: 120 }), { message: `project busy (${lock})` });
+  assert.throws(() => withProjectLock("p-dangle", () => 1, { maxWaitMs: 120 }), { message: `project busy (${lock}); retry shortly, and if it stays, tell the user: the lock file may be damaged or its holder stuck` });
 });
 
 test("release tolerates a lock that vanished during fn", () => {

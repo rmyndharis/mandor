@@ -11,7 +11,7 @@ import { GRADLE_ADD_DIRS, NETWORK_KEY, WORKER_NETWORK } from "./spikes.ts";
 function workerAddDir(d: string): string {
   const abs = absDir(d);
   const allowed = GRADLE_ADD_DIRS.map((g) => resolve(homedir(), g));
-  if (!allowed.includes(abs)) throw new Error(`refusing --worker-add-dir ${d}: not one of ${allowed.join(", ")}`);
+  if (!allowed.includes(abs)) throw new Error(`refusing --worker-add-dir ${d}: not one of ${allowed.join(", ")}; use one of them`);
   return abs;
 }
 
@@ -43,7 +43,7 @@ function projectSetup(id: string, args: string[]): ProjectConfig {
     const flag = args[i];
     if (flag === "--update") continue;
     if (flag === "--worker-network") {
-      if (WORKER_NETWORK === "forbidden" || NETWORK_KEY === null) throw new Error("refusing --worker-network: workers cannot be given network access");
+      if (WORKER_NETWORK === "forbidden" || NETWORK_KEY === null) throw new Error("refusing --worker-network: workers cannot be given network access; use a Codex version that mandor has tested (mandor init names it), or leave the network closed");
       c.workerNetwork = true;
       set.add("worker-network");
       continue;
@@ -85,7 +85,7 @@ function projectSetup(id: string, args: string[]): ProjectConfig {
   if (off.has("shared-temp")) c.sharedTemp = false;
   // same: how an entry is compared with the value that names it, which is the way the entry is stored for a path.
   const take = (flag: string, list: string[], value: string, same: (entry: string) => boolean = (entry) => entry === value): string[] => {
-    if (!list.some(same)) throw new Error(`refusing ${flag} ${value}: the configuration holds no such entry`);
+    if (!list.some(same)) throw new Error(`refusing ${flag} ${value}: the configuration holds no such entry; mandor project show prints what it holds`);
     return list.filter((entry) => !same(entry));
   };
   const plain = (path: string): string => posix.normalize(path).replace(/\/+$/, "");
@@ -125,6 +125,13 @@ function projectSetup(id: string, args: string[]): ProjectConfig {
 }
 
 class UsageError extends Error {}
+
+// What the lead is told. A usage error says how the command was misused, and the help says how it is used, unless the message
+// holds the usage line or points at the help already.
+const reported = (e: unknown): string => {
+  const message = (e as Error).message;
+  return e instanceof UsageError && !/^usage: |mandor --help/.test(message) ? `${message}; see mandor --help` : message;
+};
 
 // --flag value pairs. A flag listed in many may repeat; any other may appear once.
 function flags(args: string[], one: string[], many: string[] = []): Map<string, string[]> {
@@ -313,7 +320,7 @@ export async function main(argv: string[]): Promise<number> {
     const init = argv[0] === "init";
     const bad = argv.slice(1).find((a) => init || (a !== "--refresh" && a !== "--json"));
     if (bad !== undefined) {
-      console.error(`mandor: unknown option for ${argv[0]}: ${bad}`);
+      console.error(`mandor: unknown option for ${argv[0]}: ${bad}; see mandor --help`);
       return 2;
     }
     try {
@@ -339,7 +346,7 @@ export async function main(argv: string[]): Promise<number> {
   if (argv[0] === "tiers") {
     const bad = argv.slice(1).find((a) => a !== "--json");
     if (bad !== undefined) {
-      console.error(`mandor: unknown option for tiers: ${bad}`);
+      console.error(`mandor: unknown option for tiers: ${bad}; see mandor --help`);
       return 2;
     }
     try {
@@ -353,7 +360,7 @@ export async function main(argv: string[]): Promise<number> {
       for (const tool of WORKER_TOOLS.filter((t) => cfg.tools[t].enabled)) {
         try {
           const bin = resolveBin(tool, cfg);
-          if (!existsSync(bin)) down[tool] = `${tool} not found at ${bin}`;
+          if (!existsSync(bin)) down[tool] = `${tool} not found at ${bin}; tell the user, who installs it or sets its path`;
         } catch (e) {
           down[tool] = (e as Error).message;
         }
@@ -432,7 +439,7 @@ export async function main(argv: string[]): Promise<number> {
       console.log(JSON.stringify(c, null, 2));
       return 0;
     } catch (e) {
-      console.error(`mandor: ${(e as Error).message}`);
+      console.error(`mandor: ${reported(e)}`);
       return e instanceof UsageError ? 2 : 1;
     }
   }
@@ -459,7 +466,7 @@ export async function main(argv: string[]): Promise<number> {
     console.log(JSON.stringify(await leadCommand(argv), null, 2));
     return 0;
   } catch (e) {
-    console.error(`mandor: ${(e as Error).message}`);
+    console.error(`mandor: ${reported(e)}`);
     return e instanceof UsageError ? 2 : 1;
   }
 }

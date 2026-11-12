@@ -605,7 +605,7 @@ test("detectModels skips a malformed entry and refuses a catalog with no usable 
   const listing = (models: unknown[]) => createCodexAdapter(DEFAULT_CONFIG, () => ({ code: 0, stdout: JSON.stringify({ models }) }));
   assert.deepEqual(listing([usable, { slug: "gpt-no-levels" }, "not an entry"]).detectModels().map((m) => m.model), ["gpt-ok"]);
   for (const models of [[], [{ slug: "gpt-no-levels" }, { display_name: "No slug", supported_reasoning_levels: [] }]]) {
-    assert.throws(() => listing(models).detectModels(), /^Error: codex debug models listed no usable model$/);
+    assert.throws(() => listing(models).detectModels(), /^Error: codex debug models listed no usable model; sign in to Codex, then run mandor models --refresh$/);
   }
 });
 

@@ -33,7 +33,7 @@ export function catalogGap(tier: Tier, config: Config, models: ModelInfo[], netw
   const candidates = TIER_ORDER.slice(TIER_ORDER.indexOf(tier)).flatMap((t) => config.tiers[t]);
   const runs = (allowed: boolean) => candidates.some((s) => typeof settle(parseCandidate(s), { config, models, tools: {}, network: allowed }) !== "string");
   if (runs(network)) return null;
-  if (!network && runs(true)) return `no candidate for tier ${tier} can run in this project, which allows no worker network: allow it with mandor project setup --update --worker-network`;
+  if (!network && runs(true)) return `no candidate for tier ${tier} can run in this project, which allows no worker network: tell the user, who allows it with mandor project setup --update --worker-network`;
   return `no candidate for tier ${tier} can run: no listed model and effort match the config; see mandor models`;
 }
 

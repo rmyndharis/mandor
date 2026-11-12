@@ -116,29 +116,29 @@ export function createCodexAdapter(cfg: Config, run: Run = runVendor): Adapter {
 
     version() {
       const r = run(resolveCodexBin(cfg), ["--version"]);
-      if (r.code !== 0) throw new Error(`codex --version failed (exit ${r.code})`);
+      if (r.code !== 0) throw new Error(`codex --version failed (exit ${r.code}); read logs/vendor.stderr in the state home for why`);
       const v = /\d+\.\d+\.\d+\S*/.exec(r.stdout)?.[0];
-      if (v === undefined) throw new Error("codex --version printed no version number");
+      if (v === undefined) throw new Error("codex --version printed no version number; run it yourself to see what it prints");
       return v;
     },
 
     detectModels() {
       const r = run(resolveCodexBin(cfg), ["debug", "models"]);
-      if (r.code !== 0) throw new Error(`codex debug models failed (exit ${r.code})`);
+      if (r.code !== 0) throw new Error(`codex debug models failed (exit ${r.code}); read logs/vendor.stderr in the state home for why`);
       let list: unknown;
       try {
         list = get(JSON.parse(r.stdout), "models");
       } catch {} // the parser's message quotes vendor output
-      if (!Array.isArray(list)) throw new Error("codex debug models printed a catalog that does not parse");
+      if (!Array.isArray(list)) throw new Error("codex debug models printed a catalog that does not parse; run it yourself to see what it prints");
       const models = list.map(modelInfo).filter((m): m is ModelInfo => m !== null);
       // Saving an empty list would replace the last good one and leave every candidate without a model.
-      if (models.length === 0) throw new Error("codex debug models listed no usable model");
+      if (models.length === 0) throw new Error("codex debug models listed no usable model; sign in to Codex, then run mandor models --refresh");
       return models;
     },
 
     prepare(job, files, project) {
       const { model, effort } = job.candidate;
-      if (effort === "") throw new Error("codex candidate needs an effort");
+      if (effort === "") throw new Error("codex candidate needs an effort; write the candidate as codex:model@effort in config.json");
       // No -C: the runner binds the worker's cwd to the worktree and verifies it, and a path here would be followed
       // again by Codex. Codex rejects -s and --add-dir after `resume`; -m and -c work on either side. The prompt is the
       // job's own file, read from stdin through the "-" at the end: as an argument it would show in every process list and
@@ -161,7 +161,7 @@ export function createCodexAdapter(cfg: Config, run: Run = runVendor): Adapter {
       const env = own === null ? job.env : { ...job.env, ...ownTempEnv(own) };
       if (job.kind === "start") return { command: job.bin, args: ["exec", "--json", ...before, ...after], env, stdinFile };
       const id = job.sessionId ?? "";
-      if (!UUID.test(id)) throw new Error("codex resume needs a session UUID");
+      if (!UUID.test(id)) throw new Error("codex resume needs a session UUID; run mandor reassign on the task, which starts a new session");
       return { command: job.bin, args: ["exec", ...before, "resume", id, "--json", ...after], env, stdinFile };
     },
 

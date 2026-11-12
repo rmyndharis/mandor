@@ -19,6 +19,6 @@ process.stdout.write(String(runner.pid));
 export function spawnRunner(jobId: string): void {
   const r = spawnSync(process.execPath, ["-e", LAUNCHER, CLI, jobId], { stdio: ["ignore", "pipe", "ignore"], timeout: 10_000, encoding: "utf8" });
   if (r.error !== undefined || r.status !== 0 || !/^[1-9]\d*$/.test(r.stdout)) {
-    throw new Error(`runner launch failed: ${r.error?.message ?? (r.status === 0 ? "no runner pid printed" : `exit ${r.status ?? r.signal}`)}`);
+    throw new Error(`runner launch failed: ${r.error?.message ?? (r.status === 0 ? "no runner pid printed" : `exit ${r.status ?? r.signal}`)}; read logs/runner.log in the state home`);
   }
 }

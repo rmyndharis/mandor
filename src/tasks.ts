@@ -59,7 +59,7 @@ export function cancelStandsLocked(projectId: string, taskId: string): boolean {
 // The caller holds the project lock and then the slots lock, and pumps only after releasing the slots lock. Null when a
 // cancel of the task is under way: the task stays as it is.
 export function startJobLocked(projectId: string, task: TaskRecord, kind: JobKind, candidate: Candidate, prompt: string, sessionId: string | null): JobRecord | null {
-  if (task.worktree === null) throw new Error(`task ${task.id} has no worktree`);
+  if (task.worktree === null) throw new Error(`task ${task.id} has no worktree; the task's records are damaged: tell the user`);
   // A job started now would only be stopped.
   if (cancelStandsLocked(projectId, task.id)) return null;
   const cfg = loadConfig();
@@ -93,7 +93,7 @@ export function startJobLocked(projectId: string, task: TaskRecord, kind: JobKin
 
 // A fresh session's prompt: the rendered brief, what happened so far, and the changes in the files now.
 export function handoffPrompt(projectId: string, task: TaskRecord): string {
-  if (task.worktree === null || task.base === null) throw new Error(`task ${task.id} has no worktree or base`);
+  if (task.worktree === null || task.base === null) throw new Error(`task ${task.id} has no worktree or base; the task's records are damaged: tell the user`);
   const root = recordedRoot(projectId);
   // The diffstat stages the worktree, which would run a driver configured since dispatch. The pump and the runner reach
   // this with no command in front of them to refuse it.
@@ -104,7 +104,7 @@ export function handoffPrompt(projectId: string, task: TaskRecord): string {
 // A dependent waits in a worktree made from an older tip. The reset comes first, so a crash before the event only
 // repeats it. An unmoved tip writes nothing: this runs on every poll of a task waiting for a slot.
 function moveToGoalTipLocked(projectId: string, task: TaskRecord): void {
-  if (task.worktree === null) throw new Error(`task ${task.id} has no worktree`);
+  if (task.worktree === null) throw new Error(`task ${task.id} has no worktree; the task's records are damaged: tell the user`);
   const root = recordedRoot(projectId);
   const tip = revParse(root, `refs/heads/${task.goalBranch}`);
   if (tip === task.base) return;
@@ -120,7 +120,7 @@ function moveToGoalTipLocked(projectId: string, task: TaskRecord): void {
 function pendingPrompt(projectId: string, task: TaskRecord, pending: Pending, select: () => ReturnType<typeof selectCandidate>): string | null {
   if (pending.kind === "start") return readFileSync(task.briefPath, "utf8");
   if (pending.kind === "handoff") return "candidate" in select() ? handoffPrompt(projectId, task) : null;
-  if (task.sessionId === null || task.candidate === null) throw new Error(`task ${task.id} has a pending resume with no session or candidate`);
+  if (task.sessionId === null || task.candidate === null) throw new Error(`task ${task.id} has a pending resume with no session or candidate; run mandor reassign on the task`);
   // A fix round's message is the notes of the round it starts.
   return pending.message ?? readFileSync(join(roundDir(projectId, task.id, task.seq + 1), "notes.md"), "utf8");
 }
@@ -229,12 +229,12 @@ export function resolveProject(cwd: string): { root: string; id: string; checkou
   if (worktrees !== null && real.startsWith(worktrees + sep)) {
     const id = real.slice(worktrees.length + 1).split(sep)[0];
     const record = join(projectDir(id), "root");
-    if (!existsSync(record)) throw new Error(`${cwd} is in the mandor worktrees, but project ${id} has no recorded repository`);
+    if (!existsSync(record)) throw new Error(`${cwd} is in the mandor worktrees, but project ${id} has no recorded repository; run mandor from the repository itself`);
     const root = recordedRoot(id);
     return { root, id, checkout: root };
   }
   const root = projectRoot(cwd);
-  if (root === null) throw new Error(`${cwd} is not inside a git repository`);
+  if (root === null) throw new Error(`${cwd} is not inside a git repository; run mandor inside the repository`);
   return { root, id: projectIdFor(root), checkout: cwd };
 }
 
@@ -252,13 +252,13 @@ export function recordedRoot(id: string): string {
 // promisor remote makes git contact it for the objects a checkout, a diff or an apply lacks.
 export function refuseUnsupported(root: string): void {
   const drivers = configuredDrivers(root);
-  if (drivers.length > 0) throw new Error(`refusing ${root}: its git config defines ${drivers.join(", ")}; filter and merge drivers are not supported`);
+  if (drivers.length > 0) throw new Error(`refusing ${root}: its git config defines ${drivers.join(", ")}; filter and merge drivers are not supported; tell the user: the git configuration that applies to this repository must not define them`);
   const promisors = configuredPromisors(root);
   if (promisors.length > 0) throw new Error(`refusing ${root}: its git config defines ${promisors.join(", ")}; ${PARTIAL_CLONE}`);
 }
 
 const refuseNames = (problems: string[]) => {
-  if (problems.length > 0) throw new Error(problems.join("; "));
+  if (problems.length > 0) throw new Error(`${problems.join("; ")}; choose another name`);
 };
 
 // Before anything is written: a goal or task started where sandbox-exec cannot run could never be worked on.
@@ -274,14 +274,14 @@ const pathSlug = (branch: string) => branch.replaceAll("/", "__");
 
 function readNonEmpty(file: string, what: string): string {
   const text = readFileSync(file, "utf8");
-  if (text.trim() === "") throw new Error(`the ${what} file ${file} is empty`);
+  if (text.trim() === "") throw new Error(`the ${what} file ${file} is empty; write the ${what} into it`);
   return text;
 }
 
 // appendJsonl's limit, checked before anything changes that the event would record.
 function assertFits(ev: LedgerEvent): void {
   const bytes = Buffer.byteLength(`${JSON.stringify(ev)}\n`);
-  if (bytes > 4096) throw new Error(`ledger line of ${bytes} bytes exceeds 4096`);
+  if (bytes > 4096) throw new Error(`ledger line of ${bytes} bytes exceeds 4096; shorten what the command records, or tell the user`);
 }
 
 // A file naming the process that holds something: undefined when there is none, null when it does not parse.
@@ -308,7 +308,7 @@ function dropBranch(root: string, branch: string, tip: string): void {
   const at = revParse(root, `refs/heads/${branch}`);
   if (at !== tip) throw new Error(`branch ${branch} moved from ${tip} to ${at}, so it keeps its work; delete it yourself to start over`);
   const r = git(["branch", "-d", branch], root);
-  if (r.code !== 0) throw new Error(r.stderr.trim());
+  if (r.code !== 0) throw new Error(`${r.stderr.trim()}; delete the branch ${branch} yourself, or choose another name`);
 }
 
 // A reservation holds a slug or goal branch from before its worktree exists until its ledger event, and records the
@@ -317,7 +317,7 @@ function dropBranch(root: string, branch: string, tip: string): void {
 function reserve(root: string, all: string, file: string, worktree: string, branch: string, tip: string, busy: string): void {
   const held = readOwnerFile(file);
   if (held !== undefined) {
-    if (held !== null && processAlive(held.pid, held.start)) throw new Error(`${busy} by pid ${held.pid}`);
+    if (held !== null && processAlive(held.pid, held.start)) throw new Error(`${busy} by pid ${held.pid}; retry shortly`);
     // A dead owner can leave its git running, which would go on writing here after this cleanup.
     const add = worktreeAddRunning(worktree);
     if (add !== null) throw new Error(`an earlier command is still finishing; retry shortly (git pid ${add})`);
@@ -326,8 +326,8 @@ function reserve(root: string, all: string, file: string, worktree: string, bran
     if (typeof held?.tip === "string") dropBranch(root, branch, held.tip);
     rmSync(file);
   }
-  if (branchExists(root, branch)) throw new Error(`branch ${branch} already exists`);
-  if (lstatSync(worktree, { throwIfNoEntry: false }) !== undefined) throw new Error(`${worktree} already exists`);
+  if (branchExists(root, branch)) throw new Error(`branch ${branch} already exists; choose another name, and start it from that branch with --from if the work is on it`);
+  if (lstatSync(worktree, { throwIfNoEntry: false }) !== undefined) throw new Error(`${worktree} already exists; remove that directory, or choose another name`);
   ensureDir(dirname(file));
   writeFileSync(file, JSON.stringify({ pid: process.pid, start: processStart(process.pid), tip }), { flag: "wx", mode: 0o600 });
 }
@@ -339,9 +339,9 @@ export function goalStart(cwd: string, branch: string, from: string | null): { g
   const models = loadCatalog();
   refuseNames(checkName(branch).map((v) => v.detail));
   // wip/ holds the disposable task branches: no accept can commit on one, and a branch named wip blocks them all.
-  if (branch === "wip" || branch.startsWith("wip/")) throw new Error(`refusing goal branch ${branch}: wip/ is for task branches`);
+  if (branch === "wip" || branch.startsWith("wip/")) throw new Error(`refusing goal branch ${branch}: wip/ is for task branches; choose another name`);
   // Goals are keyed by branch, and a name of digits only reorders them as it would a task slug.
-  if (/^\d+$/.test(branch)) throw new Error(`refusing goal branch ${branch}: a name of digits only is not allowed`);
+  if (/^\d+$/.test(branch)) throw new Error(`refusing goal branch ${branch}: a name of digits only is not allowed; use a name with a letter in it`);
   refuseUnsupported(root);
   assertRepoOutsideHome(root);
   const config = loadProjectConfig(id);
@@ -355,7 +355,7 @@ export function goalStart(cwd: string, branch: string, from: string | null): { g
   withProjectLock(id, () => {
     // By path too: two branch names can share a worktree path, and a reservation that outlived its goal must not take it.
     const taken = Object.values(loadState(id).goals).find((g) => g.branch === branch || g.integrationWorktree === path);
-    if (taken !== undefined) throw new Error(`goal ${taken.branch} already exists`);
+    if (taken !== undefined) throw new Error(`goal ${taken.branch} already exists; dispatch tasks to it, or choose another branch`);
     reserve(root, all, reserved, path, branch, base, `goal ${branch} is being started`);
   });
   let started = false;
@@ -393,7 +393,7 @@ export function planSet(cwd: string, goal: string, planFile: string, description
   assertOutsideRepos(planFile, projectRoot);
   const plan = readFileSync(planFile);
   return withProjectLock(id, () => {
-    if (loadState(id).goals[goal] === undefined) throw new Error(`no goal ${goal}`);
+    if (loadState(id).goals[goal] === undefined) throw new Error(`no goal ${goal}; mandor status lists the goals`);
     const copy = join(projectDir(id), "goals", pathSlug(goal), "plan.md");
     const at = now();
     // Checked before plan.md is overwritten, so a refused plan leaves the last one in place.
@@ -411,8 +411,12 @@ export function planSet(cwd: string, goal: string, planFile: string, description
 // a full tool is the pump's to wait out.
 function checkUse(use: Candidate, tier: Tier, models: ModelInfo[], network: boolean): Candidate {
   const active = { codex: 0, zcode: 0, agy: 0 };
-  const checked = selectCandidate(tier, { config: loadConfig(), models, tools: loadToolState(Math.floor(Date.now() / 1000)), active, use, preferTool: null, network });
-  return (checked as { candidate: Candidate }).candidate;
+  const ctx = { config: loadConfig(), models, tools: loadToolState(Math.floor(Date.now() / 1000)), active, use, preferTool: null, network };
+  try {
+    return (selectCandidate(tier, ctx) as { candidate: Candidate }).candidate;
+  } catch (e) {
+    throw new Error(`${(e as Error).message}; pass another candidate to --use, or dispatch without it`);
+  }
 }
 
 // Not digits only: records are keyed by slug, and an object lists whole-number keys first, in numeric order, so such a
@@ -427,10 +431,10 @@ export function goalAdopt(cwd: string, branch: string): { branch: string; adopte
     const cursor = ledgerSize(id);
     const state = loadState(id);
     const goal = state.goals[branch];
-    if (goal === undefined) throw new Error(`no goal ${branch}`);
-    if (acceptInDoubt(id, goal)) throw new Error(`an earlier accept of goal ${branch} did not finish; accept settles it first`);
+    if (goal === undefined) throw new Error(`no goal ${branch}; mandor status lists the goals`);
+    if (acceptInDoubt(id, goal)) throw new Error(`an earlier accept of goal ${branch} did not finish; run its accept again, which settles it first`);
     const commits = unrecordedCommits(root, state, goal);
-    if (commits.length === 0) throw new Error(`goal ${branch} holds no commit that mandor did not record`);
+    if (commits.length === 0) throw new Error(`goal ${branch} holds no commit that mandor did not record; mandor status lists the unrecorded commits of each goal`);
     appendEvent(id, { t: "goal.adopted", at: now(), branch, commit: commits[0] });
     return { branch, adopted: commits[0], commits, cursor };
   })!;
@@ -451,7 +455,7 @@ export function dispatch(cwd: string, o: { goal: string; slug: string; tier: Tie
   const config = loadConfig();
   for (const tool of WORKER_TOOLS.filter((t) => config.tools[t].enabled)) {
     const bin = resolveBin(tool, config);
-    if (!existsSync(bin)) throw new Error(`${tool} not found at ${bin}`);
+    if (!existsSync(bin)) throw new Error(`${tool} not found at ${bin}; tell the user, who installs it or sets its path (tools.${tool}.bin in config.json, or MANDOR_CODEX_BIN for codex)`);
   }
   if (!hasUsableModel(models)) throw new Error("no model catalog; run mandor models --refresh");
   const project = loadProjectConfig(id);
@@ -471,11 +475,11 @@ export function dispatch(cwd: string, o: { goal: string; slug: string; tier: Tie
 
   const tip = withProjectLock(id, () => {
     const state = loadState(id);
-    if (state.goals[o.goal] === undefined) throw new Error(`no goal ${o.goal}`);
-    if (state.tasks[slug] !== undefined) throw new Error(`task ${slug} already exists`);
-    if (o.after !== null && state.tasks[o.after]?.goalBranch !== o.goal) throw new Error(`--after ${o.after}: no such task in goal ${o.goal}`);
+    if (state.goals[o.goal] === undefined) throw new Error(`no goal ${o.goal}; mandor status lists the goals`);
+    if (state.tasks[slug] !== undefined) throw new Error(`task ${slug} already exists; choose another slug`);
+    if (o.after !== null && state.tasks[o.after]?.goalBranch !== o.goal) throw new Error(`--after ${o.after}: no such task in goal ${o.goal}; mandor status lists the tasks`);
     // It could never start, and nothing would ever say so.
-    if (o.after !== null && state.tasks[o.after].status === "cancelled") throw new Error(`--after ${o.after}: that task is cancelled`);
+    if (o.after !== null && state.tasks[o.after].status === "cancelled") throw new Error(`--after ${o.after}: that task is cancelled; choose another task for --after, or leave it out`);
     const tip = revParse(root, `refs/heads/${o.goal}`);
     reserve(root, all, reserved, worktree, branch, tip, `task ${slug} is being dispatched`);
     return tip;
@@ -673,7 +677,7 @@ export function gitStep<T>(what: string, step: () => T): T {
 
 function taskOf(id: string, slug: string): TaskRecord {
   const task = loadState(id).tasks[slug];
-  if (task === undefined) throw new Error(`no task ${slug}`);
+  if (task === undefined) throw new Error(`no task ${slug}; mandor status lists the tasks`);
   return task;
 }
 
@@ -684,7 +688,7 @@ function taskOf(id: string, slug: string): TaskRecord {
 // cannot list them.
 export function unrecordedCommits(root: string, state: ProjectState, goal: GoalRecord): string[] {
   const r = git(["rev-list", "--first-parent", `${goal.from}..refs/heads/${goal.branch}`], root);
-  if (r.code !== 0) throw new Error(`cannot list the commits of goal ${goal.branch}: ${r.stderr.trim()}`);
+  if (r.code !== 0) throw new Error(`cannot list the commits of goal ${goal.branch}: ${r.stderr.trim()}; run git log on that branch to see what is wrong`);
   const known = new Set(Object.values(state.tasks).flatMap((t) => (t.goalBranch === goal.branch && t.integratedCommit !== null ? [t.integratedCommit] : [])));
   for (const c of goal.adopted ?? []) known.add(c);
   const unrecorded: string[] = [];
@@ -730,7 +734,7 @@ function refusePlantedAgentPaths(id: string, task: TaskRecord, then: string): vo
 }
 
 export function refuseOpenJob(state: ProjectState, slug: string): void {
-  if (Object.values(state.jobs).some((j) => j.taskId === slug && j.outcome === null)) throw new Error(`task ${slug} has a queued or running job`);
+  if (Object.values(state.jobs).some((j) => j.taskId === slug && j.outcome === null)) throw new Error(`task ${slug} has a queued or running job; wait for it with mandor wait, or cancel the task`);
 }
 
 const rebaseMarker = (id: string, slug: string) => join(taskDir(id, slug), "rebase.json");
@@ -860,7 +864,7 @@ export function verdictAccept(cwd: string, slug: string, evidenceFile: string, m
   return withProjectLock(id, () => {
     const cursor = ledgerSize(id);
     const wanted = loadState(id).tasks[slug];
-    if (wanted === undefined) throw new Error(`no task ${slug}`);
+    if (wanted === undefined) throw new Error(`no task ${slug}; mandor status lists the tasks`);
     const adopted = recoverAcceptLocked(root, id, loadState(id).goals[wanted.goalBranch], allowTestIdentity, opts.commitLimitMs);
     if (adopted?.slug === slug) {
       pumpAfterCommand(id, models, `accept of ${slug}`);
@@ -869,10 +873,10 @@ export function verdictAccept(cwd: string, slug: string, evidenceFile: string, m
     recoverRebaseLocked(root, id, wanted);
     const state = loadState(id);
     const task = state.tasks[slug];
-    if (task.status !== "needs-review" && task.status !== "takeover") throw new Error(`task ${slug} is ${task.status}, not needs-review or takeover`);
+    if (task.status !== "needs-review" && task.status !== "takeover") throw new Error(`task ${slug} is ${task.status}, not needs-review or takeover; run mandor show ${slug} to see where it stands`);
     refuseOpenJob(state, slug);
     const other = Object.values(state.tasks).find((t) => t.goalBranch === task.goalBranch && t.status === "integrating");
-    if (other !== undefined) throw new Error(`task ${other.id} of goal ${task.goalBranch} is integrating; confirm or drop it first`);
+    if (other !== undefined) throw new Error(`task ${other.id} of goal ${task.goalBranch} is integrating; run mandor confirm or mandor drop for it first`);
     const evidence = readNonEmpty(evidenceFile, "evidence");
     const message = readNonEmpty(messageFile, "message");
     const goal = state.goals[task.goalBranch];
@@ -883,13 +887,13 @@ export function verdictAccept(cwd: string, slug: string, evidenceFile: string, m
     // On the goal branch itself: on another branch at the same commit, the commit would miss the goal.
     const head = git(["symbolic-ref", "-q", "HEAD"], integration).stdout.trim();
     if (head !== `refs/heads/${goal.branch}` || revParse(integration, "HEAD") !== tip || !gitStep(`read the integration worktree of ${goal.branch}`, () => isClean(root, integration))) {
-      throw new Error(`integration worktree not clean: ${integration} must be clean and on ${goal.branch} at ${tip}`);
+      throw new Error(`integration worktree not clean: ${integration} must be clean and on ${goal.branch} at ${tip}; tell the user, who cleans it`);
     }
     const unrecorded = unrecordedCommits(root, state, goal);
-    if (unrecorded.length > 0) throw new Error(`refusing to accept: ${unrecordedNote(goal.branch, unrecorded)}; they passed no review and no guard, so the user removes them from the branch or adopts them with mandor goal adopt ${goal.branch}, which the lead does not run`);
-    if (task.worktree === null || task.base === null) throw new Error(`task ${slug} has no worktree or base`);
+    if (unrecorded.length > 0) throw new Error(`refusing to accept: ${unrecordedNote(goal.branch, unrecorded)}; they passed no review and no guard: tell the user, who removes them from the branch or adopts them with mandor goal adopt ${goal.branch}, which the lead does not run`);
+    if (task.worktree === null || task.base === null) throw new Error(`task ${slug} has no worktree or base; the task's records are damaged: tell the user`);
     const { bytes, text, tree } = gitStep(`stage task ${slug} for its accept`, () => stagedDiff(root, task.worktree!, task.base!));
-    if (bytes.length === 0) throw new Error(`task ${slug} has no changes to accept`);
+    if (bytes.length === 0) throw new Error(`task ${slug} has no changes to accept; run mandor diff ${slug} to see what the worker changed`);
     // Only the tree the lead saw: a worker round, a rebase, a takeover edit or a process left in the worktree changes it.
     const pin = reviewedFile(id, slug);
     if (!existsSync(pin)) throw new Error(`task ${slug} has no review on record; run mandor review ${slug} first`);
@@ -905,14 +909,14 @@ export function verdictAccept(cwd: string, slug: string, evidenceFile: string, m
       const hint = !project.nameIsWord && guarded(true).length < violations.length
         ? "\nIf this repository uses that name as a word of its own subject, the user allows it with project setup --update --name-is-a-word; do not run it yourself."
         : "";
-      throw new Error(`accept refused:\n${violations.map((v) => `- ${v.kind}: ${v.detail}`).join("\n")}${hint}`);
+      throw new Error(`accept refused:\n${violations.map((v) => `- ${v.kind}: ${v.detail}`).join("\n")}\nFix what is listed (the files in a fix round or a takeover, the commit message in the accept command), then run mandor review ${slug} and accept again.${hint}`);
     }
     // Sized before anything changes, and saved only once the accept is to commit: a rebase records no accept.
     const sized: FileRef = { path: join(roundDir(id, slug, task.seq), "evidence-accept.md"), sha256: "0".repeat(64), excerpt: clampDetail(evidence) };
     for (const ev of acceptedEvents(slug, task.seq, sized, "0".repeat(64))) assertFits(ev);
     if (!applyCheck(root, integration, patch)) {
       // A merge onto where the task started changes nothing, so something in the integration worktree is in the way.
-      if (task.base === tip) throw new Error(`task ${slug} does not apply to ${integration}, though the goal has not moved since its base`);
+      if (task.base === tip) throw new Error(`task ${slug} does not apply to ${integration}, though the goal has not moved since its base; something in the integration worktree is in the way, so tell the user, who looks there`);
       return rebaseLocked(root, id, task, tip, bytes, models, cursor);
     }
     const file = saveRoundFile(id, slug, task.seq, "evidence-accept.md", evidence);
@@ -973,17 +977,17 @@ export function confirm(cwd: string, slug: string, evidenceFile: string): { curs
   return withProjectLock(id, () => {
     const state = loadState(id);
     const task = state.tasks[slug];
-    if (task === undefined) throw new Error(`no task ${slug}`);
+    if (task === undefined) throw new Error(`no task ${slug}; mandor status lists the tasks`);
     if (task.status !== "integrating") {
       const finished = task.status === "accepted" ? finishRemovalLocked(root, id, task) : null;
       if (finished !== null) return finished;
-      throw new Error(`task ${slug} is ${task.status}, not integrating`);
+      throw new Error(`task ${slug} is ${task.status}, not integrating; only a task that accept committed is confirmed or dropped: run mandor show ${slug} to see where it stands`);
     }
     const evidence = readNonEmpty(evidenceFile, "evidence");
     const integration = state.goals[task.goalBranch].integrationWorktree;
     // The goal branch too: a commit HEAD names is not yet one the goal has.
     if (!isClean(root, integration) || revParse(integration, "HEAD") !== task.integratedCommit || revParse(root, `refs/heads/${task.goalBranch}`) !== task.integratedCommit) {
-      throw new Error(`integration worktree not clean: ${integration} and ${task.goalBranch} must be clean at ${task.integratedCommit}`);
+      throw new Error(`integration worktree not clean: ${integration} and ${task.goalBranch} must be clean at ${task.integratedCommit}; tell the user, who cleans it`);
     }
     const at = now();
     const cursor = ledgerSize(id);
@@ -1022,14 +1026,14 @@ function resumeWithNotes(cwd: string, slug: string, notesFile: string, verdict: 
     const cursor = ledgerSize(id);
     const task = taskOf(id, slug);
     recoverRebaseLocked(root, id, task);
-    if (task.status !== "needs-review") throw new Error(`task ${slug} is ${task.status}, not needs-review`);
+    if (task.status !== "needs-review") throw new Error(`task ${slug} is ${task.status}, not needs-review; run mandor show ${slug} to see where it stands`);
     refuseUnfinishedAccept(id, task);
     refuseOpenJob(loadState(id), slug);
     refusePlantedAgentPaths(id, task, "run the command again");
     const notes = readNonEmpty(notesFile, "notes");
     if (verdict === "fix") startFixRoundLocked(id, task, renderFixMessage(notes), true, models, "fix");
     else {
-      if (askOf(roundReport(id, slug, task.seq)) === null) throw new Error(`task ${slug}: its newest report neither says blocked or partial nor asks a question, so there is nothing to answer; send notes with verdict fix`);
+      if (askOf(roundReport(id, slug, task.seq)) === null) throw new Error(`task ${slug}: its newest report neither says blocked or partial nor asks a question, so there is nothing to answer; use verdict fix for its notes`);
       // An answer is no fix round, so a worker that asks at every round would be answered for ever: as many answers as fixes.
       const answered = readEvents(id).items.filter((e) => e.t === "verdict" && e.taskId === slug && e.verdict === "answer").length;
       const { maxFixRounds } = loadConfig();
@@ -1051,14 +1055,14 @@ export function drop(cwd: string, slug: string, notesFile: string): { cursor: nu
     const cursor = ledgerSize(id);
     const state = loadState(id);
     const task = taskOf(id, slug);
-    if (task.status !== "integrating") throw new Error(`task ${slug} is ${task.status}, not integrating`);
+    if (task.status !== "integrating") throw new Error(`task ${slug} is ${task.status}, not integrating; only a task that accept committed is confirmed or dropped: run mandor show ${slug} to see where it stands`);
     const notes = readNonEmpty(notesFile, "notes");
     // The drop resets the goal first, which nothing undoes, so a worker that would not start is found out before it.
     refusePlantedAgentPaths(id, task, "run the command again");
     const { branch, integrationWorktree: integration } = state.goals[task.goalBranch];
     const commit = task.integratedCommit;
     // Elsewhere the reset would move another ref, and a HEAD that sits at the commit's parent would read as a drop done.
-    if (git(["symbolic-ref", "-q", "HEAD"], integration).stdout.trim() !== `refs/heads/${branch}`) throw new Error(`refusing to drop ${commit}: ${integration} is not on ${branch}`);
+    if (git(["symbolic-ref", "-q", "HEAD"], integration).stdout.trim() !== `refs/heads/${branch}`) throw new Error(`refusing to drop ${commit}: ${integration} is not on ${branch}; tell the user`);
     // A drop killed after its reset finds the goal branch on the commit's parent, with the commit still on record.
     if (commit !== null && revParse(root, `refs/heads/${branch}`) !== revParse(root, `${commit}^`)) {
       try {
@@ -1071,7 +1075,7 @@ export function drop(cwd: string, slug: string, notesFile: string): { cursor: nu
       }
     } else if (commit !== null && !isClean(root, integration)) {
       // The reset is already done, so what the worktree holds now is not the commit's: a fix round would go on over it.
-      throw new Error(`refusing to drop ${commit}: ${integration} is not clean`);
+      throw new Error(`refusing to drop ${commit}: ${integration} is not clean; tell the user, who cleans it`);
     }
     // A task the lead took over stays the lead's: no worker round, and no fix round counted.
     if (readEvents(id).items.some((e) => e.t === "verdict" && e.taskId === slug && e.verdict === "takeover")) {
@@ -1097,10 +1101,10 @@ export function reassign(cwd: string, slug: string): { task: TaskRecord; cursor:
     const cursor = ledgerSize(id);
     const state = loadState(id);
     const task = taskOf(id, slug);
-    if (task.status !== "stalled" || task.stallReason === null) throw new Error(`task ${slug} is ${task.status}, not stalled`);
-    if (!REASSIGNABLE.includes(task.stallReason)) throw new Error(`task ${slug} is stalled with ${task.stallReason}, which reassign cannot help`);
+    if (task.status !== "stalled" || task.stallReason === null) throw new Error(`task ${slug} is ${task.status}, not stalled; reassign takes a stalled task: run mandor show ${slug} to see where it stands`);
+    if (!REASSIGNABLE.includes(task.stallReason)) throw new Error(`task ${slug} is stalled with ${task.stallReason}, which reassign cannot help; run mandor show ${slug} to see why, and take it over or cancel it`);
     const dependency = task.after === null ? undefined : state.tasks[task.after];
-    if (dependency !== undefined && dependency.status !== "accepted") throw new Error(`task ${slug} depends on ${dependency.id}, which is ${dependency.status}; cancel it or take it over`);
+    if (dependency !== undefined && dependency.status !== "accepted") throw new Error(`task ${slug} depends on ${dependency.id}, which is ${dependency.status}; run mandor cancel ${slug} to stop it, or take it over`);
     refuseOpenJob(state, slug);
     refusePlantedAgentPaths(id, task, `run mandor reassign ${slug} again`);
     // All-exhausted says candidates exist and their limits stopped them, so a catalog holding none of them must not reach it.
@@ -1138,7 +1142,7 @@ function revivedPending(task: TaskRecord): Pending {
 export function ready(tool: ToolName): { resumed: string[]; failed?: string[] } {
   refuseUnconfined();
   const config = loadConfig();
-  if (!Object.hasOwn(config.tools, tool)) throw new Error(`unknown tool ${tool}`);
+  if (!Object.hasOwn(config.tools, tool)) throw new Error(`unknown tool ${tool}; see tools in config.json for the tool names`);
   const { refreshModels } = requireOnUse("./adapters/index.ts") as typeof import("./adapters/index.ts");
   const models = refreshModels(config);
   appendToolEvent({ t: "tool.ready", at: now(), tool });
@@ -1211,8 +1215,8 @@ export function cancel(cwd: string, slug: string): { cursor: number; cleanup?: "
   const marker = cancelMarker(id, slug);
   const cancellable = (): TaskRecord => {
     const task = taskOf(id, slug);
-    if (task.status === "integrating") throw new Error(`task ${slug} is integrating; drop it first`);
-    if (!CANCELLABLE.includes(task.status)) throw new Error(`task ${slug} is ${task.status}`);
+    if (task.status === "integrating") throw new Error(`task ${slug} is integrating; run mandor drop on it first`);
+    if (!CANCELLABLE.includes(task.status)) throw new Error(`task ${slug} is ${task.status}; only a task that is not accepted or cancelled yet can be cancelled, and mandor status lists them`);
     refuseUnfinishedAccept(id, task); // the commit that accept may have made would have no task left to adopt it
     return task;
   };
@@ -1266,7 +1270,7 @@ export function takeover(cwd: string, slug: string, approved: boolean): { cursor
     const cursor = ledgerSize(id);
     const task = taskOf(id, slug);
     recoverRebaseLocked(root, id, task);
-    if (task.status !== "needs-review" && task.status !== "stalled") throw new Error(`task ${slug} is ${task.status}, not needs-review or stalled`);
+    if (task.status !== "needs-review" && task.status !== "stalled") throw new Error(`task ${slug} is ${task.status}, not needs-review or stalled; run mandor show ${slug} to see where it stands`);
     refuseUnfinishedAccept(id, task);
     refuseOpenJob(loadState(id), slug);
     if ((task.stallReason === "all-exhausted" || task.stallReason === "fix-rounds-exceeded") && !approved) throw new Error(`task ${slug} needs the user's approval for a takeover: ask, then pass --approved`);

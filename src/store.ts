@@ -28,7 +28,7 @@ export function readJson<T>(p: string): T {
 export function appendJsonl(p: string, v: object): void {
   const line = `${JSON.stringify(v)}\n`;
   const bytes = Buffer.byteLength(line);
-  if (bytes > 4096) throw new Error(`ledger line of ${bytes} bytes exceeds 4096: ${p}`);
+  if (bytes > 4096) throw new Error(`ledger line of ${bytes} bytes exceeds 4096: ${p}; shorten what the command records, or tell the user`);
   ensureDir(dirname(p));
   appendFileSync(p, line, { mode: 0o600 });
 }
@@ -50,7 +50,7 @@ export function readJsonl<T>(p: string, fromByte = 0): { items: T[]; endByte: nu
     try {
       items.push(JSON.parse(buf.toString("utf8", at, nl)));
     } catch {
-      throw new Error(`${p}: unparsable line at byte ${at}`);
+      throw new Error(`${p}: unparsable line at byte ${at}; the user repairs that file, as it stops every command of the project: tell them`);
     }
     at = nl + 1;
   }
@@ -150,13 +150,13 @@ const pause = new Int32Array(new SharedArrayBuffer(4));
 function withLock<T>(lock: string, busy: string, fn: () => T, maxWaitMs: number | null, tryOnce: boolean): T | null {
   if (held.has(lock)) {
     if (tryOnce) return null;
-    throw new Error(`${lock} is already held by this process; the lock is not re-entrant`); // waiting would never end
+    throw new Error(`${lock} is already held by this process; the lock is not re-entrant; this is a bug in mandor: tell the user`); // waiting would never end
   }
   ensureDir(dirname(lock));
   const deadline = maxWaitMs === null ? Infinity : Date.now() + maxWaitMs;
   while (!tryLock(lock)) {
     if (tryOnce) return null;
-    if (Date.now() >= deadline) throw new Error(`${busy} (${lock})`);
+    if (Date.now() >= deadline) throw new Error(`${busy} (${lock}); retry shortly, and if it stays, tell the user: the lock file may be damaged or its holder stuck`);
     Atomics.wait(pause, 0, 0, 50);
   }
   held.add(lock);
@@ -175,7 +175,7 @@ const slotsLock = () => join(mandorHome(), "slots.lock");
 // When both locks are needed, take this one first, then the slots lock.
 export function withProjectLock<T>(projectId: string, fn: () => T, opts: { maxWaitMs?: number | null; tryOnce?: boolean } = {}): T | null {
   // The reverse order could deadlock against a process that keeps to this one.
-  if (held.has(slotsLock())) throw new Error("lock order: take the project lock before the slots lock");
+  if (held.has(slotsLock())) throw new Error("lock order: take the project lock before the slots lock; this is a bug in mandor: tell the user");
   const maxWaitMs = opts.maxWaitMs === undefined ? 30_000 : opts.maxWaitMs;
   return withLock(join(projectDir(projectId), "lock"), "project busy", fn, maxWaitMs, opts.tryOnce ?? false);
 }

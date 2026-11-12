@@ -22,7 +22,7 @@ test("verdict answer is listed in the help, and wants its notes file", () => {
   const help = spawnSync(launcher, ["--help"], { encoding: "utf8" });
   assert.match(help.stdout, /^  verdict <slug> answer --notes <file>/m);
   const bare = spawnSync(launcher, ["verdict", "hello", "answer"], { encoding: "utf8", cwd: temp("mandor-help-") });
-  assert.deepEqual([bare.status, bare.stdout, bare.stderr], [2, "", "mandor: --notes is required\n"]);
+  assert.deepEqual([bare.status, bare.stdout, bare.stderr], [2, "", "mandor: --notes is required; see mandor --help\n"]);
 });
 
 test("--version prints the version of package.json", () => {

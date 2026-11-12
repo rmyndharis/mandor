@@ -32,7 +32,7 @@ export function readJob(jobId: string): JobRecord | null {
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
     // The parser's own message quotes the file; an I/O error's already names it.
-    if (e instanceof SyntaxError) throw new Error(`${jobFile(jobId)} is not valid JSON`);
+    if (e instanceof SyntaxError) throw new Error(`${jobFile(jobId)} is not valid JSON; the job record is damaged: tell the user`);
     throw e;
   }
 }
@@ -261,7 +261,7 @@ export function spawnInRoot(worktree: string, run: PreparedRun, stdio: StdioOpti
   const root = worktreeRoot(worktree);
   process.chdir(root);
   try {
-    if (process.cwd() !== root) throw new Error(`refusing ${worktree}: its root ${root} is not a directory at its own path`);
+    if (process.cwd() !== root) throw new Error(`refusing ${worktree}: its root ${root} is not a directory at its own path; it was replaced or removed: run mandor status, and tell the user`);
     // A process group of its own, so a stop reaches every process the worker starts.
     return spawn(run.command, run.args, { env: run.env, detached: true, stdio });
   } finally {
@@ -327,7 +327,7 @@ async function work(job: JobRecord, adapter: Adapter): Promise<JobResult> {
   if (pid === undefined) {
     dropTmp();
     await ended; // a spawn error rejects
-    throw new Error("worker did not start");
+    throw new Error("worker did not start; read logs/runner.log in the state home");
   }
   // The marker is judged again only when it changes: half a cancel stays half until another cancel writes its own, and
   // judging it reads the whole ledger. A judgement that throws counts as no cancel, and the log says so once: a throw here

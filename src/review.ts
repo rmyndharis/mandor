@@ -117,8 +117,8 @@ export function taskDiff(cwd: string, slug: string): string {
   return withProjectLock(id, () => {
     const state = loadState(id);
     const task = state.tasks[slug];
-    if (task === undefined) throw new Error(`no task ${slug}`);
-    if (task.worktree === null || task.base === null) throw new Error(`task ${slug} has no worktree or base`);
+    if (task === undefined) throw new Error(`no task ${slug}; mandor status lists the tasks`);
+    if (task.worktree === null || task.base === null) throw new Error(`task ${slug} has no worktree or base; the task's records are damaged: tell the user`);
     // Staging takes the worktree's index lock, which a worker in the middle of a git command would meet.
     refuseOpenJob(state, slug);
     recoverRebaseLocked(root, id, task);
@@ -134,8 +134,8 @@ export function reviewPack(cwd: string, slug: string): ReviewPack {
   return withProjectLock(id, () => {
     const state = loadState(id);
     const task = state.tasks[slug];
-    if (task === undefined) throw new Error(`no task ${slug}`);
-    if (task.worktree === null || task.base === null) throw new Error(`task ${slug} has no worktree or base`);
+    if (task === undefined) throw new Error(`no task ${slug}; mandor status lists the tasks`);
+    if (task.worktree === null || task.base === null) throw new Error(`task ${slug} has no worktree or base; the task's records are damaged: tell the user`);
     // A rebase killed after its reset left the goal's own changes in the worktree, which the pack would read as the task's.
     recoverRebaseLocked(root, id, task);
     const project = loadProjectConfig(id);

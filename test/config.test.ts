@@ -165,7 +165,7 @@ test("a config file with a tool missing fails instead of being completed from th
   delete partial.tools.zcode;
   const text = JSON.stringify(partial);
   writeFileSync(file, text);
-  assert.throws(() => loadConfig(), /^Error: invalid config: tools\.zcode is missing$/);
+  assert.throws(() => loadConfig(), /^Error: invalid config: tools\.zcode is missing; tell the user, who repairs config\.json in the state home$/);
   assert.equal(readFileSync(file, "utf8"), text);
 });
 
@@ -182,7 +182,7 @@ test("a config file keyed by the Indonesian tier names loads as the tiers they n
   writeFileSync(file, JSON.stringify({ ...clone(), tiers: { light, sedang: medium, heavy } }));
   assert.deepEqual(loadConfig(), DEFAULT_CONFIG);
   writeFileSync(file, JSON.stringify({ ...clone(), tiers: { light, medium, heavy, ringan: ["codex:x"] } }));
-  assert.throws(() => loadConfig(), /^Error: invalid config: unknown tier: ringan$/);
+  assert.throws(() => loadConfig(), /^Error: invalid config: unknown tier: ringan; tell the user, who repairs config\.json in the state home$/);
 });
 
 test("loadConfig returns a copy, so callers cannot change the defaults", () => {
@@ -259,7 +259,7 @@ test("resolveCodexBin never searches the working directory through an empty or r
   t.after(() => process.chdir(old));
 
   setEnv(t, "PATH", ["", "sub", ".", "../" + basename(cwd)].join(":"));
-  assert.throws(() => resolveCodexBin(clone()), /^Error: codex not found on PATH$/);
+  assert.throws(() => resolveCodexBin(clone()), /^Error: codex not found on PATH; tell the user, who installs it or sets its bin under tools in config\.json$/);
 
   const abs = tempDir();
   const want = binIn(abs, "codex", 0o755);
@@ -291,5 +291,5 @@ test("a configured bin that is a relative path is refused for every tool and nev
 test("resolveCodexBin throws when the name is not on PATH", (t) => {
   setEnv(t, "MANDOR_CODEX_BIN", undefined);
   setEnv(t, "PATH", tempDir());
-  assert.throws(() => resolveCodexBin(clone()), /^Error: codex not found on PATH$/);
+  assert.throws(() => resolveCodexBin(clone()), /^Error: codex not found on PATH; tell the user, who installs it or sets its bin under tools in config\.json$/);
 });

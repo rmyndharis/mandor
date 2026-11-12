@@ -155,7 +155,7 @@ export function worktreeRoot(worktree: string): string {
   try {
     if (lstatSync(real).isDirectory() && realpathSync.native(real) === real) return real;
   } catch {} // no entry, or one that went away between the two reads
-  throw new Error(`refusing ${worktree}: its root ${real} is not a directory at its own path`);
+  throw new Error(`refusing ${worktree}: its root ${real} is not a directory at its own path; it was replaced or removed: run mandor status, and tell the user`);
 }
 
 // git holds no lock while a hook runs or a checkout starts, so a git that a command killed alone left running shows only
@@ -197,7 +197,7 @@ function commonDirOf(repo: string): string {
 
 // A repository under the home would be a worker's own, not the user's.
 function refuseInsideHome(subject: string, commonDir: string, home: string): void {
-  if (commonDir.startsWith(home + sep)) throw new Error(`refusing ${subject}: its repository ${commonDir} is inside the mandor home ${home}`);
+  if (commonDir.startsWith(home + sep)) throw new Error(`refusing ${subject}: its repository ${commonDir} is inside the mandor home ${home}; run mandor from a repository outside the state home`);
 }
 
 // For a command about to run git in repo and write there: nothing of a repository under the home may run, its
@@ -243,7 +243,7 @@ export function removeTree(raw: string): void {
   if (r.status === 0) return;
   // One line, control characters masked: the names in it are the worker's, and rm passes a tab, DEL and C1 codes through.
   const why = r.error?.message ?? (r.stderr.split("\n")[0].replace(/[\x00-\x1f\x7f-\x9f]/g, "?") || `exit ${r.status ?? r.signal}`);
-  throw new Error(`could not remove ${path}: ${why}`);
+  throw new Error(`could not remove ${path}: ${why}; if it stays, tell the user, who removes it`);
 }
 
 // Forced removal is only for mandor's own worktrees and wip/ branches. It goes by what exists, so it also clears
@@ -255,8 +255,8 @@ export function removeTree(raw: string): void {
 export function removeOwnedWorktree(repo: string, path: string, branch: string | null, worktreesRoot: string): void {
   const constructed = constructedPath(path); // the path mandor built, not a link a worker put at its name
   const underRoot = realOf(worktreesRoot) + sep;
-  if (!constructed.startsWith(underRoot)) throw new Error(`refusing to remove ${path}: not under ${worktreesRoot}`);
-  if (branch !== null && !branch.startsWith("wip/")) throw new Error(`refusing to delete branch ${branch}: not a wip/ branch`);
+  if (!constructed.startsWith(underRoot)) throw new Error(`refusing to remove ${path}: not under ${worktreesRoot}; this is a bug in mandor or a damaged record: tell the user`);
+  if (branch !== null && !branch.startsWith("wip/")) throw new Error(`refusing to delete branch ${branch}: not a wip/ branch; this is a bug in mandor: tell the user`);
   const admins = adminDirs(commonDirOf(repo), constructed);
   const st = lstatSync(constructed, { throwIfNoEntry: false });
   if (st !== undefined && st.isDirectory()) {
@@ -264,7 +264,7 @@ export function removeOwnedWorktree(repo: string, path: string, branch: string |
   } else if (st !== undefined) {
     // A link or other entry a worker put at the worktree's own name: remove that entry only, never recurse through it,
     // so a sibling task worktree or the integration worktree it points at is left intact. Refuse if it leads outside.
-    if (!realOf(constructed).startsWith(underRoot)) throw new Error(`refusing to remove ${path}: it leads outside, not under ${worktreesRoot}`);
+    if (!realOf(constructed).startsWith(underRoot)) throw new Error(`refusing to remove ${path}: it leads outside, not under ${worktreesRoot}; a worker may have replaced it with a link: tell the user, who removes it`);
     rmSync(constructed);
   }
   // Only once the tree is gone, so one that will not go stays registered and a later call finishes it.
@@ -285,7 +285,7 @@ export function branchExists(repo: string, branch: string): boolean {
 
 // Only a wip/ branch, and only from the commit it was made at: one that has moved keeps its work, and the failure says so.
 export function deleteBranchAt(repo: string, branch: string, tip: string): void {
-  if (!branch.startsWith("wip/")) throw new Error(`refusing to delete branch ${branch}: not a wip/ branch`);
+  if (!branch.startsWith("wip/")) throw new Error(`refusing to delete branch ${branch}: not a wip/ branch; this is a bug in mandor: tell the user`);
   if (branchExists(repo, branch)) ok(["update-ref", "-d", `refs/heads/${branch}`, tip], repo);
 }
 
@@ -318,7 +318,7 @@ export function configuredPromisors(repo: string): string[] {
   return configKeys(repo, PROMISOR_KEYS);
 }
 
-export const PARTIAL_CLONE = "a partial clone is not supported, as git would fetch the objects it lacks from a remote";
+export const PARTIAL_CLONE = "a partial clone is not supported, as git would fetch the objects it lacks from a remote; tell the user, who needs a full clone";
 
 interface Bound {
   gitDir: string;
@@ -347,10 +347,10 @@ function confinedRun(cwd: string, location: Location, pre: string[], allow: [str
   let i = 0; // the subcommand, past any leading -c key pairs, for the messages
   while (args[i] === "-c") i += 2;
   const cmd = args[i] ?? args[0];
-  if (r.error) throw new Error(`cannot confine git ${cmd} in ${cwd}: ${r.error.message}`);
+  if (r.error) throw new Error(`cannot confine git ${cmd} in ${cwd}: ${r.error.message}; run mandor outside any sandbox that sandbox-exec cannot nest in`);
   const stderr = r.stderr.toString();
   // sandbox-exec prefixes its own failures and never execs git; a git error carries no such prefix.
-  if (stderr.startsWith("sandbox-exec:")) throw new Error(`cannot confine git ${cmd} in ${cwd}: ${stderr.split("\n")[0]}`);
+  if (stderr.startsWith("sandbox-exec:")) throw new Error(`cannot confine git ${cmd} in ${cwd}: ${stderr.split("\n")[0]}; run mandor outside any sandbox that sandbox-exec cannot nest in`);
   if (typeof r.status === "number") return { code: r.status, stdout: r.stdout, stderr };
   return { code: 1, stdout: Buffer.alloc(0), stderr: `git ${cmd} killed by ${r.signal}` };
 }
@@ -397,7 +397,7 @@ export function migrateObjects(from: string, to: string): void {
       if (!ent.isFile()) continue; // a real loose object, never a planted link
       const oid = sub.name + ent.name;
       const raw = readFileSync(join(from, sub.name, ent.name));
-      if (!isLooseObject(raw, oid)) throw new Error(`refusing to keep ${oid}: not the loose object it is named for`);
+      if (!isLooseObject(raw, oid)) throw new Error(`refusing to keep ${oid}: not the loose object it is named for; tell the user: a worker wrote an object that is not what its name says`);
       const dir = join(to, sub.name);
       const dst = join(dir, ent.name);
       // A killed write or an ENOSPC could have left a truncated object under this name; an existing one is kept only
@@ -423,7 +423,7 @@ export function migrateObjects(from: string, to: string): void {
 function emptyHooks(): string {
   const dir = join(mandorHome(), "empty-hooks");
   mkdirSync(dir, { recursive: true, mode: 0o700 });
-  if (readdirSync(dir).length > 0) throw new Error(`refusing: ${dir} is not empty`);
+  if (readdirSync(dir).length > 0) throw new Error(`refusing: ${dir} is not empty; remove what is in it`);
   return dir;
 }
 
@@ -440,16 +440,16 @@ function bind(repo: string, worktree: string, userConfig = false): Bound {
   // parent, natively, so a home spelled in another case still compares equal.
   const real = worktreeRoot(worktree);
   const home = realpathSync.native(mandorHome());
-  if (!real.startsWith(home + sep)) throw new Error(`refusing ${worktree}: not under the mandor home ${home}`);
+  if (!real.startsWith(home + sep)) throw new Error(`refusing ${worktree}: not under the mandor home ${home}; MANDOR_HOME changed, or this is a bug: tell the user`);
   const commonDir = commonDirOf(repo);
   refuseInsideHome(worktree, commonDir, home);
   const named = adminDirs(commonDir, real);
-  if (named.length !== 1) throw new Error(`refusing ${worktree}: ${named.length === 0 ? "not a worktree of" : "named by more than one admin dir of"} ${repo}`);
+  if (named.length !== 1) throw new Error(`refusing ${worktree}: ${named.length === 0 ? "not a worktree of" : "named by more than one admin dir of"} ${repo}; MANDOR_HOME changed, or this is a bug: tell the user`);
   const location = { GIT_DIR: named[0], GIT_WORK_TREE: real };
   // git runs a driver command with the worktree as cwd, where a worker-written attributes file and script can steer it
   // into running worker code in the lead. No bound call goes on under one, whichever scope of the configuration defines it.
   const drivers = configKeys(real, DRIVER_KEYS, location);
-  if (drivers.length > 0) throw new Error(`refusing ${real}: its git config defines ${drivers.join(", ")}; filter and merge drivers are not supported`);
+  if (drivers.length > 0) throw new Error(`refusing ${real}: its git config defines ${drivers.join(", ")}; filter and merge drivers are not supported; tell the user: the git configuration that applies to this repository must not define them`);
   const promisors = configKeys(real, PROMISOR_KEYS, location);
   if (promisors.length > 0) throw new Error(`refusing ${real}: its git config defines ${promisors.join(", ")}; ${PARTIAL_CLONE}`);
   // Hardened callers point git at an empty hooks dir and turn fsmonitor off (both reach a submodule child through
@@ -510,7 +510,7 @@ export function resetTo(repo: string, worktree: string, ref: string, replaced: s
   const g = bind(repo, worktree);
   // The reset moves whatever branch is checked out, so that must be one of mandor's own.
   const branch = lines(g.run(["symbolic-ref", "-q", "HEAD"]).stdout.toString())[0];
-  if (!branch.startsWith("refs/heads/wip/")) throw new Error(`refusing to reset ${worktree}: HEAD is ${branch || "detached"}, not a wip/ branch`);
+  if (!branch.startsWith("refs/heads/wip/")) throw new Error(`refusing to reset ${worktree}: HEAD is ${branch || "detached"}, not a wip/ branch; tell the user: this is not a task worktree`);
   const target = g.ok(["rev-parse", "--verify", `${ref}^{commit}`]).trim();
   okConfined(g, checkoutAllow(g), [...READ_TREE, target]); // tracked files to the target tree
   okConfined(g, [["subpath", g.worktree]], ["clean", "-ffd"]); // -ff also removes a nested repository; no -x, so ignored stay
@@ -702,7 +702,7 @@ function headerPath(rest: string): string {
   const q = rest.startsWith('"') ? '"' : "";
   const n = (rest.length - 5 - 4 * q.length) / 2;
   const p = rest.slice(2 + q.length, 2 + q.length + n);
-  if (rest !== `${q}a/${p}${q} ${q}b/${p}${q}`) throw new Error(`unexpected diff header: diff --git ${rest}`);
+  if (rest !== `${q}a/${p}${q} ${q}b/${p}${q}`) throw new Error(`unexpected diff header: diff --git ${rest}; this is a bug in mandor: tell the user`);
   return q ? unquote(p) : p;
 }
 
@@ -799,7 +799,7 @@ function commitIdentity(g: Bound, worktree: string, allowTestIdentity: boolean):
     const r = g.run([...IDENTITY, "var", v]);
     if (r.code !== 0) throw new GitFailure(`refusing to commit in ${worktree}: no ${v}: ${r.stderr.trim()}`);
     const email = emailOf(r.stdout.toString().trim());
-    if (isPlaceholderEmail(email, allowTestIdentity)) throw new Error(`refusing to commit in ${worktree}: ${v} email "${email}" is a placeholder`);
+    if (isPlaceholderEmail(email, allowTestIdentity)) throw new Error(`refusing to commit in ${worktree}: ${v} email "${email}" is a placeholder; tell the user, who sets user.email in the repository's git configuration`);
     return email;
   });
 }
@@ -866,24 +866,24 @@ export function commitStaged(repo: string, worktree: string, expectedPaths: stri
   const branch = lines(g.run(["symbolic-ref", "-q", "HEAD"]).stdout.toString())[0]; // empty when HEAD is detached
   // Only an integration worktree: a branch outside refs/heads/wip/. A wip/ branch or a detached HEAD is a worker's,
   // whose hooks and files (a relative husky hooksPath included) are not the lead's to run here.
-  if (!branch.startsWith("refs/heads/") || branch.startsWith("refs/heads/wip/")) throw new Error(`refusing to commit in ${worktree}: HEAD is ${branch || "detached"}, not an integration branch`);
+  if (!branch.startsWith("refs/heads/") || branch.startsWith("refs/heads/wip/")) throw new Error(`refusing to commit in ${worktree}: HEAD is ${branch || "detached"}, not an integration branch; tell the user: this is not an integration worktree`);
   const [author, committer] = commitIdentity(g, worktree, allowTestIdentity);
   const busy = [
     ...IN_PROGRESS_REFS.filter((name) => g.run(["rev-parse", "-q", "--verify", name]).code === 0),
     ...IN_PROGRESS_DIRS.filter((name) => existsSync(join(g.gitDir, name))),
   ];
-  if (busy.length > 0) throw new Error(`refusing to commit in ${worktree}: ${busy.join(", ")} present`);
+  if (busy.length > 0) throw new Error(`refusing to commit in ${worktree}: ${busy.join(", ")} present; if no git runs there, tell the user, who removes them`);
   const stagedSet = new Set(staged(g));
   const expected = new Set(expectedPaths);
   const extra = [...stagedSet].filter((p) => !expected.has(p)).sort();
   const missing = [...expected].filter((p) => !stagedSet.has(p)).sort();
   if (extra.length > 0 || missing.length > 0) {
-    throw new Error(`refusing to commit in ${worktree}: staged but not reviewed ${JSON.stringify(extra)}, reviewed but not staged ${JSON.stringify(missing)}`);
+    throw new Error(`refusing to commit in ${worktree}: staged but not reviewed ${JSON.stringify(extra)}, reviewed but not staged ${JSON.stringify(missing)}; run mandor review again, then accept`);
   }
   const hooks = hooksDir(g);
   const touched = hooks === null ? [] : [...stagedSet].filter((p) => hooks === "" || foldPath(p) === hooks || foldPath(p).startsWith(`${hooks}/`)).sort();
   if (touched.length > 0) {
-    throw new Error(`refusing to commit in ${worktree}: core.hooksPath ${hooks || "."} is inside the worktree and the staged changes touch ${JSON.stringify(touched)}`);
+    throw new Error(`refusing to commit in ${worktree}: core.hooksPath ${hooks || "."} is inside the worktree and the staged changes touch ${JSON.stringify(touched)}; tell the user, who points core.hooksPath outside the worktree`);
   }
   assertSafeSigning(g, worktree);
   const tip = g.ok(["rev-parse", "--verify", "HEAD"]).trim();
@@ -897,7 +897,7 @@ export function commitStaged(repo: string, worktree: string, expectedPaths: stri
     // Back to the recorded branch at the recorded tip, even if a hook checked out another branch or added commits.
     g.ok(["symbolic-ref", "HEAD", branch]);
     g.ok(["update-ref", branch, tip]);
-    throw new Error("a commit hook changed the commit; nothing was committed");
+    throw new Error("a commit hook changed the commit, so nothing was committed; tell the user: a commit hook of the repository rewrites commits, which accept does not allow");
   }
   return g.ok(["rev-parse", "--verify", "HEAD"]).trim();
 }
@@ -909,7 +909,7 @@ export function assertHeadIdentity(repo: string, worktree: string, allowTestIden
   const [author, committer] = commitIdentity(g, worktree, allowTestIdentity);
   const raw = g.ok(["cat-file", "commit", "HEAD"]);
   const [a, c] = ["author", "committer"].map((key) => emailOf(commitHeader(raw, key)));
-  if (a !== author || c !== committer) throw new Error(`its author ${a} and committer ${c} are not ${author} and ${committer}`);
+  if (a !== author || c !== committer) throw new Error(`its author ${a} and committer ${c} are not ${author} and ${committer}; tell the user, who sets the repository's git identity`);
 }
 
 export function resetHardHead(repo: string, worktree: string): void {
@@ -936,9 +936,9 @@ export function dropLastCommit(repo: string, worktree: string, expectedSha: stri
   const parent = g.ok(["rev-parse", "--verify", "HEAD~1"]).trim();
   // A drop cut between its two steps left only the branch move to do; any other unclean state still refuses.
   const resumed = parentCheckedOut(g, parent);
-  if (!resumed && !clean(g)) throw new Error(`refusing to drop the last commit: ${worktree} is not clean`);
+  if (!resumed && !clean(g)) throw new Error(`refusing to drop the last commit: ${worktree} is not clean; tell the user, who cleans it`);
   // A commit a remote-tracking branch contains has already left this machine.
-  if (g.ok(["branch", "-r", "--contains", "HEAD"]) !== "") throw new Error(`refusing to drop ${head}: a remote branch contains it`);
+  if (g.ok(["branch", "-r", "--contains", "HEAD"]) !== "") throw new Error(`refusing to drop ${head}: a remote branch contains it; tell the user, who deletes that remote branch or keeps the commit`);
   // The worktree is clean, so reset --keep is a plain checkout of the parent: confined, then the branch moves to it.
   if (!resumed) okConfined(g, checkoutAllow(g), [...READ_TREE, parent]);
   g.ok(["update-ref", "HEAD", parent]);

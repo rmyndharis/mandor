@@ -412,11 +412,11 @@ test("commitStaged refuses a commit a hook changed and moves HEAD back", () => {
   writeFileSync(join(wt, "a.txt"), "a\n");
   must(wt, "add", "a.txt");
   hook(repo, "pre-commit", "echo hooked >> a.txt\ngit add a.txt");
-  assert.throws(() => commitStaged(repo, wt, ["a.txt"], "Add a", true), /a commit hook changed the commit; nothing was committed/);
+  assert.throws(() => commitStaged(repo, wt, ["a.txt"], "Add a", true), /a commit hook changed the commit, so nothing was committed; tell the user: a commit hook of the repository rewrites commits, which accept does not allow/);
   assert.equal(revParse(wt, "HEAD"), base);
   unlinkSync(join(repo, ".git", "hooks", "pre-commit"));
   hook(repo, "commit-msg", 'printf "\\nChange-Id: I0000000000000000000000000000000000000000\\n" >> "$1"');
-  assert.throws(() => commitStaged(repo, wt, ["a.txt"], "Add a", true), /a commit hook changed the commit; nothing was committed/);
+  assert.throws(() => commitStaged(repo, wt, ["a.txt"], "Add a", true), /a commit hook changed the commit, so nothing was committed; tell the user: a commit hook of the repository rewrites commits, which accept does not allow/);
   assert.equal(revParse(wt, "HEAD"), base);
   unlinkSync(join(repo, ".git", "hooks", "commit-msg"));
   // Hooks still run; one that changes nothing lets the commit through, with the message stored as given.
@@ -452,7 +452,7 @@ test("commitStaged rolls back a hook that re-parents, amends with a placeholder,
   writeFileSync(join(wt, "a.txt"), "a\n");
   must(wt, "add", "a.txt");
   const rolledBack = () => {
-    assert.throws(() => commitStaged(repo, wt, ["a.txt"], "Add a", true), /a commit hook changed the commit; nothing was committed/);
+    assert.throws(() => commitStaged(repo, wt, ["a.txt"], "Add a", true), /a commit hook changed the commit, so nothing was committed; tell the user: a commit hook of the repository rewrites commits, which accept does not allow/);
     assert.equal(revParse(wt, "HEAD"), base);
   };
   // Same tree and message, with an injected commit underneath.
@@ -478,7 +478,7 @@ test("commitStaged rolls back the branch it committed on, even when a hook check
   const side = must(repo, "commit-tree", "-p", base, "-m", "Side", `${base}^{tree}`).trim();
   must(repo, "branch", "side", side);
   hook(repo, "post-commit", "git checkout -q side");
-  assert.throws(() => commitStaged(repo, wt, ["a.txt"], "Add a", true), /a commit hook changed the commit; nothing was committed/);
+  assert.throws(() => commitStaged(repo, wt, ["a.txt"], "Add a", true), /a commit hook changed the commit, so nothing was committed; tell the user: a commit hook of the repository rewrites commits, which accept does not allow/);
   assert.equal(must(wt, "symbolic-ref", "HEAD"), "refs/heads/goal\n");
   assert.equal(revParse(repo, "refs/heads/goal"), base);
   assert.equal(revParse(repo, "refs/heads/side"), side);
@@ -2156,7 +2156,7 @@ test("a root that goes away between its entry check and its realpath is refused 
     if (p === wt) rmSync(wt, { recursive: true });
     return native(p);
   }) as typeof native);
-  assert.throws(() => worktreeRoot(wt), /^Error: refusing .*: its root .* is not a directory at its own path$/);
+  assert.throws(() => worktreeRoot(wt), /^Error: refusing .*: its root .* is not a directory at its own path; it was replaced or removed: run mandor status, and tell the user$/);
 });
 
 // Swaps a worktree's own root for a link to the sibling B and back, so a confined reset or apply that computed its path

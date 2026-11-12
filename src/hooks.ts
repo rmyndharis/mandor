@@ -53,7 +53,7 @@ function activeProject(cwd: string): string | null {
   try {
     ({ id } = resolveProject(cwd));
   } catch (e) {
-    if ((e as Error).message.endsWith("is not inside a git repository")) return null;
+    if ((e as Error).message.includes("is not inside a git repository")) return null;
     throw e;
   }
   return existsSync(join(projectDir(id), "ledger.jsonl")) ? id : null;

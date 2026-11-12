@@ -57,9 +57,9 @@ function blocked(p: string, deny: readonly string[], seen = new Map<string, bool
 export function checkClonePath(raw: string, deny: readonly string[]): string {
   const p = posix.normalize(raw).replace(/\/+$/, "");
   if (p === "" || p === "." || isAbsolute(raw) || raw.split("/").includes("..") || p.split("/").some((s) => s.toLowerCase() === ".git")) {
-    throw new Error(`refusing clone path ${raw}: not a plain path inside the repository`);
+    throw new Error(`refusing clone path ${raw}: not a plain path inside the repository; use a relative path inside the repository with --clone`);
   }
-  if (blocked(p, deny)) throw new Error(`refusing clone path ${raw}: it is a denied or agent path`);
+  if (blocked(p, deny)) throw new Error(`refusing clone path ${raw}: it is a denied or agent path; choose another path`);
   return p;
 }
 
@@ -68,7 +68,7 @@ export function checkClonePaths(raws: readonly string[], deny: readonly string[]
   const paths = [...new Set(raws.map((raw) => checkClonePath(raw, deny)))];
   for (const outer of paths) {
     const inner = paths.find((p) => p.startsWith(`${outer}/`));
-    if (inner !== undefined) throw new Error(`refusing clone path ${inner}: it lies inside clone path ${outer}`);
+    if (inner !== undefined) throw new Error(`refusing clone path ${inner}: it lies inside clone path ${outer}; choose one of the two`);
   }
   return paths;
 }
@@ -76,7 +76,7 @@ export function checkClonePaths(raws: readonly string[], deny: readonly string[]
 // Literal pathspecs, so git lists exactly the path cp copies: no glob or magic reading of *, [ or :.
 function list(src: string, p: string, ...args: string[]): string[] {
   const r = git(["--literal-pathspecs", "ls-files", "-z", ...args, "--", p], src);
-  if (r.code !== 0) throw new Error(`git ls-files failed in ${src}: ${r.stderr.trim()}`);
+  if (r.code !== 0) throw new Error(`git ls-files failed in ${src}: ${r.stderr.trim()}; run git ls-files in that directory to see why`);
   return r.stdout.split("\0").filter(Boolean);
 }
 
@@ -112,8 +112,8 @@ function linkExposes(srcRoot: string, realRoot: string, worktree: string, f: str
 interface Clone { p: string; keep: string[]; links: Set<string>; empty: string[]; skip: string[] }
 
 function planClone(srcRoot: string, realRoot: string, worktree: string, p: string, deny: readonly string[]): Clone {
-  if (list(srcRoot, p).length > 0) throw new Error(`refusing clone path ${p}: it holds tracked files`);
-  if (list(srcRoot, p, "--others", "--exclude-standard").length > 0) throw new Error(`refusing clone path ${p}: it holds untracked files that are not ignored`);
+  if (list(srcRoot, p).length > 0) throw new Error(`refusing clone path ${p}: it holds tracked files; tell the user: --clone takes a path that git ignores, such as a build cache`);
+  if (list(srcRoot, p, "--others", "--exclude-standard").length > 0) throw new Error(`refusing clone path ${p}: it holds untracked files that are not ignored; tell the user, who ignores the path in .gitignore or leaves it out of --clone`);
   // git reports names precomposed (NFC) on macOS, while readdir returns them as stored, so names are compared in NFC
   // and copied as stored.
   const listed = new Set(list(srcRoot, p, "--others", "--ignored", "--exclude-standard").map((f) => f.normalize("NFC")));
@@ -160,10 +160,10 @@ function assertFresh(worktree: string, f: string, plain: Set<string>): void {
     if (plain.has(dir)) continue;
     const st = fs.lstatSync(join(worktree, dir), { throwIfNoEntry: false });
     if (st === undefined) break; // mkdir makes it and everything below as plain directories
-    if (!st.isDirectory()) throw new Error(`refusing to provision ${worktree}: ${dir} is a symlink or not a directory`);
+    if (!st.isDirectory()) throw new Error(`refusing to provision ${worktree}: ${dir} is a symlink or not a directory; tell the user: the repository tracks something there that a clone path cannot replace`);
     plain.add(dir);
   }
-  if (fs.lstatSync(join(worktree, f), { throwIfNoEntry: false }) !== undefined) throw new Error(`refusing to provision ${worktree}: ${f} already exists`);
+  if (fs.lstatSync(join(worktree, f), { throwIfNoEntry: false }) !== undefined) throw new Error(`refusing to provision ${worktree}: ${f} already exists; tell the user: the repository tracks that name, which a clone path cannot overwrite`);
 }
 
 // Far below ARG_MAX (1 MiB) even when every path is PATH_MAX (1024) bytes long.
@@ -195,11 +195,11 @@ function runSetup(cmd: string, worktree: string, log: string): void {
 export function provisionWorktree(srcRoot: string, worktree: string, c: ProjectConfig): { cloned: number; skipped: string[] } {
   // Only on the same volume does cp -c make a real clone, and only a clone path is ever copied.
   if (c.clone.length > 0 && fs.statSync(srcRoot).dev !== fs.statSync(worktree).dev) {
-    throw new Error(`refusing to provision ${worktree}: not on the same volume as ${srcRoot}; a clone path is copied with APFS clones, so MANDOR_HOME must be on the repository's volume`);
+    throw new Error(`refusing to provision ${worktree}: not on the same volume as ${srcRoot}; a clone path is copied with APFS clones, so set MANDOR_HOME on the repository's volume`);
   }
   // Nothing is written until the destination proves to be a fresh mandor worktree of srcRoot, so a wrong
   // path can never have cp overwrite files in another checkout.
-  if (!isClean(srcRoot, worktree)) throw new Error(`refusing to provision ${worktree}: it is not clean`);
+  if (!isClean(srcRoot, worktree)) throw new Error(`refusing to provision ${worktree}: it is not clean; tell the user`);
   const realRoot = fs.realpathSync.native(srcRoot);
   // Every path is checked, in the main checkout and then in the worktree, before anything is written, so a refusal
   // leaves the worktree untouched.
@@ -240,6 +240,6 @@ export function provisionWorktree(srcRoot: string, worktree: string, c: ProjectC
     }
   }
   if (c.setup) runSetup(c.setup, worktree, log);
-  if (!isClean(srcRoot, worktree)) throw new Error("provisioning left untracked files");
+  if (!isClean(srcRoot, worktree)) throw new Error("provisioning left untracked files; the setup command or a clone path wrote files that git does not ignore: tell the user, who ignores them or changes the command");
   return { cloned, skipped };
 }

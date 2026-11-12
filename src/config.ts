@@ -37,15 +37,15 @@ export const DEFAULT_CONFIG: Config = {
 export function parseCandidate(s: string): Candidate {
   const colon = s.indexOf(":");
   const name = s.slice(0, colon);
-  if (colon < 0 || !TOOLS.includes(name as ToolName)) throw new Error(`invalid candidate "${s}": unknown tool`);
+  if (colon < 0 || !TOOLS.includes(name as ToolName)) throw new Error(`invalid candidate "${s}": unknown tool; write it as tool:model@effort, with codex, zcode or agy as the tool`);
   const rest = s.slice(colon + 1);
   const at = rest.lastIndexOf("@");
   const model = at < 0 ? rest : rest.slice(0, at);
   const effort = at < 0 ? "" : rest.slice(at + 1);
-  if (model.trim() === "") throw new Error(`invalid candidate "${s}": empty model`);
-  if (at >= 0 && effort === "") throw new Error(`invalid candidate "${s}": empty effort after @`);
+  if (model.trim() === "") throw new Error(`invalid candidate "${s}": empty model; write it as tool:model@effort`);
+  if (at >= 0 && effort === "") throw new Error(`invalid candidate "${s}": empty effort after @; write it as tool:model@effort, or drop the @`);
   // Whitespace would reach the worker CLI as part of the model or effort name.
-  if (model !== model.trim() || effort !== effort.trim()) throw new Error(`invalid candidate "${s}": whitespace around model or effort`);
+  if (model !== model.trim() || effort !== effort.trim()) throw new Error(`invalid candidate "${s}": whitespace around model or effort; write it as tool:model@effort with no spaces`);
   return { tool: name as ToolName, model, effort };
 }
 
@@ -86,7 +86,7 @@ export function validateConfig(v: unknown): string[] {
       else {
         list.forEach((s, i) => {
           try {
-            if (typeof s !== "string") throw new Error("candidate must be a string");
+            if (typeof s !== "string") throw new Error("candidate must be a string; write each candidate in config.json as tool:model@effort");
             parseCandidate(s);
           } catch (e) {
             errs.push(`tiers.${tier}[${i}]: ${(e as Error).message}`);
@@ -134,12 +134,12 @@ export function loadConfig(): Config {
       writeJsonAtomic(file, DEFAULT_CONFIG);
       return structuredClone(DEFAULT_CONFIG);
     }
-    if (e instanceof SyntaxError) throw new Error(`invalid config: ${file}: ${e.message}`);
+    if (e instanceof SyntaxError) throw new Error(`invalid config: ${file}: ${e.message}; tell the user, who repairs config.json in the state home`);
     throw e;
   }
   const config = withTierNames(raw);
   const errs = validateConfig(config);
-  if (errs.length > 0) throw new Error(`invalid config: ${errs.join("; ")}`);
+  if (errs.length > 0) throw new Error(`invalid config: ${errs.join("; ")}; tell the user, who repairs config.json in the state home`);
   return config as Config;
 }
 
@@ -179,7 +179,7 @@ export function resolveBin(tool: ToolName, cfg: Config): string {
   if (bin.includes("/")) return pathBin(bin, `tools.${tool}.bin`, tool === "zcode" ? ", or a bare name for the app's own executable" : OR_BARE);
   if (tool === "zcode") return ZCODE_APP_BIN;
   const found = onPath(bin);
-  if (found === null) throw new Error(`${tool} not found on PATH`);
+  if (found === null) throw new Error(`${tool} not found on PATH; tell the user, who installs it or sets its bin under tools in config.json`);
   return found;
 }
 
@@ -190,6 +190,6 @@ export function resolveCodexBin(cfg: Config): string {
   const bin = cfg.tools.codex.bin;
   if (bin.includes("/")) return pathBin(bin, "tools.codex.bin", OR_BARE);
   const found = onPath(bin);
-  if (found === null) throw new Error("codex not found on PATH");
+  if (found === null) throw new Error("codex not found on PATH; tell the user, who installs it or sets its bin under tools in config.json");
   return found;
 }

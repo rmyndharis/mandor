@@ -255,7 +255,7 @@ test("show and logs refuse an unknown task and a missing slug", (t) => {
   const s = setup(t);
   for (const cmd of ["show", "logs"]) {
     const r = cli(s.repo, cmd, "nope");
-    assert.deepEqual([r.code, r.out, r.err], [1, "", "mandor: no task nope\n"]);
+    assert.deepEqual([r.code, r.out, r.err], [1, "", "mandor: no task nope; mandor status lists the tasks\n"]);
     assert.equal(cli(s.repo, cmd).code, 2);
   }
   assert.equal(cli(s.repo, "status", "--bogus").code, 2);

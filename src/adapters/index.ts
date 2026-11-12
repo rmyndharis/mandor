@@ -20,7 +20,7 @@ export function getAdapter(tool: ToolName, cfg: Config): Adapter {
   if (tool === "codex") return createCodexAdapter(cfg);
   if (tool === "zcode") return createZcodeAdapter(cfg);
   if (tool === "agy") return createAgyAdapter(cfg);
-  throw new Error(`adapter for ${tool} is not available`);
+  throw new Error(`adapter for ${tool} is not available; see tools in config.json for the tool names`);
 }
 
 // What a tool says about its version and its terms. A tool with a problem of its own has that to say, not a word about

@@ -97,7 +97,7 @@ function installHandlers(): void {
 export async function waitForNext(cwd: string, o: { since: number; timeoutMs: number | null }): Promise<WaitSummary> {
   const { id } = resolveProject(cwd);
   const size = ledgerSize(id);
-  if (!Number.isSafeInteger(o.since) || o.since < 0 || o.since > size) throw new Error(`invalid cursor ${o.since}: the ledger holds ${size} bytes`);
+  if (!Number.isSafeInteger(o.since) || o.since < 0 || o.since > size) throw new Error(`invalid cursor ${o.since}: the ledger holds ${size} bytes; pass the cursor that the last wait printed`);
   if (!atLineStart(id, o.since)) throw new Error(`invalid cursor ${o.since}: it is not the start of a line of the ledger; pass the cursor an earlier command printed`);
   const deadline = Date.now() + (o.timeoutMs ?? DEFAULT_TIMEOUT_MS);
   installHandlers();

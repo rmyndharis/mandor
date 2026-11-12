@@ -151,17 +151,17 @@ function inside(parent: string, child: string): boolean {
 // A project id or slug shaped like a path must not take round files out of the task's directory,
 // and a round number that is not a plain count would write a directory loadRounds never lists.
 function checkedRoundDir(projectId: string, slug: string, seq: number): string {
-  if (!Number.isSafeInteger(seq) || seq < 0) throw new Error(`invalid round number: ${seq}`);
+  if (!Number.isSafeInteger(seq) || seq < 0) throw new Error(`invalid round number: ${seq}; the project's records are damaged: tell the user`);
   const dir = roundDir(projectId, slug, seq);
   if (!inside(join(mandorHome(), "projects"), projectDir(projectId)) || !inside(join(projectDir(projectId), "tasks"), dir)) {
-    throw new Error(`round directory is outside the task directory: ${dir}`);
+    throw new Error(`round directory is outside the task directory: ${dir}; the project's records are damaged: tell the user`);
   }
   return dir;
 }
 
 // Reports, notes and evidence live in files; ledger events carry only the returned FileRef.
 export function saveRoundFile(projectId: string, slug: string, seq: number, name: RoundFileName, content: string): FileRef {
-  if (!ROUND_FILES.includes(name)) throw new Error(`not a round file name: ${name}`);
+  if (!ROUND_FILES.includes(name)) throw new Error(`not a round file name: ${name}; this is a bug in mandor: tell the user`);
   const p = join(checkedRoundDir(projectId, slug, seq), name);
   writeFileAtomic(p, content);
   return fileRef(p);

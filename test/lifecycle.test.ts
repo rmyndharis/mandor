@@ -363,7 +363,7 @@ test("a report that is blocked, partial or asks a question has the next action a
   const next = await waitForNext(s.repo, { since: cursor, timeoutMs: 30_000 });
   assert.deepEqual(next.kind === "events" && next.items.map((i) => [i.task, i.next]), [["hello", "review"]]);
   assert.doesNotMatch(showTask(s.id, "hello"), /^next:/m);
-  assert.throws(() => tasks.verdictAnswer(s.repo, "hello", s.file("again.md", notes)), /task hello: its newest report neither says blocked or partial nor asks a question, so there is nothing to answer; send notes with verdict fix/);
+  assert.throws(() => tasks.verdictAnswer(s.repo, "hello", s.file("again.md", notes)), /task hello: its newest report neither says blocked or partial nor asks a question, so there is nothing to answer; use verdict fix for its notes/);
   assert.deepEqual(verdicts(s), ["hello:answer"]);
 });
 
@@ -1105,7 +1105,7 @@ test("accept refuses while the goal branch holds a commit mandor did not record,
   must(goal.integrationWorktree, "-c", "user.name=Hand", "-c", "user.email=hand@example.test", "commit", "-qm", "By hand");
   const byHand = must(s.repo, "rev-parse", GOAL);
   reviewPack(s.repo, "second");
-  assert.throws(() => unreviewedAccept(s, "second"), new RegExp(`refusing to accept: goal ${GOAL} holds 1 commit that mandor did not record \\(${byHand.slice(0, 12)}\\); they passed no review and no guard, so the user removes them from the branch or adopts them with mandor goal adopt ${GOAL}`));
+  assert.throws(() => unreviewedAccept(s, "second"), new RegExp(`refusing to accept: goal ${GOAL} holds 1 commit that mandor did not record \\(${byHand.slice(0, 12)}\\); they passed no review and no guard: tell the user, who removes them from the branch or adopts them with mandor goal adopt ${GOAL}`));
   assert.equal(task(s, "second").status, "needs-review");
   assert.match(plain(), new RegExp(`goal ${GOAL} holds 1 commit that mandor did not record \\(${byHand.slice(0, 12)}\\)`));
   assert.deepEqual(JSON.parse(spawnSync(LAUNCHER, ["status", "--json"], { cwd: s.repo, encoding: "utf8" }).stdout).unrecorded, { [GOAL]: [byHand] });
@@ -1171,7 +1171,7 @@ test("goal adopt refuses while an accept of the goal did not finish", async (t) 
   const tip = must(s.repo, "rev-parse", GOAL);
   const commit = moveGoal(goal, (dir) => writeFileSync(join(dir, "hello.txt"), "hello\n"), false);
   writeJsonAtomic(join(projectDir(s.id), "goals", "feat__lifecycle", "accept-intent.json"), { slug: "hello", tip, tree: must(s.repo, "rev-parse", `${commit}^{tree}`) });
-  assert.throws(() => tasks.goalAdopt(s.repo, GOAL), /an earlier accept of goal feat\/lifecycle did not finish; accept settles it first/);
+  assert.throws(() => tasks.goalAdopt(s.repo, GOAL), /an earlier accept of goal feat\/lifecycle did not finish; run its accept again, which settles it first/);
   assert.equal(loadState(s.id).goals[GOAL].adopted, undefined);
 });
 
@@ -2229,7 +2229,7 @@ test("cancel takes waiting, needs-review, stalled and takeover, clears pending, 
   }
   assert.throws(() => tasks.cancel(s.repo, "held"), /task held is cancelled/);
   committed(s, "hello");
-  assert.throws(() => tasks.cancel(s.repo, "hello"), /task hello is integrating; drop it first/);
+  assert.throws(() => tasks.cancel(s.repo, "hello"), /task hello is integrating; run mandor drop on it first/);
   assert.equal(existsSync(cancelMarker(s.id, "hello")), false, "a refused cancel leaves no marker to stop a later job");
   confirmed(s, "hello");
   assert.throws(() => tasks.cancel(s.repo, "hello"), /task hello is accepted/);
@@ -2266,7 +2266,7 @@ test("a task that became integrating during the wait is refused, and its marker 
     Atomics.wait = realWait;
     return realWait(a, i, v, ms);
   }) as typeof Atomics.wait;
-  assert.throws(() => tasks.cancel(s.repo, "hello"), /task hello is integrating; drop it first/);
+  assert.throws(() => tasks.cancel(s.repo, "hello"), /task hello is integrating; run mandor drop on it first/);
   assert.equal(existsSync(cancelMarker(s.id, "hello")), false);
 });
 
@@ -2441,7 +2441,7 @@ test("prose that puts the name before an ordinary word is refused with the way o
   writeScenarios([{ ...DONE, writeFile: [{ path: "shift.md", content: `Update the ${name} status when the shift ends.\n` }] }]);
   send(s, "shift");
   await needsReview(s, "shift");
-  assert.throws(() => accept(s, "shift"), new RegExp(`accept refused:\\n- attribution: shift\\.md: names the tool \\(${name} status\\)\\nIf this repository uses that name as a word of its own subject, the user allows it with project setup --update --name-is-a-word; do not run it yourself\\.$`));
+  assert.throws(() => accept(s, "shift"), new RegExp(`accept refused:\\n- attribution: shift\\.md: names the tool \\(${name} status\\)\\nFix what is listed \\(the files in a fix round or a takeover, the commit message in the accept command\\), then run mandor review shift and accept again\\.\\nIf this repository uses that name as a word of its own subject, the user allows it with project setup --update --name-is-a-word; do not run it yourself\\.$`));
   assert.equal(task(s, "shift").status, "needs-review");
   saveProjectConfig(s.id, { ...loadProjectConfig(s.id), nameIsWord: true });
   assert.deepEqual(reviewPack(s.repo, "shift").violations, []);
@@ -2451,7 +2451,7 @@ test("prose that puts the name before an ordinary word is refused with the way o
   writeScenarios([{ ...DONE, writeFile: [{ path: "run.md", content: `Then run ${name} status --json.\n` }] }]);
   send(s, "run");
   await needsReview(s, "run");
-  assert.throws(() => accept(s, "run"), new RegExp(`accept refused:\\n- attribution: run\\.md: names the tool \\(${name} status\\)$`));
+  assert.throws(() => accept(s, "run"), new RegExp(`accept refused:\\n- attribution: run\\.md: names the tool \\(${name} status\\)\\nFix what is listed \\(the files in a fix round or a takeover, the commit message in the accept command\\), then run mandor review run and accept again\\.$`));
 });
 
 // Takeover

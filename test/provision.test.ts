@@ -104,7 +104,7 @@ test("clone paths are deduplicated, and one inside another is refused", () => {
   assert.deepEqual(provisionWorktree(repo, wt, config(["build", "build/", "./build"])), { cloned: 3, skipped: ["build/.env"] });
   const other = fixture({ "build/sub/b.txt": "b" });
   assert.throws(() => provisionWorktree(other.repo, other.wt, config(["build/sub", "build"])),
-    /^Error: refusing clone path build\/sub: it lies inside clone path build$/);
+    /^Error: refusing clone path build\/sub: it lies inside clone path build; choose one of the two$/);
   assert.equal(existsSync(join(other.wt, "build")), false);
   const r = cli(repo, "--clone", "build", "--clone", "build/", "--clone", "./build");
   assert.equal(r.status, 0, r.stderr);
@@ -147,14 +147,14 @@ test("a directory with tracked files refused", () => {
   const { repo, wt } = fixture({ "assets/logo.txt": "l", "assets/blob.bin": "b" });
   must(repo, "add", "assets/logo.txt");
   must(repo, "commit", "-q", "-m", "Add logo");
-  assert.throws(() => provisionWorktree(repo, wt, config(["assets"])), /^Error: refusing clone path assets: it holds tracked files$/);
+  assert.throws(() => provisionWorktree(repo, wt, config(["assets"])), /^Error: refusing clone path assets: it holds tracked files; tell the user: --clone takes a path that git ignores, such as a build cache$/);
   assert.equal(existsSync(join(wt, "assets")), false);
 });
 
 test("a non-ignored untracked path refused", () => {
   const { repo, wt } = fixture({ "build/a.txt": "a", "notes/todo.txt": "t", "notes/x.bin": "b" });
   // Every path is checked before any is copied, so the refusal leaves build/ uncloned too.
-  assert.throws(() => provisionWorktree(repo, wt, config(["build", "notes"])), /^Error: refusing clone path notes: it holds untracked files that are not ignored$/);
+  assert.throws(() => provisionWorktree(repo, wt, config(["build", "notes"])), /^Error: refusing clone path notes: it holds untracked files that are not ignored; tell the user, who ignores the path in \.gitignore or leaves it out of --clone$/);
   assert.equal(existsSync(join(wt, "build")), false);
 });
 
@@ -312,7 +312,7 @@ test("a different volume is refused, with the way out", (t) => {
   const real = fs.statSync;
   t.mock.method(fs, "statSync", ((p: string) => (p === wt ? { ...real(p), dev: real(p).dev + 1 } : real(p))) as any);
   const spawn = t.mock.method(childProcess, "spawnSync");
-  assert.throws(() => provisionWorktree(repo, wt, config(["build"])), /^Error: refusing to provision .*: not on the same volume as .*; .*MANDOR_HOME must be on the repository's volume$/);
+  assert.throws(() => provisionWorktree(repo, wt, config(["build"])), /^Error: refusing to provision .*: not on the same volume as .*; .*set MANDOR_HOME on the repository's volume$/);
   assert.equal(spawn.mock.callCount(), 0);
   assert.equal(existsSync(join(wt, "build")), false);
 });
@@ -333,7 +333,7 @@ test("a destination that is not a clean mandor worktree of the repository is ref
   assert.throws(() => provisionWorktree(repo, other, config(["build"])), /not under the mandor home/);
   assert.equal(existsSync(join(other, "build")), false);
   writeFileSync(join(wt, "stray.txt"), "s");
-  assert.throws(() => provisionWorktree(repo, wt, config(["build"])), /^Error: refusing to provision .*: it is not clean$/);
+  assert.throws(() => provisionWorktree(repo, wt, config(["build"])), /^Error: refusing to provision .*: it is not clean; tell the user$/);
   assert.equal(existsSync(join(wt, "build")), false);
 });
 
@@ -341,13 +341,13 @@ test("a link the worktree's base tracks on the way to a destination is refused b
   const outside = outsideDir();
   const cases: [string[], Record<string, string>, Record<string, string>, RegExp][] = [
     // One cp of build, where the base tracks build itself as a link.
-    [["build"], { "build/a.txt": "a" }, { build: outside }, /: build already exists$/],
+    [["build"], { "build/a.txt": "a" }, { build: outside }, /: build already exists; tell the user: the repository tracks that name, which a clone path cannot overwrite$/],
     // One cp of build/gen, through a link at its parent.
-    [["build/gen"], { "build/gen/x.txt": "x" }, { build: outside }, /: build is a symlink or not a directory$/],
+    [["build/gen"], { "build/gen/x.txt": "x" }, { build: outside }, /: build is a symlink or not a directory; tell the user: the repository tracks something there that a clone path cannot replace$/],
     // File by file (the .env forces it), into the linked directory.
-    [["build"], { "build/a.txt": "a", "build/.env": "s" }, { build: outside }, /: build is a symlink or not a directory$/],
+    [["build"], { "build/a.txt": "a", "build/.env": "s" }, { build: outside }, /: build is a symlink or not a directory; tell the user: the repository tracks something there that a clone path cannot replace$/],
     // File by file, onto a link the base tracks at the destination file itself.
-    [["build"], { "build/a.txt": "OVERWRITTEN", "build/.env": "s" }, { "build/a.txt": join(outside, "precious.txt") }, /: build\/a\.txt already exists$/],
+    [["build"], { "build/a.txt": "OVERWRITTEN", "build/.env": "s" }, { "build/a.txt": join(outside, "precious.txt") }, /: build\/a\.txt already exists; tell the user: the repository tracks that name, which a clone path cannot overwrite$/],
   ];
   for (const [clone, files, links, refusal] of cases) {
     const { repo, wt } = fixture(files, { links });
@@ -388,7 +388,7 @@ test("setup runs in the worktree with the worker environment, logging to a file"
 
 test("setup output that is not ignored fails", () => {
   const { repo, wt } = fixture({ "build/a.txt": "a" });
-  assert.throws(() => provisionWorktree(repo, wt, config(["build"], { setup: "echo stray > stray.txt" })), /^Error: provisioning left untracked files$/);
+  assert.throws(() => provisionWorktree(repo, wt, config(["build"], { setup: "echo stray > stray.txt" })), /^Error: provisioning left untracked files; the setup command or a clone path wrote files that git does not ignore: tell the user, who ignores them or changes the command$/);
 });
 
 test("a failing setup throws and points at its log", () => {
@@ -516,7 +516,7 @@ test("project setup refuses a removal without --update, and a flag together with
     [["--update", "--shared-temp", "--no-shared-temp"], "--shared-temp and --no-shared-temp contradict each other"],
   ] as const) {
     const r = cli(repo, ...args);
-    assert.deepEqual([r.status, r.stderr], [2, `mandor: ${said}\n`], args.join(" "));
+    assert.deepEqual([r.status, r.stderr], [2, `mandor: ${said}; see mandor --help\n`], args.join(" "));
   }
   assert.equal(existsSync(projectFile(repo)), false, "nothing was stored");
 });
@@ -525,7 +525,7 @@ test("project setup exits 2 for an option it does not know or a value that is mi
   const repo = tempRepo();
   for (const [args, said] of [[["--bogus", "x"], "unknown project setup flag: --bogus"], [["--clone"], "--clone needs a value"], [["--setup", "make", "--deny"], "--deny needs a value"]] as const) {
     const r = cli(repo, ...args);
-    assert.deepEqual([r.status, r.stdout, r.stderr], [2, "", `mandor: ${said}\n`], args.join(" "));
+    assert.deepEqual([r.status, r.stdout, r.stderr], [2, "", `mandor: ${said}; see mandor --help\n`], args.join(" "));
   }
   const refused = cli(repo, "--clone", "../outside");
   assert.equal(refused.status, 1, refused.stderr);

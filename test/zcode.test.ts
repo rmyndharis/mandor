@@ -535,7 +535,7 @@ test("a claimed command the zcode log does not show is flagged", async (t) => {
 test("dispatch refuses while an enabled tool's binary is missing, and a zcode candidate in a project without the network", (t) => {
   const p = project(t, { network: false });
   writeZcodeScenarios([{}]);
-  assert.throws(() => p.send("closed"), /^Error: cannot use zcode:GLM-5.3-Flash@high: zcode needs worker network, which this project does not allow$/);
+  assert.throws(() => p.send("closed"), /^Error: cannot use zcode:GLM-5.3-Flash@high: zcode needs worker network, which this project does not allow; pass another candidate to --use, or dispatch without it$/);
   assert.equal(loadState(p.id).tasks.closed, undefined, "no task is left behind");
   assert.equal(readZcodeLog().length, 0, "the worker never started");
   const cfg = JSON.parse(readFileSync(join(p.home, "config.json"), "utf8"));

@@ -76,10 +76,10 @@ function signedInProvider(): string {
 // prints on stdout stays out, as it describes the account.
 export function zcodeLogin(cfg: Config, provider: string): { tool: "zcode"; home: string; provider: string } {
   const bin = resolveBin("zcode", cfg);
-  if (!existsSync(bin)) throw new Error(`zcode not found at ${bin}`);
+  if (!existsSync(bin)) throw new Error(`zcode not found at ${bin}; tell the user, who installs ZCode or sets tools.zcode.bin in config.json`);
   const [command, ...args] = zcodeStart(bin);
   const r = spawnSync(command, [...args, "login", provider], { env: zcodeEnv(bin, workerEnv(null)), stdio: ["inherit", "ignore", "inherit"] });
-  if (r.status !== 0) throw new Error(`zcode login failed (exit ${r.status ?? r.signal})`);
+  if (r.status !== 0) throw new Error(`zcode login failed (exit ${r.status ?? r.signal}); run mandor login zcode again, with zai or bigmodel as the provider`);
   return { tool: "zcode", home: zcodeHome(), provider: signedInProvider() };
 }
 
@@ -205,9 +205,9 @@ export function createZcodeAdapter(cfg: Config): Adapter {
       const b = bin();
       const r = spawnSync(zcodeStart(b)[0], [...zcodeStart(b).slice(1), "--version"], { env: zcodeEnv(b, { PATH: process.env.PATH ?? "" }), encoding: "utf8", timeout: 30_000, killSignal: "SIGKILL", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] });
       keepVendorStderr("zcode", ["--version"], r);
-      if (r.status !== 0) throw new Error(`zcode --version failed (exit ${r.status ?? r.signal})`);
+      if (r.status !== 0) throw new Error(`zcode --version failed (exit ${r.status ?? r.signal}); read logs/vendor.stderr in the state home for why`);
       const v = /\d+\.\d+\.\d+\S*/.exec(r.stdout)?.[0];
-      if (v === undefined) throw new Error("zcode --version printed no version number");
+      if (v === undefined) throw new Error("zcode --version printed no version number; run it yourself to see what it prints");
       return v;
     },
 
@@ -231,20 +231,20 @@ export function createZcodeAdapter(cfg: Config): Adapter {
           const efforts = ((get(levels, "config.optionSpecs.reasoningLevel.values") as unknown[] | undefined) ?? []).filter((e): e is string => typeof e === "string");
           return { tool: "zcode", model, label: model, efforts, defaultEffort: null, hidden: false };
         });
-      if (models.length === 0) throw new Error(`the zcode catalog lists no model for ${provider}`);
+      if (models.length === 0) throw new Error(`the zcode catalog lists no model for ${provider}; sign in again with mandor login zcode, or update the ZCode app`);
       return models;
     },
 
     prepare(job, files, project) {
       const { model, effort } = job.candidate;
-      if (effort === "") throw new Error("zcode candidate needs an effort");
+      if (effort === "") throw new Error("zcode candidate needs an effort; write the candidate as zcode:model@effort in config.json");
       // The sandbox cannot close the network for the worker's commands and leave it open for the CLI that runs them.
-      if (!project.network) throw new Error("zcode workers need the network, which their commands share: allow it with mandor project setup --update --worker-network");
+      if (!project.network) throw new Error("zcode workers need the network, which their commands share: tell the user, who allows it with mandor project setup --update --worker-network");
       const prompt = readFileSync(job.promptPath, "utf8") + REPORT_FORMAT;
       const bytes = Buffer.byteLength(prompt);
-      if (bytes > MAX_PROMPT_BYTES) throw new Error(`prompt of ${bytes} bytes is too long for zcode`);
+      if (bytes > MAX_PROMPT_BYTES) throw new Error(`prompt of ${bytes} bytes is too long for zcode; shorten the brief or the notes`);
       const resume = job.kind === "resume" ? job.sessionId ?? "" : null;
-      if (resume !== null && !SESSION.test(resume)) throw new Error("zcode resume needs a session id");
+      if (resume !== null && !SESSION.test(resume)) throw new Error("zcode resume needs a session id; run mandor reassign on the task, which starts a new session");
       // The CLI has no model option: a session starts on the default of the personal provider file it is given.
       const personal = join(dirname(files.schemaPath), "zcode-provider.json");
       writeJsonAtomic(personal, providerFile({ providerId: signedInProvider(), modelId: model, options: { reasoningLevel: effort } }));

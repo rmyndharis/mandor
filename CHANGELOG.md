@@ -24,6 +24,7 @@ All notable changes to mandor are recorded here. The format follows [Keep a Chan
 - `mandor verdict <slug> answer --notes <file>` answers a worker report that is blocked, partial or asks questions. `wait` gives such a task the next action `answer`, `show` and the session summary say so, and the review pack has a `report-asks` flag. The worker resumes in a round that no fix round pays for, up to as many answers as fixes are allowed.
 - `wait` and `status` settle the marker of an accept that was killed, as the accept would: undone when nothing landed, adopted when one commit landed with the recorded tree. What they cannot settle stays for the accept to report.
 - A worker's file names and diffs show the marks that turn text around (U+202A to U+202E, U+2066 to U+2069) as `\uNNNN`, as they show control bytes as `\xNN`.
+- Error messages name the next step, and say to tell the user where only the user can take it. A usage error points at `mandor --help`. A test reads every message written out in the source.
 
 ### Fixed
 

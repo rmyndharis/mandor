@@ -46,21 +46,21 @@ export function createAgyAdapter(cfg: Config): Adapter {
 
     version() {
       const r = run(bin(), [...home(), "--version"]);
-      if (r.code !== 0) throw new Error(`agy --version failed (exit ${r.code})`);
+      if (r.code !== 0) throw new Error(`agy --version failed (exit ${r.code}); read logs/vendor.stderr in the state home for why`);
       const v = /\d+\.\d+\.\d+\S*/.exec(r.stdout)?.[0];
-      if (v === undefined) throw new Error("agy --version printed no version number");
+      if (v === undefined) throw new Error("agy --version printed no version number; run it yourself to see what it prints");
       return v;
     },
 
     // No turn runs for this. The list depends on the account's plan.
     detectModels() {
       const r = run(bin(), [...home(), "--output-format", "json", "models"]);
-      if (r.code !== 0) throw new Error(`agy models failed (exit ${r.code})`);
+      if (r.code !== 0) throw new Error(`agy models failed (exit ${r.code}); read logs/vendor.stderr in the state home for why, then run mandor models --refresh`);
       let list: unknown;
       try {
         list = get(JSON.parse(r.stdout), "command.data.models");
       } catch {} // the parser's message quotes vendor output
-      if (!Array.isArray(list)) throw new Error("agy models printed a list that does not parse");
+      if (!Array.isArray(list)) throw new Error("agy models printed a list that does not parse; run it yourself to see what it prints");
       const models = list.flatMap((m): ModelInfo[] => {
         const id = get(m, "id");
         if (typeof id !== "string" || id === "") return [];
@@ -68,19 +68,19 @@ export function createAgyAdapter(cfg: Config): Adapter {
         const effort = EFFORT.exec(id)?.[1] ?? "default";
         return [{ tool: "agy", model: id, label: typeof label === "string" ? label : id, efforts: [effort], defaultEffort: effort, hidden: false }];
       });
-      if (models.length === 0) throw new Error("agy models listed no model");
+      if (models.length === 0) throw new Error("agy models listed no model; sign in to Antigravity, then run mandor models --refresh");
       return models;
     },
 
     prepare(job, files, project) {
       // The tool's sandbox proxy, not the project's setting, decides what a command reaches, so a project that never
       // allowed worker network cannot be promised a closed one: the job is refused, as a ZCode job is.
-      if (!project.network) throw new Error("agy workers reach the network through their sandbox's proxy, which the project's setting does not close: allow it with mandor project setup --update --worker-network");
+      if (!project.network) throw new Error("agy workers reach the network through their sandbox's proxy, which the project's setting does not close: tell the user, who allows it with mandor project setup --update --worker-network");
       const prompt = readFileSync(job.promptPath, "utf8");
       const bytes = Buffer.byteLength(prompt);
-      if (bytes > MAX_PROMPT_BYTES) throw new Error(`prompt of ${bytes} bytes is too long for agy`);
+      if (bytes > MAX_PROMPT_BYTES) throw new Error(`prompt of ${bytes} bytes is too long for agy; shorten the brief or the notes`);
       const resume = job.kind === "resume" ? job.sessionId ?? "" : null;
-      if (resume !== null && !UUID.test(resume)) throw new Error("agy resume needs a conversation id");
+      if (resume !== null && !UUID.test(resume)) throw new Error("agy resume needs a conversation id; run mandor reassign on the task, which starts a new conversation");
       // Print mode cannot ask, so a tool that needs a permission is refused without a word. The rules name what this
       // run may touch: the worktree and the cache directories, and commands, which the CLI's own sandbox confines.
       // Paid credits are off for the run whatever the user's settings say: a run past the plan's quota would

@@ -274,7 +274,7 @@ test("the pump and reassign read the project's worker network when they route", 
   config.tiers = { light: ["agy:gemini-3.8-flash-medium"], medium: ["agy:gemini-3.8-flash-medium"], heavy: ["agy:gemini-3.8-flash-medium"] };
   writeFileSync(join(p.home, "config.json"), JSON.stringify(config));
   set("first", { status: "stalled", stallReason: "failed" });
-  assert.throws(() => reassign(p.repo, "first"), /^Error: no candidate for tier light can run in this project, which allows no worker network: allow it with mandor project setup --update --worker-network$/);
+  assert.throws(() => reassign(p.repo, "first"), /^Error: no candidate for tier light can run in this project, which allows no worker network: tell the user, who allows it with mandor project setup --update --worker-network$/);
   net(true);
   assert.equal(reassign(p.repo, "first").task.status, "working");
 });
@@ -282,7 +282,7 @@ test("the pump and reassign read the project's worker network when they route", 
 test("dispatch refuses an agy candidate in a project without worker network, and no worker starts", (t) => {
   const p = project(t, { network: false });
   writeAgyScenarios([{}]);
-  assert.throws(() => p.send("closed"), /^Error: cannot use agy:gemini-3\.8-flash-low.*: agy needs worker network, which this project does not allow$/);
+  assert.throws(() => p.send("closed"), /^Error: cannot use agy:gemini-3\.8-flash-low.*: agy needs worker network, which this project does not allow; pass another candidate to --use, or dispatch without it$/);
   assert.equal(loadState(p.id).tasks.closed, undefined, "no task is left behind");
   // Reading the model list runs the CLI too, so only a run with a prompt is a worker.
   assert.equal(readAgyLog().filter((e) => e.argv.includes("-p")).length, 0, "the worker never started");
