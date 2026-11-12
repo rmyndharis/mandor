@@ -73,6 +73,16 @@ async function run() {
 async function main() {
   if (args[0] === "--version") {
     if (read("stderr") !== null) process.stderr.write(read("stderr"));
+    // A test that asks where a version call may write names paths in $HOME/fake/probe: each outcome goes to probe.log.
+    for (const path of (read("probe") ?? "").split("\n").filter(Boolean)) {
+      let outcome = "wrote";
+      try {
+        writeFileSync(path, "x");
+      } catch {
+        outcome = "denied";
+      }
+      appendFileSync(join(control, "probe.log"), `${path}: ${outcome}\n`);
+    }
     process.stdout.write(`${read("version")?.trim() ?? "0.17.1"}\n`);
     return 0;
   }

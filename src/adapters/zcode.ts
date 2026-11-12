@@ -6,7 +6,7 @@ import { dirname, isAbsolute, join, relative } from "node:path";
 import { parseReport, REPORT_SCHEMA } from "../brief.ts";
 import type { Config } from "../config.ts";
 import { resolveBin } from "../config.ts";
-import { realOf, writeConfined } from "../git.ts";
+import { realOf, spawnConfined, writeConfined } from "../git.ts";
 import type { Adapter, JobResult, JobStatus, ModelInfo, RawRun, WorkerReport } from "../contracts.ts";
 import { jobTmpDir, mandorHome, ownTempEnv, workerEnv } from "../home.ts";
 import { ZCODE_BILLING } from "../modelcache.ts";
@@ -77,6 +77,10 @@ export function zcodeEnv(bin: string, base: Record<string, string>): Record<stri
 
 export const zcodeStart = (bin: string): string[] => layout(bin).start;
 
+// The shape of the catalog's own plan ids (account:zai-individual-coding-plan). The sign-in file is the worker's to write, and the
+// id is printed, compared with the catalog and written into each job's provider file.
+const PLAN_ID = /^account:[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
 // The plan the worker signed in with, which the sign-in writes as its default provider.
 function signedInProvider(): string {
   refuseLinks();
@@ -85,6 +89,7 @@ function signedInProvider(): string {
     provider = get(readJson(join(zcodeHome(), ".zcode", "v2", "provider_config.json")), "config.defaultModelSelection.providerId");
   } catch {}
   if (typeof provider !== "string" || provider === "") throw new Error("zcode worker is not signed in: run mandor login zcode");
+  if (!PLAN_ID.test(provider)) throw new Error("the zcode worker's sign-in file names a plan of another shape than account:<name>; run mandor login zcode again");
   return provider;
 }
 
@@ -226,7 +231,8 @@ export function createZcodeAdapter(cfg: Config): Adapter {
 
     version() {
       const b = bin();
-      const r = spawnSync(zcodeStart(b)[0], [...zcodeStart(b).slice(1), "--version"], { env: zcodeEnv(b, { PATH: process.env.PATH ?? "" }), encoding: "utf8", timeout: 30_000, killSignal: "SIGKILL", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] });
+      // Confined to the worker's home, where it keeps what it writes: a version call has no reason to write anywhere else.
+      const r = spawnConfined(zcodeHome(), zcodeStart(b)[0], [...zcodeStart(b).slice(1), "--version"], { env: zcodeEnv(b, { PATH: process.env.PATH ?? "" }), encoding: "utf8", timeout: 30_000, killSignal: "SIGKILL", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] });
       keepVendorStderr("zcode", ["--version"], r);
       if (r.status !== 0) throw new Error(`zcode --version failed (exit ${r.status ?? r.signal}); read logs/vendor.stderr in the state home for why`);
       const v = /\d+\.\d+\.\d+\S*/.exec(r.stdout)?.[0];

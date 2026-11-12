@@ -1,4 +1,4 @@
-import type { SpawnSyncOptions } from "node:child_process";
+import type { SpawnSyncOptions, SpawnSyncOptionsWithStringEncoding, SpawnSyncReturns } from "node:child_process";
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import type { Dirent } from "node:fs";
@@ -311,6 +311,13 @@ export function writeConfined(root: string, rel: string, data: string | Uint8Arr
   if (SANDBOX_APPLY.test(why)) throw new Error(`could not write ${target}: ${why}; run mandor outside Claude Code's Bash sandbox, which sandbox-exec cannot nest in`);
   if (/\bEACCES\b/.test(why)) throw new Error(`could not write ${target}: ${why}; tell the user, who repairs the permissions of that directory`);
   throw new Error(`could not write ${target}: ${why}; tell the user, who removes what is in the way`);
+}
+
+// Runs a command with its writes confined to the real path of a directory, as writeConfined does, for a tool that is only
+// asked what it is: whatever it writes, it writes there, and a link that a worker put in its way leads nowhere.
+export function spawnConfined(root: string, command: string, args: string[], options: SpawnSyncOptionsWithStringEncoding): SpawnSyncReturns<string> {
+  const path = join(realOf(dirname(root)), basename(root));
+  return spawnSync("/usr/bin/sandbox-exec", ["-D", `ROOT=${path}`, "-p", CONFINED_TO_ROOT, command, ...args], options);
 }
 
 // Forced removal is only for mandor's own worktrees and wip/ branches. It goes by what exists, so it also clears
