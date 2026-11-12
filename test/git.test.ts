@@ -2,13 +2,14 @@ import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import fs, { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
+import { homedir, tmpdir } from "node:os";
 import { basename, delimiter, dirname, join } from "node:path";
 import { test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import {
   addWorktree, apply3way, applyCheck, applyToIndex, assertCommitIdentity, assertHeadIdentity, branchExists, changedPaths, commitStaged, configuredDrivers, configuredPromisors, deleteBranchAt,
   diffSinceBaseBytes, diffStat, dropLastCommit, git, ignoredChanged, indexLockPath, indexTree, isClean, isPlaceholderEmail, migrateObjects, projectRoot,
-  pathsAwayFromBase, removeOwnedWorktree, removeTree, resetHardHead, resetTo, revParse, stagedDiff, worktreeAddRunning, worktreeRoot, writeConfined, firstLine,
+  pathsAwayFromBase, removeOwnedWorktree, removeTree, resetHardHead, resetTo, revParse, stagedDiff, worktreeAddRunning, worktreeRoot, writeConfined, firstLine, assertOutsideSharedTemp,
 } from "../src/git.ts";
 import { diffSinceBase, temp as tempDir, tempHome, tempRepo } from "./helpers.ts";
 
@@ -797,6 +798,31 @@ test("writeConfined into a directory that cannot be written says to repair its p
   chmodSync(root, 0o500);
   t.after(() => chmodSync(root, 0o700));
   assert.throws(() => writeConfined(root, "f", "x\n"), /^Error: could not write .*\/f: EACCES: permission denied, .*; tell the user, who repairs the permissions of that directory$/);
+});
+
+test("assertOutsideSharedTemp refuses a state home or a repository under the shared temporary directories, and nothing else", () => {
+  const away = join(homedir(), "mandor-no-such-directory"); // never made: only its real form is looked at
+  const refusal = (what: string) => new RegExp(`^Error: refusing ${what} .+: it lies under .+, which the workers of a project set up with --shared-temp may write; tell the user, who `);
+  withEnv({ MANDOR_HOME: join(away, ".mandor") }, () => {
+    assertOutsideSharedTemp(join(away, "repo"));
+    assert.throws(() => assertOutsideSharedTemp(join(tmpdir(), "repo")), refusal("the repository"));
+    assert.throws(() => assertOutsideSharedTemp("/tmp/work/repo"), /lies under \/private\/tmp,/);
+    assert.throws(() => assertOutsideSharedTemp("/private/var/folders/zz/yy/C/repo"), /lies under \/private\/var\/folders,/);
+    assert.throws(() => assertOutsideSharedTemp(join(tmpdir(), "repo")), /moves the repository or runs mandor project setup --update --no-shared-temp$/);
+  });
+  withEnv({ MANDOR_HOME: join(tmpdir(), "state") }, () => {
+    assert.throws(() => assertOutsideSharedTemp(join(away, "repo")), refusal("the mandor home"));
+    assert.throws(() => assertOutsideSharedTemp(join(away, "repo")), /sets MANDOR_HOME elsewhere or runs mandor project setup --update --no-shared-temp$/);
+  });
+  // The lead's own TMPDIR counts too, wherever it lies: it is what a worker's TMPDIR is copied from.
+  withEnv({ MANDOR_HOME: join(away, ".mandor"), TMPDIR: join(away, "scratch") }, () => {
+    assert.throws(() => assertOutsideSharedTemp(join(away, "scratch", "repo")), /lies under .*scratch,/);
+    assertOutsideSharedTemp(join(away, "repo"));
+  });
+  // A path that reaches the shared directory through a link is judged by where it really is.
+  const link = join(temp(), "link");
+  symlinkSync(tmpdir(), link);
+  withEnv({ MANDOR_HOME: join(away, ".mandor") }, () => assert.throws(() => assertOutsideSharedTemp(join(link, "repo")), refusal("the repository")));
 });
 
 test("removeOwnedWorktree refuses a path outside the root and a non-wip branch", () => {

@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import type { Dirent } from "node:fs";
 import { closeSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { inflateSync } from "node:zlib";
 import { foldPath } from "./guards.ts";
@@ -110,6 +111,18 @@ export function assertHomeOutsideRepos(): void {
   for (dir = realpathSync(dir); ; dir = dirname(dir)) {
     if (existsSync(join(dir, ".git"))) throw new Error(`refusing the mandor home ${home}: it lies inside the git working tree ${dir}; set MANDOR_HOME to a directory outside every repository`);
     if (dirname(dir) === dir) return;
+  }
+}
+
+// What a Codex or ZCode worker may write once its project keeps the shared temporary directories open (--shared-temp): /tmp, the
+// per-user temporary directory that the lead's TMPDIR names, and for ZCode all of /var/folders. A state home or a repository
+// under one of them would be the worker's to write, so neither may lie there while the project keeps them open.
+export function assertOutsideSharedTemp(repo: string): void {
+  const roots = [...new Set(["/private/tmp", "/private/var/folders", realOf(tmpdir())])]; // tmpdir() is the TMPDIR of this process, if it has one
+  for (const [what, path, way] of [["the mandor home", mandorHome(), "sets MANDOR_HOME elsewhere"], ["the repository", repo, "moves the repository"]] as const) {
+    const real = realOf(path);
+    const root = roots.find((r) => real === r || real.startsWith(r + sep));
+    if (root !== undefined) throw new Error(`refusing ${what} ${path}: it lies under ${root}, which the workers of a project set up with --shared-temp may write; tell the user, who ${way} or runs mandor project setup --update --no-shared-temp`);
   }
 }
 

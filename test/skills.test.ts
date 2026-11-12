@@ -109,6 +109,10 @@ test("lead skill says where else an accept that did not finish shows", () => {
   assert.ok(read("lead").includes("The goal's line of a session summary and the `accept-unfinished` red flag of a `review` say the same of such an accept."));
 });
 
+test("lead skill leaves a state home or a repository under the shared temporary directories to the user", () => {
+  assert.ok(read("lead").includes("A command of such a project that refuses because the state home or the repository lies under `/tmp` or `/var/folders` is the user's to settle too: tell them, and stop."));
+});
+
 test("lead skill points at tiers for a tier with no candidate that can run", () => {
   assert.ok(read("lead").includes("`mandor tiers` shows each candidate and what keeps it from running"));
 });

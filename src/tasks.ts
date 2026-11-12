@@ -6,7 +6,7 @@ import { askOf, loadRounds, renderAnswerMessage, renderBrief, renderConflictMess
 import { loadConfig, resolveBin, WORKER_TOOLS, type Config } from "./config.ts";
 import type { Candidate, FileRef, GoalRecord, JobKind, JobRecord, LedgerEvent, ModelInfo, Pending, ProjectState, StallReason, TaskRecord, TaskStatus, Tier, ToolName, ToolState } from "./contracts.ts";
 import {
-  addWorktree, apply3way, applyCheck, applyToIndex, assertCommitIdentity, assertHeadIdentity, assertHomeOutsideRepos, assertRepoOutsideHome, branchExists, changedPaths, commitRunning, commitStaged, configuredDrivers, configuredPromisors,
+  addWorktree, apply3way, applyCheck, applyToIndex, assertCommitIdentity, assertHeadIdentity, assertHomeOutsideRepos, assertOutsideSharedTemp, assertRepoOutsideHome, branchExists, changedPaths, commitRunning, commitStaged, configuredDrivers, configuredPromisors,
   confineProblem, deleteBranchAt, diffSinceBaseBytes, diffStat, dropLastCommit, git, GitFailure, indexLockPath, indexTree, isClean, PARTIAL_CLONE, projectRoot,
   pathsAwayFromBase, removeOwnedWorktree, resetHardHead, resetTo, revParse, stagedDiff, stopOverdueCommit, worktreeAddRunning, worktreeLeft, worktreeRoot,
 } from "./git.ts";
@@ -349,6 +349,7 @@ export function goalStart(cwd: string, branch: string, from: string | null): { g
   refuseUnsupported(root);
   assertRepoOutsideHome(root);
   const config = loadProjectConfig(id);
+  if (config.sharedTemp === true) assertOutsideSharedTemp(root);
   // Peeled, so a tag names its commit; a ref that looks like an option then fails as a revision. Without --from, the
   // HEAD of the checkout the command ran in, which is the branch the user is on.
   const base = revParse(from === null ? checkout : root, `${from ?? "HEAD"}^{commit}`);
@@ -471,6 +472,7 @@ export function dispatch(cwd: string, o: { goal: string; slug: string; tier: Tie
   const warnings = cachedWarnings(config);
   refuseUnsupported(root);
   assertRepoOutsideHome(root);
+  if (project.sharedTemp === true) assertOutsideSharedTemp(root);
   const body = readFileSync(o.briefFile, "utf8");
   const all = worktreesDir(id);
   const worktree = join(all, `task-${slug}`);
@@ -735,8 +737,11 @@ export function plantedMessage(slug: string, planted: string[], then: string): s
   return `the worktree holds agent paths that the repository does not hold as they are; restore or delete them in the task worktree, then ${then}: ${shown}`;
 }
 
-// Before a command records a round or queues a job: nothing is counted or reset for a job that would not start.
-function refusePlantedAgentPaths(id: string, task: TaskRecord, then: string): void {
+// Before a command records a round or queues a job: nothing is counted or reset for a job that would not start. A project that
+// keeps the shared temporary directories open runs no job while the state home or the repository lies under them, and none
+// starts over an agent path that the repository does not hold.
+function refuseUnsafeStart(id: string, task: TaskRecord, then: string): void {
+  if (loadProjectConfig(id).sharedTemp === true) assertOutsideSharedTemp(recordedRoot(id));
   if (task.worktree === null) return;
   const planted = plantedAgentPaths(id, task, worktreeRoot(task.worktree));
   if (planted.length > 0) throw new Error(plantedMessage(task.id, planted, then));
@@ -1038,7 +1043,7 @@ function resumeWithNotes(cwd: string, slug: string, notesFile: string, verdict: 
     if (task.status !== "needs-review") throw new Error(`task ${slug} is ${task.status}, not needs-review; run mandor show ${slug} to see where it stands`);
     refuseUnfinishedAccept(id, task);
     refuseOpenJob(loadState(id), slug);
-    refusePlantedAgentPaths(id, task, "run the command again");
+    refuseUnsafeStart(id, task, "run the command again");
     const notes = readNonEmpty(notesFile, "notes");
     if (verdict === "fix") startFixRoundLocked(id, task, renderFixMessage(notes), true, models, "fix");
     else {
@@ -1067,7 +1072,7 @@ export function drop(cwd: string, slug: string, notesFile: string): { cursor: nu
     if (task.status !== "integrating") throw new Error(`task ${slug} is ${task.status}, not integrating; only a task that accept committed is confirmed or dropped: run mandor show ${slug} to see where it stands`);
     const notes = readNonEmpty(notesFile, "notes");
     // The drop resets the goal first, which nothing undoes, so a worker that would not start is found out before it.
-    refusePlantedAgentPaths(id, task, "run the command again");
+    refuseUnsafeStart(id, task, "run the command again");
     const { branch, integrationWorktree: integration } = state.goals[task.goalBranch];
     const commit = task.integratedCommit;
     // Elsewhere the reset would move another ref, and a HEAD that sits at the commit's parent would read as a drop done.
@@ -1115,7 +1120,7 @@ export function reassign(cwd: string, slug: string): { task: TaskRecord; cursor:
     const dependency = task.after === null ? undefined : state.tasks[task.after];
     if (dependency !== undefined && dependency.status !== "accepted") throw new Error(`task ${slug} depends on ${dependency.id}, which is ${dependency.status}; run mandor cancel ${slug} to stop it, or take it over`);
     refuseOpenJob(state, slug);
-    refusePlantedAgentPaths(id, task, `run mandor reassign ${slug} again`);
+    refuseUnsafeStart(id, task, `run mandor reassign ${slug} again`);
     // All-exhausted says candidates exist and their limits stopped them, so a catalog holding none of them must not reach it.
     if (!hasUsableModel(models)) throw new Error("no model catalog; run mandor models --refresh");
     const config = loadConfig();

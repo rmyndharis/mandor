@@ -2110,6 +2110,20 @@ test("init, models, project setup, goal start and dispatch refuse a state home i
   assert.equal(ok.status, 0, ok.stderr);
 });
 
+test("goal start and dispatch refuse a state home under the shared temporary directories when the project keeps them open, and write nothing", (t) => {
+  const s = setup(t);
+  const refusal = /^Error: refusing the mandor home .+: it lies under .+, which the workers of a project set up with --shared-temp may write; tell the user, who sets MANDOR_HOME elsewhere or runs mandor project setup --update --no-shared-temp$/;
+  saveProjectConfig(s.id, { ...emptyProjectConfig(), sharedTemp: true });
+  assert.throws(() => goalStart(s.repo, GOAL, null), refusal);
+  assert.deepEqual(Object.keys(loadState(s.id).goals), []);
+  // Closed, the same home and repository are fine. A project that opens them afterwards is refused at its next task.
+  saveProjectConfig(s.id, emptyProjectConfig());
+  goalStart(s.repo, GOAL, null);
+  saveProjectConfig(s.id, { ...emptyProjectConfig(), sharedTemp: true });
+  assert.throws(() => send(s, "hello", { use: null }), refusal);
+  assert.equal(loadState(s.id).tasks.hello, undefined);
+});
+
 test("goal start and dispatch refuse a repository whose config defines a filter or merge driver", (t) => {
   const s = setup(t);
   must(s.repo, "config", "filter.lfs.clean", "git-lfs clean -- %f");

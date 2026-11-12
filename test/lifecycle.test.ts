@@ -367,6 +367,37 @@ test("a report that is blocked, partial or asks a question has the next action a
   assert.deepEqual(verdicts(s), ["hello:answer"]);
 });
 
+test("a fix, an answer, a drop and a reassign are refused over a state home under the shared temporary directories that the project keeps open, with nothing recorded", async (t) => {
+  const s = setup(t);
+  must(s.repo, "config", "user.email", "dev@host.test");
+  tasks.goalStart(s.repo, GOAL, null);
+  writeScenarios([{ ...ASKS({ status: "blocked" }), writeFile: [{ path: "hello.txt", content: "hello\n" }] }, DONE, DONE]);
+  send(s, "hello");
+  await needsReview(s, "hello");
+  const keepOpen = (on: boolean) => saveProjectConfig(s.id, { ...loadProjectConfig(s.id), sharedTemp: on });
+  const refusal = /^Error: refusing the mandor home .+: it lies under .+, which the workers of a project set up with --shared-temp may write; tell the user, who sets MANDOR_HOME elsewhere or runs mandor project setup --update --no-shared-temp$/;
+  keepOpen(true);
+  assert.throws(() => tasks.verdictFix(s.repo, "hello", s.file("n.md", NOTES)), refusal);
+  assert.throws(() => tasks.verdictAnswer(s.repo, "hello", s.file("a.md", "Yes.\n")), refusal);
+  assert.deepEqual([task(s, "hello").status, task(s, "hello").fixRounds, task(s, "hello").jobIds.length, verdicts(s)], ["needs-review", 0, 1, []]);
+  setTask(s, "hello", { status: "stalled", stallReason: "failed" });
+  assert.throws(() => tasks.reassign(s.repo, "hello"), refusal);
+  assert.equal(task(s, "hello").status, "stalled");
+  // A drop resets the goal first, so it asks before it does.
+  setTask(s, "hello", { status: "needs-review", stallReason: null });
+  keepOpen(false);
+  accept(s, "hello");
+  const tip = must(s.repo, "rev-parse", GOAL);
+  keepOpen(true);
+  assert.throws(() => tasks.drop(s.repo, "hello", s.file("d.md", "Redo it.\n")), refusal);
+  assert.equal(must(s.repo, "rev-parse", GOAL), tip, "the commit is still there");
+  assert.equal(task(s, "hello").status, "integrating");
+  // Closed again, the same commands go on.
+  keepOpen(false);
+  tasks.drop(s.repo, "hello", s.file("d.md", "Redo it.\n"));
+  assert.equal(task(s, "hello").fixRounds, 1);
+});
+
 test("a worker that keeps asking is answered as many times as a fix is allowed, and then the task is for the lead to take over", async (t) => {
   const s = setup(t);
   tasks.goalStart(s.repo, GOAL, null);
