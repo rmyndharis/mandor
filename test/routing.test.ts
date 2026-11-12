@@ -8,7 +8,7 @@ import { test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 import type { Config } from "../src/config.ts";
-import { DEFAULT_CONFIG, parseCandidate } from "../src/config.ts";
+import { AGY_UNACKNOWLEDGED, DEFAULT_CONFIG, parseCandidate } from "../src/config.ts";
 import type { Candidate, JobRecord, LedgerEvent, ModelInfo, TaskRecord, Tier, ToolName, ToolState, WaitItem } from "../src/contracts.ts";
 import { jobDir, processStart, projectDir, projectIdFor, scratchDir, worktreesDir } from "../src/home.ts";
 import { appendEvent, appendToolEvent, ledgerSize, loadState, now, readEvents } from "../src/ledger.ts";
@@ -177,6 +177,7 @@ test("a tool that needs worker network is passed over in a project without it, a
   // Antigravity too: a candidate in the light tier, a model in the catalog, and nothing else that could run.
   const agyConfig = structuredClone(DEFAULT_CONFIG);
   agyConfig.tools.agy.enabled = true;
+  agyConfig.tools.agy.acknowledged = true;
   const agyModels = [...CATALOG, model("agy", "gemini-3.8-flash-medium", ["medium"])];
   const agy = { candidate: { tool: "agy", model: "gemini-3.8-flash-medium", effort: "medium" } };
   assert.deepEqual(route("light", { config: agyConfig, models: agyModels, tools: codexSpent }), agy);
@@ -185,6 +186,24 @@ test("a tool that needs worker network is passed over in a project without it, a
   assert.throws(() => route("light", { config: cfg, use: parseCandidate("zcode:GLM-5.3-Flash@high"), network: false }),
     /^Error: cannot use zcode:GLM-5.3-Flash@high: zcode needs worker network, which this project does not allow$/);
   assert.deepEqual(route("light", { config: cfg, use: parseCandidate("zcode:GLM-5.3-Flash@high") }), picked("zcode:GLM-5.3-Flash@high"));
+});
+
+test("antigravity that is switched on but not acknowledged is passed over with the notice, and a use of it is refused with the notice", () => {
+  const cfg = structuredClone(DEFAULT_CONFIG);
+  cfg.tools.agy.enabled = true;
+  const models = [...CATALOG, model("agy", "gemini-3.8-flash-medium", ["medium"])];
+  const codexSpent = spent("codex");
+  const reason = AGY_UNACKNOWLEDGED;
+  assert.deepEqual(route("light", { config: cfg, models, tools: codexSpent }), { none: true });
+  assert.equal(tierReport(cfg, models, {}).light[2].reason, reason);
+  assert.equal(tierReport(cfg, CATALOG, {}).light[2].reason, reason, "also while the catalog lists no agy model, as it does not while agy is not run");
+  assert.throws(() => route("light", { config: cfg, models, use: parseCandidate("agy:gemini-3.8-flash-medium") }), (e: Error) => e.message === `cannot use agy:gemini-3.8-flash-medium: ${reason}`);
+  assert.deepEqual(tierWarnings(cfg, models).filter((w) => w.includes("agy")), [], "its candidates are not judged while it is off");
+  cfg.tools.agy.acknowledged = true;
+  assert.deepEqual(route("light", { config: cfg, models, tools: codexSpent }), { candidate: { tool: "agy", model: "gemini-3.8-flash-medium", effort: "medium" } });
+  assert.equal(tierReport(cfg, models, {}).light[2].reason, null);
+  cfg.tools.agy.enabled = false;
+  assert.equal(tierReport(cfg, models, {}).light[2].reason, "agy is not enabled", "a tool that is off gets no notice");
 });
 
 test("catalogGap says that worker network is what a tier lacks when only tools that need it could run", () => {

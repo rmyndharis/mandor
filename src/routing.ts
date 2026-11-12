@@ -1,5 +1,5 @@
 import type { Config } from "./config.ts";
-import { formatCandidate, parseCandidate } from "./config.ts";
+import { AGY_UNACKNOWLEDGED, agyUnacknowledged, formatCandidate, parseCandidate, toolOn } from "./config.ts";
 import type { Candidate, ModelInfo, Tier, ToolName, ToolState } from "./contracts.ts";
 import { TIER_ORDER } from "./contracts.ts";
 import { isRunnerAlive, listJobIds, neverStarted, readJob } from "./runner.ts";
@@ -43,7 +43,7 @@ export function catalogGap(tier: Tier, config: Config, models: ModelInfo[], netw
 export function tierWarnings(config: Config, models: ModelInfo[]): string[] {
   if (!hasUsableModel(models)) return [];
   return TIER_ORDER.flatMap((tier) => {
-    const unusable = config.tiers[tier].map(parseCandidate).filter((c) => config.tools[c.tool].enabled)
+    const unusable = config.tiers[tier].map(parseCandidate).filter((c) => toolOn(config, c.tool))
       .map((c) => settle(c, { config, models, tools: {}, network: true })).filter((why) => typeof why === "string").map((why) => `tier ${tier}: ${why}`);
     const gap = catalogGap(tier, config, models, true);
     return gap === null ? unusable : [...unusable, gap];
@@ -64,7 +64,7 @@ export function tierReport(config: Config, models: ModelInfo[], tools: ToolState
   const unlisted = (tool: ToolName) => (notes.unread[tool] === undefined ? `${tool} lists no model; run mandor models --refresh` : `${tool}: its models could not be read: ${notes.unread[tool]}`);
   const entries = (tier: Tier) => config.tiers[tier].map((candidate): TierEntry => {
     const c = parseCandidate(candidate);
-    const on = config.tools[c.tool].enabled;
+    const on = toolOn(config, c.tool);
     const why = !on ? settle(c, { config, models, tools, network: true }) : notes.down[c.tool] ?? (models.some((m) => m.tool === c.tool) ? settle(c, { config, models, tools, network: true }) : unlisted(c.tool));
     return { candidate, usable: typeof why !== "string", reason: typeof why === "string" ? why : null, needsNetwork: NEEDS_NETWORK.includes(c.tool) };
   });
@@ -77,7 +77,7 @@ interface RouteContext { config: Config; models: ModelInfo[]; tools: ToolState; 
 // The candidate with its effort settled, or the reason it cannot run whatever the slots say.
 function settle(c: Candidate, { config, models, tools, network }: Pick<RouteContext, "config" | "models" | "tools" | "network">): Candidate | string {
   const name = `${c.tool}:${c.model}`;
-  if (!config.tools[c.tool].enabled) return `${c.tool} is not enabled`;
+  if (!toolOn(config, c.tool)) return c.tool === "agy" && agyUnacknowledged(config) ? AGY_UNACKNOWLEDGED : `${c.tool} is not enabled`;
   if (!network && NEEDS_NETWORK.includes(c.tool)) return `${c.tool} needs worker network, which this project does not allow`;
   const model = models.find((m) => m.tool === c.tool && m.model === c.model);
   if (model === undefined) return `${name} is not in the model catalog`;

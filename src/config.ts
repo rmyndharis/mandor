@@ -6,7 +6,7 @@ import { mandorHome } from "./home.ts";
 import { IGNORE_USER_CONFIG } from "./spikes.ts";
 import { readJson, writeJsonAtomic } from "./store.ts";
 
-export interface ToolConfig { enabled: boolean; maxParallel: number; bin: string; ignoreUserConfig: boolean }
+export interface ToolConfig { enabled: boolean; maxParallel: number; bin: string; ignoreUserConfig: boolean; acknowledged?: boolean } // acknowledged: Antigravity's, which also needs it
 export interface Config {
   version: 1;
   tools: Record<ToolName, ToolConfig>;
@@ -17,13 +17,22 @@ export interface Config {
 
 const MAX_TIMEOUT_MINUTES = 1440;
 
+// What the user is told of Antigravity: an understanding of what the vendor publishes, not a fact about its terms.
+export const AGY_NOTICE = "as far as Google's published answers show, its terms for consumer plans do not cover driving the Antigravity CLI from another tool, which can cost the account";
+export const AGY_UNACKNOWLEDGED = `agy is switched on but stays off until it is acknowledged: ${AGY_NOTICE}; tell the user, who sets tools.agy.acknowledged to true in config.json if they accept that risk`;
+
 const TOOLS: readonly ToolName[] = ["codex", "zcode", "agy"];
 
 const tool = (name: ToolName, enabled: boolean): ToolConfig => ({ enabled, maxParallel: 2, bin: name, ignoreUserConfig: IGNORE_USER_CONFIG });
 
+export const agyUnacknowledged = (cfg: Config): boolean => cfg.tools.agy.enabled && cfg.tools.agy.acknowledged !== true;
+
+// Whether a tool takes part: it is switched on, and for Antigravity the user has also acknowledged the notice above.
+export const toolOn = (cfg: Config, tool: ToolName): boolean => cfg.tools[tool].enabled && (tool !== "agy" || cfg.tools.agy.acknowledged === true);
+
 export const DEFAULT_CONFIG: Config = {
   version: 1,
-  tools: { codex: tool("codex", true), zcode: tool("zcode", false), agy: tool("agy", false) },
+  tools: { codex: tool("codex", true), zcode: tool("zcode", false), agy: { ...tool("agy", false), acknowledged: false } },
   tiers: {
     heavy: ["codex:gpt-6-astra@ultra", "codex:gpt-6.1-sol@max", "zcode:GLM-5.3@max", "agy:gemini-4-argon-high"],
     medium: ["codex:gpt-6.1-sol@high", "zcode:GLM-5.3@high", "agy:gemini-4-argon-medium", "codex:gpt-6-luna@high"],
@@ -70,6 +79,7 @@ export function validateConfig(v: unknown): string[] {
         continue;
       }
       if (typeof t.enabled !== "boolean") errs.push(`tools.${name}.enabled must be a boolean`);
+      if (t.acknowledged !== undefined && typeof t.acknowledged !== "boolean") errs.push(`tools.${name}.acknowledged must be a boolean`);
       if (!Number.isInteger(t.maxParallel) || (t.maxParallel as number) < 1) errs.push(`tools.${name}.maxParallel must be a positive integer`);
       if (typeof t.bin !== "string" || t.bin === "") errs.push(`tools.${name}.bin must be a non-empty string`);
       if (typeof t.ignoreUserConfig !== "boolean") errs.push(`tools.${name}.ignoreUserConfig must be a boolean`);

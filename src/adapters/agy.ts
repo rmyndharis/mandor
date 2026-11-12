@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseReport } from "../brief.ts";
 import type { Config } from "../config.ts";
-import { resolveBin } from "../config.ts";
+import { AGY_NOTICE, resolveBin } from "../config.ts";
 import type { Adapter, JobResult, JobStatus, ModelInfo, RawRun, WorkerReport } from "../contracts.ts";
 import { mandorHome, workerEnv } from "../home.ts";
 import { clampDetail, ensureDir } from "../store.ts";
@@ -158,7 +158,7 @@ export function createAgyAdapter(cfg: Config): Adapter {
 
 export function agyWarnings(version: string | null): string[] {
   return [
-    "agy is on: Google's terms for consumer plans do not cover driving the Antigravity CLI from another tool, which can cost the account; see the README",
+    `agy is on: ${AGY_NOTICE}; see the README`,
     ...(version === TESTED_AGY_VERSION ? [] : [`agy ${version ?? "(version unknown)"} is not the tested version ${TESTED_AGY_VERSION}`]),
   ];
 }

@@ -7,7 +7,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { agyHome, createAgyAdapter, TESTED_AGY_VERSION } from "../src/adapters/agy.ts";
 import { getAdapter, modelsReport, readModelCache, refreshModels } from "../src/adapters/index.ts";
 import { cachedWarnings } from "../src/modelcache.ts";
-import { DEFAULT_CONFIG, resolveBin } from "../src/config.ts";
+import { AGY_UNACKNOWLEDGED, DEFAULT_CONFIG, resolveBin } from "../src/config.ts";
 import type { Candidate, JobRecord, RawRun } from "../src/contracts.ts";
 import { processStart, projectIdFor, scratchDir } from "../src/home.ts";
 import { appendEvent, loadState, loadToolState, now } from "../src/ledger.ts";
@@ -25,7 +25,7 @@ const SECRET = "SECRET_TOKEN_123";
 
 function config() {
   const cfg = structuredClone(DEFAULT_CONFIG);
-  cfg.tools.agy = { ...cfg.tools.agy, enabled: true, bin: FAKE };
+  cfg.tools.agy = { ...cfg.tools.agy, enabled: true, acknowledged: true, bin: FAKE };
   return cfg;
 }
 const agy = () => createAgyAdapter(config());
@@ -304,6 +304,41 @@ test("the catalog holds agy's models next to codex's, and the report says what u
   assert.ok(modelsReport(cfg, false).warnings.includes(`agy 1.6.0 is not the tested version ${TESTED_AGY_VERSION}`));
   cfg.tools.agy.enabled = false;
   assert.ok(!modelsReport(cfg, true).warnings.some((w) => w.startsWith("agy")), "a tool that is off has nothing to say");
+});
+
+test("agy that is switched on without the acknowledgement is not run, and init and models say so with the notice", () => {
+  const home = tempHome();
+  writeAgyConfig(home);
+  const cfg = JSON.parse(readFileSync(join(home, "config.json"), "utf8"));
+  // What a refresh stored while agy was acknowledged is not said once it is not.
+  refreshModels(cfg);
+  assert.ok(cachedWarnings(cfg).some((w) => w.startsWith("agy is on: ")));
+  const asked = readAgyLog().length;
+  cfg.tools.agy.acknowledged = false;
+  assert.ok(!cachedWarnings(cfg).some((w) => w.startsWith("agy is on: ")), "stored warnings of a tool that is not run");
+  const models = refreshModels(cfg);
+  assert.deepEqual([...new Set(models.map((m) => m.tool))], ["codex"], "agy was not asked for its models");
+  assert.equal(readAgyLog().length, asked, "agy was not run");
+  const said = (warnings: string[]) => warnings.filter((w) => w === AGY_UNACKNOWLEDGED).length;
+  assert.equal(said(modelsReport(cfg, false).warnings), 1);
+  assert.equal(said(cachedWarnings(cfg)), 1);
+  assert.ok(![...modelsReport(cfg, false).warnings, ...cachedWarnings(cfg)].some((w) => w.startsWith("agy is on")), "the warnings of a tool that runs are not its");
+  cfg.tools.agy.acknowledged = true;
+  refreshModels(cfg);
+  assert.equal(said(modelsReport(cfg, false).warnings) + said(cachedWarnings(cfg)), 0);
+  assert.ok(modelsReport(cfg, false).warnings.some((w) => /^agy is on: as far as Google's published answers show, its terms for consumer plans do not cover .*README/.test(w)));
+  cfg.tools.agy.enabled = false;
+  cfg.tools.agy.acknowledged = false;
+  assert.equal(said(modelsReport(cfg, false).warnings) + said(cachedWarnings(cfg)), 0, "a tool that is off has nothing to say");
+});
+
+test("dispatch does not look for the binary of an agy that is not acknowledged, and a use of it is refused with the notice", (t) => {
+  const p = project(t);
+  const cfg = JSON.parse(readFileSync(join(p.home, "config.json"), "utf8"));
+  cfg.tools.agy.acknowledged = false;
+  cfg.tools.agy.bin = "/nonexistent/agy";
+  writeFileSync(join(p.home, "config.json"), JSON.stringify(cfg));
+  assert.throws(() => p.send("hello"), (e: Error) => e.message.startsWith("cannot use agy:") && e.message.includes(AGY_UNACKNOWLEDGED) && !e.message.includes("not found at"), "the use is refused for the acknowledgement, not for the binary");
 });
 
 test("what agy's version and models calls print on stderr goes to a private log and nowhere else", () => {

@@ -3,7 +3,7 @@ import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSy
 import { createRequire } from "node:module";
 import { dirname, join, posix, sep } from "node:path";
 import { askOf, loadRounds, renderAnswerMessage, renderBrief, renderConflictMessage, renderFixMessage, renderHandoff, roundReport, saveRoundFile } from "./brief.ts";
-import { loadConfig, resolveBin, WORKER_TOOLS, type Config } from "./config.ts";
+import { loadConfig, resolveBin, toolOn, WORKER_TOOLS, type Config } from "./config.ts";
 import type { Candidate, FileRef, GoalRecord, JobKind, JobRecord, LedgerEvent, ModelInfo, Pending, ProjectState, StallReason, TaskRecord, TaskStatus, Tier, ToolName, ToolState } from "./contracts.ts";
 import {
   addWorktree, apply3way, applyCheck, applyToIndex, assertCommitIdentity, assertHeadIdentity, assertHomeOutsideRepos, assertOutsideSharedTemp, assertRepoOutsideHome, branchExists, changedPaths, commitRunning, commitStaged, configuredDrivers, configuredPromisors,
@@ -458,7 +458,7 @@ export function dispatch(cwd: string, o: { goal: string; slug: string; tier: Tie
   // Every start needs its tool's binary, so nothing is recorded while an enabled tool lacks one, and it comes first
   // because its absence also empties the catalog. Resolving searches PATH but takes a configured path on trust.
   const config = loadConfig();
-  for (const tool of WORKER_TOOLS.filter((t) => config.tools[t].enabled)) {
+  for (const tool of WORKER_TOOLS.filter((t) => toolOn(config, t))) {
     const bin = resolveBin(tool, config);
     if (!existsSync(bin)) throw new Error(`${tool} not found at ${bin}; tell the user, who installs it or sets its path (tools.${tool}.bin in config.json, or MANDOR_CODEX_BIN for codex)`);
   }

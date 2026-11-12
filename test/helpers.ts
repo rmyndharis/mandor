@@ -130,7 +130,7 @@ const agyFakeDir = () => join(process.env.MANDOR_HOME!, "agy", "home", "fake");
 export function writeAgyConfig(home: string): void {
   const cfg = structuredClone(DEFAULT_CONFIG);
   cfg.tools.codex.bin = FAKE_CODEX;
-  cfg.tools.agy = { ...cfg.tools.agy, enabled: true, bin: FAKE_AGY };
+  cfg.tools.agy = { ...cfg.tools.agy, enabled: true, acknowledged: true, bin: FAKE_AGY };
   writeJsonAtomic(join(home, "config.json"), cfg);
   mkdirSync(agyFakeDir(), { recursive: true });
 }

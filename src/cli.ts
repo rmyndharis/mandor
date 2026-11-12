@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, posix, resolve } from "node:path";
-import { parseCandidate } from "./config.ts";
+import { parseCandidate, toolOn } from "./config.ts";
 import { TIER_ORDER, tierName, type Tier, type ToolName } from "./contracts.ts";
 import { commonDirOf, realOf } from "./git.ts";
 import { mandorHome, scratchDir } from "./home.ts";
@@ -378,7 +378,7 @@ export async function main(argv: string[]): Promise<number> {
       const cfg = loadConfig();
       // As dispatch checks it: an enabled tool whose binary cannot be used refuses every dispatch.
       const down: Record<string, string> = {};
-      for (const tool of WORKER_TOOLS.filter((t) => cfg.tools[t].enabled)) {
+      for (const tool of WORKER_TOOLS.filter((t) => toolOn(cfg, t))) {
         try {
           const bin = resolveBin(tool, cfg);
           if (!existsSync(bin)) down[tool] = `${tool} not found at ${bin}; tell the user, who installs it or sets its path`;

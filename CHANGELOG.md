@@ -6,6 +6,7 @@ All notable changes to mandor are recorded here. The format follows [Keep a Chan
 
 ### Changed
 
+- **Breaking:** Antigravity takes part only when `tools.agy.acknowledged` is `true` besides `tools.agy.enabled`. With `enabled` alone it is not run, and `init`, `models`, the session summary, `dispatch` and a refused `--use` say so with the notice and the step. The notice now says what is understood of Google's published answers, not a fact about its terms. A config that had Antigravity on stays off until the setting is added.
 - A new worktree is checked out confined, after its own configuration was read, so the repository's `post-checkout` and `post-index-change` hooks no longer run when mandor creates one.
 - The README says that the commit hooks at accept can run scripts that the reviewed change altered, that a commit which a hook changes is rolled back, and that mandor starts no git command that names a remote.
 - The help and the README describe `mandor models` as the list read at the last refresh.

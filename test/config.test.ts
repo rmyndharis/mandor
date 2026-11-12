@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "no
 import { basename, isAbsolute, join } from "node:path";
 import { test, type TestContext } from "node:test";
 import type { Candidate } from "../src/contracts.ts";
-import { DEFAULT_CONFIG, formatCandidate, loadConfig, parseCandidate, resolveBin, resolveCodexBin, validateConfig, WORKER_TOOLS } from "../src/config.ts";
+import { AGY_NOTICE, AGY_UNACKNOWLEDGED, DEFAULT_CONFIG, formatCandidate, loadConfig, parseCandidate, resolveBin, resolveCodexBin, toolOn, validateConfig, WORKER_TOOLS } from "../src/config.ts";
 import { IGNORE_USER_CONFIG } from "../src/spikes.ts";
 import { temp, tempHome } from "./helpers.ts";
 
@@ -292,4 +292,26 @@ test("resolveCodexBin throws when the name is not on PATH", (t) => {
   setEnv(t, "MANDOR_CODEX_BIN", undefined);
   setEnv(t, "PATH", tempDir());
   assert.throws(() => resolveCodexBin(clone()), /^Error: codex not found on PATH; tell the user, who installs it or sets its bin under tools in config\.json$/);
+});
+
+test("antigravity needs an acknowledgement besides being switched on, and no other tool does", () => {
+  assert.equal(DEFAULT_CONFIG.tools.agy.acknowledged, false);
+  assert.equal(DEFAULT_CONFIG.tools.codex.acknowledged, undefined);
+  assert.equal(DEFAULT_CONFIG.tools.zcode.acknowledged, undefined);
+  const cfg = structuredClone(DEFAULT_CONFIG);
+  assert.deepEqual(validateConfig(cfg), []);
+  (cfg.tools.agy as unknown as Record<string, unknown>).acknowledged = "yes";
+  assert.deepEqual(validateConfig(cfg), ["tools.agy.acknowledged must be a boolean"]);
+  delete cfg.tools.agy.acknowledged;
+  assert.deepEqual(validateConfig(cfg), [], "a config from before the setting existed is valid");
+  cfg.tools.agy.enabled = true;
+  assert.equal(toolOn(cfg, "agy"), false, "and reads as not acknowledged");
+  cfg.tools.agy.acknowledged = true;
+  assert.equal(toolOn(cfg, "agy"), true);
+  cfg.tools.agy.enabled = false;
+  assert.equal(toolOn(cfg, "agy"), false, "an acknowledgement does not switch the tool on");
+  assert.deepEqual([toolOn(DEFAULT_CONFIG, "codex"), toolOn(DEFAULT_CONFIG, "zcode")], [true, false], "the other tools go by enabled alone");
+  // The notice says what is understood of the vendor's published answers, and the refusal carries it with the step.
+  assert.match(AGY_NOTICE, /^as far as Google's published answers show, its terms for consumer plans do not cover driving the Antigravity CLI from another tool, which can cost the account$/);
+  assert.equal(AGY_UNACKNOWLEDGED, `agy is switched on but stays off until it is acknowledged: ${AGY_NOTICE}; tell the user, who sets tools.agy.acknowledged to true in config.json if they accept that risk`);
 });

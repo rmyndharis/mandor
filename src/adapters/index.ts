@@ -1,12 +1,12 @@
 import { appendFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "../config.ts";
-import { WORKER_TOOLS } from "../config.ts";
+import { toolOn, WORKER_TOOLS } from "../config.ts";
 import type { Adapter, ModelInfo, ToolName } from "../contracts.ts";
 import { mandorHome } from "../home.ts";
 import { clampDetail, ensureDir, readJson, writeJsonAtomic } from "../store.ts";
 import type { ModelCache } from "../modelcache.ts";
-import { cacheFile, clearRefreshFailure, noteRefreshFailure, readModelCache, refreshFailedWithin, withZcodeBilling } from "../modelcache.ts";
+import { cacheFile, clearRefreshFailure, noteRefreshFailure, readModelCache, refreshFailedWithin, withNotices } from "../modelcache.ts";
 import { agyWarnings, createAgyAdapter, TESTED_AGY_VERSION } from "./agy.ts";
 import { codexWarnings, createCodexAdapter } from "./codex.ts";
 import { createZcodeAdapter, zcodeWarnings } from "./zcode.ts";
@@ -31,7 +31,7 @@ function toolWarnings(tool: ToolName, versions: ModelCache["versions"], problems
   return agyWarnings(problems.agy === undefined ? versions.agy ?? null : TESTED_AGY_VERSION);
 }
 
-const enabledTools = (cfg: Config) => WORKER_TOOLS.filter((t) => cfg.tools[t].enabled);
+const enabledTools = (cfg: Config) => WORKER_TOOLS.filter((t) => toolOn(cfg, t));
 
 // What each enabled tool says; a tool that is off says nothing.
 function warningsOf(cfg: Config, versions: ModelCache["versions"], problems: ModelCache["problems"]): ModelCache["warnings"] {
@@ -48,7 +48,7 @@ export function refreshModels(cfg: Config): ModelInfo[] {
   const models: ModelInfo[] = [];
   let failure: unknown;
   let listed = 0;
-  for (const tool of WORKER_TOOLS.filter((t) => cfg.tools[t].enabled)) {
+  for (const tool of enabledTools(cfg)) {
     try {
       const adapter = getAdapter(tool, cfg);
       versions[tool] = adapter.version();
@@ -98,5 +98,5 @@ export function modelsReport(cfg: Config, refresh: boolean): { codexVersion: str
   // What the refresh stored for a tool, so a refresh reads the login shell once. One the cache holds nothing for (a tool
   // switched on since, or a cache from before the warnings were stored, or none) has them worked out here.
   const warnings = on.flatMap((t) => cache?.warnings[t] ?? toolWarnings(t, cache?.versions ?? {}, cache?.problems ?? {}));
-  return { codexVersion, fetchedAt: cache?.fetchedAt ?? null, models, warnings: withZcodeBilling(cfg, [...warnings, ...problems]) };
+  return { codexVersion, fetchedAt: cache?.fetchedAt ?? null, models, warnings: withNotices(cfg, [...warnings, ...problems]) };
 }

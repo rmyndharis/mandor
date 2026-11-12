@@ -1,7 +1,7 @@
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "./config.ts";
-import { WORKER_TOOLS } from "./config.ts";
+import { AGY_UNACKNOWLEDGED, agyUnacknowledged, toolOn, WORKER_TOOLS } from "./config.ts";
 import type { ModelInfo, ToolName } from "./contracts.ts";
 import { mandorHome } from "./home.ts";
 import { readJson } from "./store.ts";
@@ -58,7 +58,13 @@ export const ZCODE_BILLING = "zcode runs may be billed: mandor does not switch b
 export const withZcodeBilling = (cfg: Config, warnings: string[]): string[] =>
   cfg.tools.zcode.enabled && !warnings.includes(ZCODE_BILLING) ? [...warnings, ZCODE_BILLING] : warnings;
 
+// Said where agy is switched on and not acknowledged: it is not run, so it has no warnings of its own, and the user is told what to do.
+export const withAgyAcknowledgement = (cfg: Config, warnings: string[]): string[] =>
+  agyUnacknowledged(cfg) && !warnings.includes(AGY_UNACKNOWLEDGED) ? [...warnings, AGY_UNACKNOWLEDGED] : warnings;
+
+export const withNotices = (cfg: Config, warnings: string[]): string[] => withAgyAcknowledgement(cfg, withZcodeBilling(cfg, warnings));
+
 // What the enabled tools said when their models were last read, with no tool run: a tool that is off says nothing.
 export function cachedWarnings(cfg: Config, cache: ModelCache | null = readModelCache()): string[] {
-  return withZcodeBilling(cfg, cache === null ? [] : WORKER_TOOLS.filter((t) => cfg.tools[t].enabled).flatMap((t) => cache.warnings[t] ?? []));
+  return withNotices(cfg, cache === null ? [] : WORKER_TOOLS.filter((t) => toolOn(cfg, t)).flatMap((t) => cache.warnings[t] ?? []));
 }

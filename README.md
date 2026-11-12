@@ -121,7 +121,7 @@ This repository does not ship a marketplace listing yet, so `--plugin-dir` is ho
 
 ## First use
 
-1. **Set up the home.** `mandor init` creates `~/.mandor` and its `config.json`, reads the Codex model list, and prints warnings: that Codex has no switch to keep a worker off paid credits, an untested version of a worker tool, secret-like variables exported by your login shell, a sandbox that cannot be applied, a tier candidate the model list cannot run, a tool whose models cannot be read, that mandor does not switch billing off for ZCode or detect billed usage while ZCode is on, and Google's terms while Antigravity is on.
+1. **Set up the home.** `mandor init` creates `~/.mandor` and its `config.json`, reads the Codex model list, and prints warnings: that Codex has no switch to keep a worker off paid credits, an untested version of a worker tool, secret-like variables exported by your login shell, a sandbox that cannot be applied, a tier candidate the model list cannot run, a tool whose models cannot be read, that mandor does not switch billing off for ZCode or detect billed usage while ZCode is on, and Google's terms while Antigravity is on, and that Antigravity is switched on but not acknowledged.
 2. **Describe the repository (optional).** `mandor project setup`, run in the repository, records what workers need. Without it every list is empty and workers get no network, and ZCode and Antigravity jobs are refused, as their commands reach the network whatever the project says. Each run states the whole configuration:
    - `--clone <path>`: an ignored path copied from the main checkout into each worktree (build caches, downloaded SDKs). Denied and agent paths inside it are skipped. The copy is an APFS clone, so `~/.mandor` (or `MANDOR_HOME`) must be on the same volume as the repository.
    - `--setup "<command>"`: run once in each new worktree, with the worker's environment variables but without a sandbox, so it can write and reach the network like any command you run yourself. Give it only a command you trust. It must not write an agent path (`AGENTS.md`, `.codex/` and the like, ignored or not) that the repository does not hold, as every job is then refused over it.
@@ -202,7 +202,7 @@ The lead's commands print JSON; `status`, `show` and `logs` print plain text.
   "tools": {
     "codex": { "enabled": true, "maxParallel": 2, "bin": "codex", "ignoreUserConfig": true },
     "zcode": { "enabled": false, "maxParallel": 2, "bin": "zcode", "ignoreUserConfig": true },
-    "agy": { "enabled": false, "maxParallel": 2, "bin": "agy", "ignoreUserConfig": true }
+    "agy": { "enabled": false, "acknowledged": false, "maxParallel": 2, "bin": "agy", "ignoreUserConfig": true }
   },
   "tiers": {
     "light": ["codex:gpt-6-luna@medium"],
@@ -214,7 +214,7 @@ The lead's commands print JSON; `status`, `show` and `logs` print plain text.
 }
 ```
 
-Each tier lists its candidates as `tool:model@effort`, in order of preference; `mandor models` shows what each enabled tool offers. A candidate the model list cannot run (a model your plan lacks, or one that was renamed) is passed over, and `mandor init` and `mandor models` warn about it. `maxParallel` caps the workers a tool runs at once, `jobTimeoutMinutes` ends a job that runs too long, and `maxFixRounds` is how many fix rounds a worker gets before the task needs a takeover. A `bin` is an absolute path or a bare name, which is looked up on `PATH` (for ZCode it means the app's own executable): a relative path is refused, as it would resolve in the directory of whichever command starts the job. The Indonesian tier names `ringan`, `sedang` and `berat` are still read as `light`, `medium` and `heavy`, in `config.json` and for `--tier`.
+Each tier lists its candidates as `tool:model@effort`, in order of preference; `mandor models` shows what each enabled tool offers. A candidate the model list cannot run (a model your plan lacks, or one that was renamed) is passed over, and `mandor init` and `mandor models` warn about it. `tools.agy.acknowledged` must be `true` as well for Antigravity to take part: see [Antigravity workers](#antigravity-workers). `maxParallel` caps the workers a tool runs at once, `jobTimeoutMinutes` ends a job that runs too long, and `maxFixRounds` is how many fix rounds a worker gets before the task needs a takeover. A `bin` is an absolute path or a bare name, which is looked up on `PATH` (for ZCode it means the app's own executable): a relative path is refused, as it would resolve in the directory of whichever command starts the job. The Indonesian tier names `ringan`, `sedang` and `berat` are still read as `light`, `medium` and `heavy`, in `config.json` and for `--tier`.
 
 | Variable | Effect |
 | --- | --- |
@@ -238,7 +238,7 @@ A bare `tools.zcode.bin` means the app's own executable in `/Applications`; give
 
 ## Antigravity workers
 
-Antigravity is off until you switch it on, and Google's terms are the reason to think first: its FAQ calls driving the `agy` CLI from another tool unsupported on consumer plans, and an account can be blocked for it. `mandor init` and `mandor models` repeat this while it is on. If you accept that, set `tools.agy.enabled` to `true` in `~/.mandor/config.json`. There is no separate sign-in: the worker runs on the account your Antigravity app holds, and `mandor models` lists what that account offers. A model's id carries its effort, so an `agy` candidate is written without one, as in `agy:gemini-4-argon-high`.
+Antigravity is off until you switch it on, and Google's terms are the reason to think first: its FAQ calls driving the `agy` CLI from another tool unsupported on consumer plans, and an account can be blocked for it. `mandor init` and `mandor models` repeat this while it is on. If you accept that, set `tools.agy.enabled` and `tools.agy.acknowledged` to `true` in `~/.mandor/config.json`. With `enabled` alone Antigravity stays off, and `mandor init`, `mandor models`, the session summary and a refused `dispatch --use` say why, with the same notice. There is no separate sign-in: the worker runs on the account your Antigravity app holds, and `mandor models` lists what that account offers. A model's id carries its effort, so an `agy` candidate is written without one, as in `agy:gemini-4-argon-high`.
 
 What mandor does for an Antigravity worker:
 
