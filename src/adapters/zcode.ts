@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync, lstatSync, readFileSync, writeFileSync } from "node:fs";
+import { closeSync, constants, existsSync, fstatSync, linkSync, lstatSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { parseReport, REPORT_SCHEMA } from "../brief.ts";
@@ -24,29 +24,36 @@ export const zcodeHome = (): string => join(mandorHome(), "zcode", "home");
 // The key that the CLI encrypts a browser sign-in with is derived from the home directory unless this is set, so a sign-in made
 // under one home would not open under another. One secret for the state home, made on first use, lets the sign-in that `login`
 // makes be read under every project's home. A stored API key is plain and needs none of it.
-function credentialSecret(): string {
+export function credentialSecret(): string {
   const file = join(mandorHome(), "zcode", "credential-secret");
   const read = (): string | null => {
     try {
       const text = readFileSync(file, "utf8").trim();
       return /^[0-9a-f]{64}$/.test(text) ? text : null;
     } catch (e) {
-      if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
-      throw e;
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") return null;
+      throw new Error(`cannot read ${file}: ${code ?? "an error"}; tell the user, who repairs its permissions`);
     }
   };
   const held = read();
   if (held !== null) return held;
   ensureDir(dirname(file));
   const secret = randomBytes(32).toString("hex");
+  // The secret is written whole to a name of its own and linked into place, which fails where a file is already: a reader never
+  // finds the file empty, as it would between the create and the write of one made in place.
+  const staging = `${file}.${process.pid}.${randomBytes(4).toString("hex")}`;
   try {
-    writeFileSync(file, `${secret}\n`, { flag: "wx", mode: 0o600 });
+    writeFileSync(staging, `${secret}\n`, { flag: "wx", mode: 0o600 });
+    linkSync(staging, file);
     return secret;
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
     const raced = read();
     if (raced === null) throw new Error(`${file} does not hold a secret; tell the user, who removes it`);
     return raced;
+  } finally {
+    rmSync(staging, { force: true });
   }
 }
 
@@ -106,18 +113,35 @@ export function zcodeEnv(bin: string, base: Record<string, string>, home: string
 
 const SIGN_IN_FILES = [join(".zcode", "v2", "credentials.json"), join(".zcode", "v2", "provider_config.json")];
 
+// A sign-in file read without following a link, and only if it is a file with one name: a link or a second name of a file could lead
+// to any file that the user can read, which mandor, running as the user, would copy to where the worker reads.
+function readSignIn(file: string): Buffer | null {
+  let fd: number;
+  try {
+    // O_NONBLOCK: opening a pipe that a worker left at the name would otherwise wait for a writer that never comes.
+    fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") return null;
+    if (code === "ELOOP") throw new Error(`refusing ${file}: it is a link; tell the user, who removes it and runs mandor login zcode`);
+    throw new Error(`cannot read ${file}: ${code ?? "an error"}; tell the user, who repairs its permissions`);
+  }
+  try {
+    const st = fstatSync(fd);
+    if (!st.isFile() || st.nlink !== 1) throw new Error(`refusing ${file}: it is not a file with one name; tell the user, who removes it and runs mandor login zcode`);
+    return readFileSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+}
+
 // The sign-in of the home that holds it, copied into a project's home at every job start: what a worker did to its own copy, a
 // key or a plan put in its place, is undone by the next job, and no worker ever reaches the original. A file the sign-in lacks is
 // taken out of the project's home as well.
 function seedSignIn(home: string): void {
   refuseLinks();
   for (const rel of SIGN_IN_FILES) {
-    let data: Buffer | null = null;
-    try {
-      data = readFileSync(join(zcodeHome(), rel));
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
-    }
+    const data = readSignIn(join(zcodeHome(), rel));
     if (data !== null) writeConfined(home, rel, data);
     else if (lstatSync(join(home, rel), { throwIfNoEntry: false }) !== undefined) removeTree(join(home, rel));
   }
@@ -273,6 +297,8 @@ function failedStatus(code: unknown): JobStatus {
 // Until then every run of the tool fails the same way, so it counts as a spent quota: the tool is set aside, its tasks
 // can move on, and `ready` brings it back.
 const SIGN_IN_GONE = "the zcode worker's sign-in is no longer valid: run mandor login zcode, then mandor ready zcode";
+// A resume of a session that the home does not hold (a project's home is new, or was removed): the runner hands such a task over once.
+const SESSION_GONE = "the session was not found, so the run could not resume it";
 
 export function createZcodeAdapter(cfg: Config): Adapter {
   const bin = () => resolveBin("zcode", cfg);
@@ -357,7 +383,7 @@ export function createZcodeAdapter(cfg: Config): Adapter {
       if (failure !== undefined) {
         const message = get(failure, "payload.error.message");
         const code = get(failure, "payload.error.attribution.providerErrorCode");
-        if (message === "project_token_login_failed") return result("quota", SIGN_IN_GONE);
+        if (message === "project_token_login_failed" || (typeof message === "string" && message.includes("Credential decrypt failed"))) return result("quota", SIGN_IN_GONE);
         const text = typeof message === "string" && message !== "" ? message.replace(IDS, "<id>") : "turn failed";
         return result(failedStatus(code), code === undefined ? text : `provider code ${code}: ${text}`);
       }
@@ -373,8 +399,10 @@ export function createZcodeAdapter(cfg: Config): Adapter {
         return { ...result("done", ""), report, usageCumulative };
       }
       if (raw.exitCode === 0) return result("failed", "stream ended early");
-      // Never copy stderr into a detail: only this fixed phrase is recognized.
-      if (raw.stderr.includes("Select a model before sending a message")) return result("quota", SIGN_IN_GONE);
+      // Never copy stderr into a detail: only these fixed phrases are recognized. A browser sign-in made without the secret that every
+      // call now carries cannot be decrypted, and the CLI says so.
+      if (raw.stderr.includes("Select a model before sending a message") || raw.stderr.includes("Credential decrypt failed")) return result("quota", SIGN_IN_GONE);
+      if (raw.stderr.includes("Session not found: sess_")) return result("account-mismatch", SESSION_GONE);
       return result("failed", `exit ${exit}; see stderr.log`);
     },
 

@@ -3,7 +3,7 @@
 //   scenarios.json  -p runs; each run claims one entry by creating claims/<index>
 //   version         the --version number, 0.17.1 without it
 //   log.jsonl       appended: the argv and full environment of every invocation
-// A scenario: { model?, response?, kind?: "done" | "quota" | "failed" | "no-result", code?, writeFile?: [{path, content}],
+// A scenario: { model?, response?, kind?: "done" | "quota" | "failed" | "no-result" | "session-not-found", code?, writeFile?: [{path, content}],
 // commands?: [string], exitCode?, delayMs?, stderr? }. A done run answers with a report unless response says otherwise,
 // and names the model its provider file asks for unless model says otherwise.
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -39,6 +39,11 @@ async function run() {
   const s = claim();
   if (s === null) {
     process.stderr.write("fake: no scenario\n");
+    return 1;
+  }
+  // What the real CLI does with --resume of a session its home does not hold: no event, the error on stderr, exit 1.
+  if (s.kind === "session-not-found") {
+    process.stderr.write(`Error: Session not found: ${opt("--resume") ?? "(none)"} (traceId: fake)\n`);
     return 1;
   }
   // A test that asks which paths a run may read names them in $HOME/fake/readprobe: each outcome goes to probe.log.

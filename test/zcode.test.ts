@@ -2,14 +2,15 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { TestContext } from "node:test";
 import { test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
+import { Worker } from "node:worker_threads";
 import { getAdapter, loadModels, modelsReport, readModelCache, refreshModels } from "../src/adapters/index.ts";
 import { cachedWarnings } from "../src/modelcache.ts";
-import { createZcodeAdapter, lastJsonObject, REPORT_FORMAT, TESTED_ZCODE_VERSION, zcodeEnv, zcodeHome, zcodeUseApiKey, zcodeWarnings, ZCODE_BILLING } from "../src/adapters/zcode.ts";
+import { createZcodeAdapter, credentialSecret, lastJsonObject, REPORT_FORMAT, TESTED_ZCODE_VERSION, zcodeEnv, zcodeHome, zcodeUseApiKey, zcodeWarnings, ZCODE_BILLING } from "../src/adapters/zcode.ts";
 import { REPORT_SCHEMA } from "../src/brief.ts";
 import { DEFAULT_CONFIG, resolveBin } from "../src/config.ts";
 import type { Candidate, JobRecord, RawRun } from "../src/contracts.ts";
@@ -164,6 +165,18 @@ test("a sign-in that stopped working sets the tool aside as a spent quota does, 
   assert.equal(zcode().classify(raw(failed({ code: "model_request_failed", message: "socket hang up" }), { exitCode: 1 })).status, "failed");
 });
 
+test("a sign-in the CLI cannot decrypt, and a session that its home does not hold, are told from an ordinary failure", () => {
+  // A browser sign-in made before the secret, read with it: the CLI says so on stderr, or fails the turn with the words.
+  const onStderr = zcode().classify(raw("", { exitCode: 1, stderr: "Error: Credential decrypt failed: key mismatch or corrupted ciphertext\nSECRET_TOKEN_123\n" }));
+  assert.deepEqual([onStderr.status, onStderr.detail], ["quota", SIGN_IN]);
+  const inEvent = zcode().classify(raw(failed({ message: "Credential decrypt failed: key mismatch or corrupted ciphertext" }), { exitCode: 1 }));
+  assert.deepEqual([inEvent.status, inEvent.detail], ["quota", SIGN_IN]);
+  // A resume of a session that the project's home never held: no event, exit 1, and the id on stderr. The runner hands such a task over once.
+  const lost = zcode().classify(raw("", { exitCode: 1, stderr: `Error: Session not found: ${SESSION} (traceId: x)\nSECRET_TOKEN_123\n` }));
+  assert.deepEqual([lost.status, lost.detail, lost.sessionId], ["account-mismatch", "the session was not found, so the run could not resume it", null]);
+  assert.equal(zcode().classify(raw("", { exitCode: 1, stderr: "Error: Session busy\n" })).status, "failed");
+});
+
 test("a run that printed no event says only what fixed phrases on stderr mean, and never copies stderr", () => {
   const SECRET = "SECRET_TOKEN_123";
   const signedOut = zcode().classify(raw("", { exitCode: 1, stderr: `Error: Select a model before sending a message (traceId: x)\n${SECRET}\n` }));
@@ -315,6 +328,76 @@ test("each job start copies the sign-in into the project's home, and what a work
   rmSync(join(base, "credentials.json"));
   zcode().prepare(j, filesOf(dir), { network: true, addDirs: [] });
   assert.equal(existsSync(join(mine, "credentials.json")), false);
+});
+
+test("a job start refuses a sign-in file that is a link or another name of a file, and copies nothing through it", () => {
+  const { dir, j } = prepared();
+  zcodeUseApiKey("zai", "k-secret-3");
+  const base = join(zcodeHome(), ".zcode", "v2");
+  const mine = join(zcodeProjectHome(j.projectId), ".zcode", "v2");
+  zcode().prepare(j, filesOf(dir), { network: true, addDirs: [] });
+  const outside = join(temp("mandor-zout-"), "id_decoy");
+  writeFileSync(outside, "A-FILE-THAT-IS-NOT-A-SIGN-IN\n");
+  for (const how of ["link", "hard link", "link to nothing", "directory", "pipe"]) {
+    rmSync(join(base, "credentials.json"), { recursive: true, force: true });
+    if (how === "hard link") linkSync(outside, join(base, "credentials.json"));
+    else if (how === "directory") mkdirSync(join(base, "credentials.json"));
+    else if (how === "pipe") assert.equal(spawnSync("/usr/bin/mkfifo", [join(base, "credentials.json")]).status, 0);
+    else symlinkSync(how === "link" ? outside : join(outside, "nowhere"), join(base, "credentials.json"));
+    assert.throws(() => zcode().prepare(j, filesOf(dir), { network: true, addDirs: [] }), /^Error: refusing .*credentials\.json: .*; tell the user, who removes it and runs mandor login zcode$/, how);
+    assert.doesNotMatch(readFileSync(join(mine, "credentials.json"), "utf8"), /A-FILE-THAT-IS-NOT/, how);
+  }
+  // A plain file in its place is taken again.
+  rmSync(join(base, "credentials.json"), { recursive: true, force: true });
+  writeFileSync(join(base, "credentials.json"), '{"plain":true}');
+  zcode().prepare(j, filesOf(dir), { network: true, addDirs: [] });
+  assert.equal(readFileSync(join(mine, "credentials.json"), "utf8"), '{"plain":true}');
+});
+
+test("the secret of the sign-in is whole when it appears, however many first uses race for it, and a failure to read it names a step", async () => {
+  // Threads that reach each fresh state home together, so that one of them creates the secret while the others read it.
+  const THREADS = 6, HOMES = 300;
+  const homes = Array.from({ length: HOMES }, () => join(temp("mandor-zrace-"), "home"));
+  const worker = join(temp("mandor-zworker-"), "worker.mjs");
+  writeFileSync(worker, `
+    import { workerData, parentPort } from "node:worker_threads";
+    const { credentialSecret } = await import(workerData.module);
+    const ctl = new Int32Array(workerData.control);
+    const barrier = () => {
+      const generation = Atomics.load(ctl, 1);
+      if (Atomics.add(ctl, 0, 1) === workerData.threads - 1) { Atomics.store(ctl, 0, 0); Atomics.add(ctl, 1, 1); Atomics.notify(ctl, 1); }
+      else Atomics.wait(ctl, 1, generation);
+    };
+    const seen = [];
+    for (const home of workerData.homes) {
+      process.env.MANDOR_HOME = home;
+      barrier();
+      try { seen.push(credentialSecret()); } catch (e) { seen.push("ERR " + e.message); }
+    }
+    parentPort.postMessage(seen);
+  `);
+  const control = new SharedArrayBuffer(8);
+  const seen = await Promise.all(Array.from({ length: THREADS }, () => new Promise<string[]>((done, fail) => {
+    const w = new Worker(worker, { workerData: { module: new URL("../src/adapters/zcode.ts", import.meta.url).href, homes, control, threads: THREADS } });
+    w.on("message", done);
+    w.on("error", fail);
+  })));
+  const bad: string[] = [];
+  for (let i = 0; i < HOMES; i++) {
+    const secrets = seen.map((s) => s[i]);
+    if (secrets.some((x) => !/^[0-9a-f]{64}$/.test(x)) || new Set(secrets).size !== 1) bad.push(`${i}: ${[...new Set(secrets)].join(" | ")}`);
+    if (bad.length >= 3) break;
+  }
+  assert.deepEqual(bad, [], "every use got the same whole secret");
+  assert.deepEqual(readdirSync(join(homes[0], "zcode")), ["credential-secret"], "no half-made file is left behind");
+  assert.equal(statSync(join(homes[0], "zcode", "credential-secret")).mode & 0o777, 0o600);
+  const home = tempHome();
+  const file = join(home, "zcode", "credential-secret");
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, "x".repeat(64) + "\n", { mode: 0 });
+  assert.throws(() => zcodeEnv(FAKE, {}), /^Error: cannot read .*credential-secret: EACCES; tell the user, who repairs its permissions$/);
+  chmodSync(file, 0o600);
+  assert.throws(() => zcodeEnv(FAKE, {}), /^Error: .*credential-secret does not hold a secret; tell the user, who removes it$/, "a file that is not a secret is told as before");
 });
 
 test("under the profile a command reads and writes its own project's home, and neither another project's home nor the home that holds the sign-in", () => {
@@ -875,6 +958,26 @@ test("a task sent to zcode runs in its worktree under the worker's own HOME, and
   for (const line of jobs) assert.match(line, / zcode:GLM-5\.3-Flash@high done: modelRequestCount 1, inputTokens 1200, outputTokens 80$/);
   // The commands the report claims are checked against the ones the log shows.
   assert.deepEqual(reviewPack(p.repo, "hello").redFlags.filter((f) => f.kind === "unrun-claim"), []);
+});
+
+test("a fix whose session the project's home does not hold is handed over to a new session, once, with no command from the lead", async (t) => {
+  const p = project(t);
+  writeZcodeScenarios([
+    { writeFile: [{ path: "hello.txt", content: "hello\n" }] },
+    { kind: "session-not-found" },
+    { sessionId: "sess_00000000-0000-7000-8000-000000000b02", writeFile: [{ path: "hello.txt", content: "hello\nagain\n" }] },
+  ], p.id);
+  p.send("hello");
+  assert.ok(await until(() => loadState(p.id).tasks.hello.status === "needs-review"), showTask(p.id, "hello"));
+  const notes = join(scratchDir(p.id, "t"), "notes.md");
+  writeFileSync(notes, "Add a second line.\n");
+  verdictFix(p.repo, "hello", notes);
+  assert.ok(await until(() => loadState(p.id).tasks.hello.status === "needs-review" && loadState(p.id).tasks.hello.seq === 3), showTask(p.id, "hello"));
+  const now = loadState(p.id).tasks.hello;
+  assert.equal(now.sessionId, "sess_00000000-0000-7000-8000-000000000b02", "the handoff runs in a new session");
+  const runs = readZcodeLog(p.id);
+  assert.deepEqual(runs.map((r) => r.argv.includes("--resume")), [false, true, false], "the lost resume, then a start with the handoff");
+  assert.equal(readFileSync(join(now.worktree!, "hello.txt"), "utf8"), "hello\nagain\n");
 });
 
 test("a path that the project lists is closed to the reads of its ZCode jobs, and one it does not list is not", async (t) => {
