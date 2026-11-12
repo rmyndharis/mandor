@@ -1,9 +1,10 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { posix, resolve } from "node:path";
+import { isAbsolute, posix, resolve } from "node:path";
 import { parseCandidate } from "./config.ts";
 import { TIER_ORDER, tierName, type Tier, type ToolName } from "./contracts.ts";
-import { scratchDir } from "./home.ts";
+import { commonDirOf, realOf } from "./git.ts";
+import { mandorHome, scratchDir } from "./home.ts";
 import { checkClonePath, checkClonePaths, emptyProjectConfig, loadProjectConfig, saveProjectConfig, type ProjectConfig } from "./provision.ts";
 import { GRADLE_ADD_DIRS, NETWORK_KEY, WORKER_NETWORK } from "./spikes.ts";
 
@@ -16,6 +17,23 @@ function workerAddDir(d: string): string {
 }
 
 const absDir = (d: string): string => resolve(d.replace(/^~\//, `${homedir()}/`));
+
+// A path that the profile of a ZCode worker keeps its commands from reading, besides the credential directories it always
+// closes. It is stored as an absolute path, and must exist: a mistyped one would close nothing and tell no one. It may not hold or
+// lie inside the repository's git directory, which the git commands of every task worktree read and fail without, nor lie inside
+// the mandor home, which the profile closes already but for the worker's own worktree, home and job directory, opened last.
+function workerDenyRead(d: string, repo: string): string {
+  if (!isAbsolute(d) && !d.startsWith("~/")) throw new Error(`refusing --worker-deny-read ${d}: not an absolute path; use a path that starts with / or ~/`);
+  const abs = absDir(d);
+  if (abs === "/") throw new Error(`refusing --worker-deny-read ${d}: that is the root; choose a path below it`);
+  if (!existsSync(abs)) throw new Error(`refusing --worker-deny-read ${d}: no such file or directory; choose a path that exists`);
+  const gitDir = commonDirOf(repo);
+  const real = realOf(abs);
+  if (gitDir === real || gitDir.startsWith(`${real}/`) || real.startsWith(`${gitDir}/`)) throw new Error(`refusing --worker-deny-read ${d}: it holds or lies inside this repository's git directory, which the git commands of every task worktree read; choose a path outside it, or the files inside the checkout that must stay unseen`);
+  const state = realOf(mandorHome());
+  if (real === state || real.startsWith(`${state}/`)) throw new Error(`refusing --worker-deny-read ${d}: it lies inside the mandor home, which the profile closes already but for the worker's own worktree, home and job directory; choose a path outside it`);
+  return abs;
+}
 
 // Each run states the whole configuration, so it replaces project.json rather than merging into it, unless it is given
 // --update: it then starts from what is stored, its flags add to the lists and replace the single settings, and the
@@ -31,7 +49,7 @@ function asksUpdate(args: string[]): boolean {
   return false;
 }
 
-function projectSetup(id: string, args: string[]): ProjectConfig {
+function projectSetup(id: string, args: string[], repo: string): ProjectConfig {
   const update = asksUpdate(args);
   const c = update ? loadProjectConfig(id) : emptyProjectConfig();
   const byPath = new Map<string, string[]>(Object.entries(c.generators)); // keeps a path named __proto__ an ordinary key
@@ -73,7 +91,8 @@ function projectSetup(id: string, args: string[]): ProjectConfig {
     else if (flag === "--deny") c.deny.push(value);
     else if (flag === "--generator") added.push(value);
     else if (flag === "--worker-add-dir") c.workerAddDirs.push(workerAddDir(value));
-    else if (["--remove-clone", "--remove-shared", "--remove-deny", "--remove-generator", "--remove-worker-add-dir"].includes(flag)) {
+    else if (flag === "--worker-deny-read") c.workerDenyRead.push(workerDenyRead(value, repo));
+    else if (["--remove-clone", "--remove-shared", "--remove-deny", "--remove-generator", "--remove-worker-add-dir", "--remove-worker-deny-read"].includes(flag)) {
       if (!update) throw new UsageError(`${flag} needs --update`);
       removing.push({ flag, value });
     } else throw new UsageError(`unknown project setup flag: ${flag}`);
@@ -92,6 +111,7 @@ function projectSetup(id: string, args: string[]): ProjectConfig {
   c.shared = [...new Set(c.shared)];
   c.deny = [...new Set(c.deny)];
   c.workerAddDirs = [...new Set(c.workerAddDirs)];
+  c.workerDenyRead = [...new Set(c.workerDenyRead)];
   // Before the removals, as a removal comes after the additions: a generator added and removed in one run is not kept.
   for (const g of added) {
     const eq = g.indexOf("=");
@@ -104,6 +124,7 @@ function projectSetup(id: string, args: string[]): ProjectConfig {
     else if (flag === "--remove-shared") c.shared = take(flag, c.shared, value);
     else if (flag === "--remove-deny") c.deny = take(flag, c.deny, value);
     else if (flag === "--remove-worker-add-dir") c.workerAddDirs = take(flag, c.workerAddDirs, absDir(value));
+    else if (flag === "--remove-worker-deny-read") c.workerDenyRead = take(flag, c.workerDenyRead, absDir(value));
     else {
       const eq = value.indexOf("=");
       const key = eq > 0 ? plain(value.slice(0, eq)) : "";
@@ -239,11 +260,11 @@ You run:
                                 Coding Plan API key piped in
   project setup [--update] [--clone <path>]... [--setup <command>] [--shared <glob>]... [--deny <glob>]...
                 [--generator <clone path>=<glob>]... [--worker-network] [--worker-add-dir <dir>]...
-                [--name-is-a-word] [--shared-temp]
+                [--worker-deny-read <path>]... [--name-is-a-word] [--shared-temp]
                 with --update, which starts from the stored configuration instead of an empty one, also
                 [--remove-clone <path>]... [--remove-shared <glob>]... [--remove-deny <glob>]...
                 [--remove-generator <clone path>=<glob>]... [--remove-worker-add-dir <dir>]...
-                [--no-setup] [--no-worker-network] [--no-name-is-a-word] [--no-shared-temp]
+                [--remove-worker-deny-read <path>]... [--no-setup] [--no-worker-network] [--no-name-is-a-word] [--no-shared-temp]
   project show                  print the stored project configuration, which a project setup without --update replaces
   status [--json]               goals with their worktrees, tasks, jobs, exhausted tools (with the reason), unrecorded goal commits
   show <slug>                   a task's outcome, its jobs with the usage of each run, and its round files
@@ -434,7 +455,7 @@ export async function main(argv: string[]): Promise<number> {
       assertHomeOutsideRepos();
       const { recordRoot, resolveProject } = await import("./tasks.ts");
       const { root, id } = resolveProject(process.cwd());
-      const c = projectSetup(id, argv.slice(2));
+      const c = projectSetup(id, argv.slice(2), root);
       recordRoot(id, root);
       console.log(JSON.stringify(c, null, 2));
       return 0;

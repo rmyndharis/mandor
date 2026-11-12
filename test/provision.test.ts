@@ -541,7 +541,7 @@ test("project setup writes project.json", () => {
   assert.equal(r.status, 0, r.stderr);
   const want: ProjectConfig = {
     clone: ["build", "android/local.properties"], setup: "make stubs", shared: ["CHANGELOG.md", "docs/"], deny: ["**/*.p12"],
-    generators: { build: ["scripts/build.sh", "scripts/*.py"] }, workerNetwork: true, workerAddDirs: [], sharedTemp: false, nameIsWord: true,
+    generators: { build: ["scripts/build.sh", "scripts/*.py"] }, workerNetwork: true, workerAddDirs: [], workerDenyRead: [], sharedTemp: false, nameIsWord: true,
   };
   assert.deepEqual(JSON.parse(r.stdout), want);
   assert.deepEqual(loadProjectConfig(projectIdFor(repo)), want);
@@ -550,6 +550,65 @@ test("project setup writes project.json", () => {
   assert.match(cli(repo, "--clone", "certs/key.p12", "--deny", "**/*.p12").stderr, /refusing clone path certs\/key\.p12: /);
   assert.match(cli(repo, "--clone", "build", "--generator", "out=x.sh").stderr, /refusing --generator out=x\.sh: /);
   assert.deepEqual(loadProjectConfig(projectIdFor(repo)), want);
+});
+
+test("--worker-deny-read stores the absolute path of a path that exists, once, and --remove-worker-deny-read takes it away", () => {
+  const repo = tempRepo();
+  const dir = temp("mandor-deny-");
+  const file = join(dir, "key.txt");
+  writeFileSync(file, "x\n");
+  const stored = () => loadProjectConfig(projectIdFor(repo));
+  const r = cli(repo, "--worker-deny-read", `${dir}/`, "--worker-deny-read", file, "--worker-deny-read", dir);
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(JSON.parse(r.stdout).workerDenyRead, [dir, file]);
+  assert.deepEqual(stored().workerDenyRead, [dir, file]);
+  // --update adds to it and keeps the rest, and a setup without it states the whole configuration again.
+  const second = join(dir, "second.txt");
+  writeFileSync(second, "x\n");
+  assert.equal(cli(repo, "--update", "--worker-deny-read", second).status, 0);
+  assert.deepEqual(stored().workerDenyRead, [dir, file, second]);
+  assert.equal(cli(repo, "--update", "--remove-worker-deny-read", `${dir}/`).status, 0);
+  assert.deepEqual(stored().workerDenyRead, [file, second]);
+  assert.match(cli(repo, "--update", "--remove-worker-deny-read", dir).stderr, /refusing --remove-worker-deny-read .*: the configuration holds no such entry; mandor project show prints what it holds/);
+  assert.equal(cli(repo, "--shared", "x.txt").status, 0);
+  assert.deepEqual(stored().workerDenyRead, []);
+  // What cannot name a path to close is refused with what to do, and nothing is stored.
+  for (const [bad, why] of [["relative/path", /not an absolute path; use a path that starts with \/ or ~\//], [join(dir, "missing"), /no such file or directory; choose a path that exists/], ["/", /the root; choose a path below it/]] as const) {
+    const refused = cli(repo, "--worker-deny-read", bad);
+    assert.equal(refused.status, 1, bad);
+    assert.match(refused.stderr, new RegExp(`^mandor: refusing --worker-deny-read ${bad.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}: `));
+    assert.match(refused.stderr, why);
+  }
+  assert.deepEqual(stored().workerDenyRead, []);
+  // The repository's git directory is read by the git commands of every task worktree, which fail without it: a path that
+  // holds it is refused, the checkout and the directory around it included, and a file inside the checkout is not.
+  symlinkSync(repo, join(dir, "repolink"));
+  // The same goes for a path inside that directory, such as its config or its objects.
+  for (const held of [repo, dirname(repo), join(repo, ".git"), join(dir, "repolink"), join(repo, ".git", "config"), join(repo, ".git", "objects")]) {
+    const refused = cli(repo, "--worker-deny-read", held);
+    assert.equal(refused.status, 1, held);
+    assert.match(refused.stderr, /^mandor: refusing --worker-deny-read .*: it holds or lies inside this repository's git directory, which the git commands of every task worktree read; choose a path outside it, or the files inside the checkout that must stay unseen\n$/);
+  }
+  // The profile closes the state home already but for the worker's own worktree, home and job directory, and opens those last:
+  // an entry in the state home closes nothing more, or nothing at all.
+  const key = join(home, "zcode", "home", "key.json");
+  mkdirSync(dirname(key), { recursive: true });
+  writeFileSync(key, "x\n");
+  for (const inside of [key, join(home, "zcode"), home]) {
+    const refused = cli(repo, "--worker-deny-read", inside);
+    assert.equal(refused.status, 1, inside);
+    assert.match(refused.stderr, /^mandor: refusing --worker-deny-read .*: it lies inside the mandor home, which the profile closes already but for the worker's own worktree, home and job directory; choose a path outside it\n$/);
+  }
+  assert.equal(cli(repo, "--shared", "x.txt").status, 0);
+  writeFileSync(join(repo, ".env"), "SECRET=1\n");
+  assert.equal(cli(repo, "--worker-deny-read", join(repo, ".env")).status, 0);
+  assert.deepEqual(stored().workerDenyRead, [join(repo, ".env")]);
+  assert.equal(cli(repo, "--shared", "x.txt").status, 0);
+  // A configuration stored before the setting existed loads with none.
+  const old: Partial<ProjectConfig> = { ...emptyProjectConfig(), shared: ["old.txt"] };
+  delete old.workerDenyRead;
+  writeFileSync(projectFile(repo), JSON.stringify(old));
+  assert.deepEqual([stored().shared, stored().workerDenyRead], [["old.txt"], []]);
 });
 
 test("--worker-add-dir accepts the ~ and the absolute form of a GRADLE_ADD_DIRS entry and stores the absolute path", (t) => {

@@ -201,7 +201,7 @@ export function stopOverdueCommit(worktree: string, limitMs = COMMIT_LIMIT_MS): 
   return true;
 }
 
-function commonDirOf(repo: string): string {
+export function commonDirOf(repo: string): string {
   // Exactly one absolute path: git before 2.31 echoes the unknown --path-format flag instead.
   const common = lines(ok(["rev-parse", "--path-format=absolute", "--git-common-dir"], repo));
   if (common.length !== 1 || !isAbsolute(common[0])) throw new Error(`refusing ${repo}: git did not give one absolute common dir; mandor needs git 2.31 or later, so update git`);

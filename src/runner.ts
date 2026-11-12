@@ -287,7 +287,7 @@ async function work(job: JobRecord, adapter: Adapter): Promise<JobResult> {
   // One answer for the runner and the adapters: only a project that says so keeps the shared ones.
   const sharedTemp = project.sharedTemp === true;
   const ownTmp = !sharedTemp && job.candidate.tool !== "agy" ? jobTmpDir(job.id) : null;
-  const run = adapter.prepare({ ...job, worktree: root }, files, { network: project.workerNetwork, addDirs: project.workerAddDirs, sharedTemp });
+  const run = adapter.prepare({ ...job, worktree: root }, files, { network: project.workerNetwork, addDirs: project.workerAddDirs, sharedTemp, denyRead: project.workerDenyRead });
   // Of no use after the run: a resume gets a new one, and what a worker left in it would stay for the days that the job
   // directory does. Made after prepare, which can refuse, and removed on every way out of here.
   const dropTmp = (): void => {

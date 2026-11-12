@@ -204,7 +204,7 @@ test("refine fails a resume that opened another session as an account mismatch, 
 
 // inJobDir: the job's files are in the job's own directory, where the profile can read the temporary directory that lies in it.
 // linked: the state home is reached through a link, as a MANDOR_HOME spelled with /tmp or /var is.
-function prepared(over: Partial<JobRecord> = {}, project: { network: boolean; addDirs: string[]; sharedTemp?: boolean } = { network: true, addDirs: [] }, inJobDir = false, linked = false) {
+function prepared(over: Partial<JobRecord> = {}, project: { network: boolean; addDirs: string[]; sharedTemp?: boolean; denyRead?: string[] } = { network: true, addDirs: [] }, inJobDir = false, linked = false) {
   let home = tempHome();
   if (linked) {
     const link = join(temp("mandor-zlink-"), "home");
@@ -466,6 +466,54 @@ test("the profile denies the contents of a credential directory that is a link, 
   assert.deepEqual([read.status === 0, read.stdout], [false, ""], "read through the link, as the sandbox sees the real path");
 });
 
+test("the profile denies the contents of the paths that the project lists besides its credential directories, and leaves the rest readable", (t) => {
+  const user = realpathSync(temp("mandor-zuser-"));
+  const documents = join(user, "Documents");
+  const elsewhere = join(user, "elsewhere");
+  mkdirSync(documents, { recursive: true });
+  mkdirSync(elsewhere);
+  writeFileSync(join(documents, "private.txt"), "mine\n");
+  writeFileSync(join(user, "token"), "mine\n");
+  writeFileSync(join(elsewhere, "inside.txt"), "mine\n");
+  symlinkSync(elsewhere, join(user, "link"));
+  writeFileSync(join(user, "notes.txt"), "open\n");
+  const saved = process.env.HOME;
+  process.env.HOME = user;
+  t.after(() => {
+    process.env.HOME = saved;
+  });
+  const reads = (run: { args: string[]; env: Record<string, string> }, ...paths: string[]) => paths.map((p) => under(run, "/bin/cat", p).status === 0);
+  const all = [join(documents, "private.txt"), join(user, "token"), join(elsewhere, "inside.txt"), join(user, "notes.txt")];
+  assert.deepEqual(reads(prepared().run, ...all), [true, true, true, true], "nothing is closed that the project does not list");
+  const closed = prepared({}, { network: true, addDirs: [], denyRead: [documents, join(user, "token"), join(user, "link")] });
+  assert.deepEqual(reads(closed.run, ...all), [false, false, false, true], "a directory, a file and a link are closed, by the path each leads to, and an unlisted file is not");
+  writeFileSync(join(closed.worktree, "plain.txt"), "fine\n");
+  assert.deepEqual(reads(closed.run, join(closed.worktree, "plain.txt")), [true], "the profile applies, so each refusal above is the profile's");
+  assert.equal(under(closed.run, "/bin/ls", documents).status === 0, false, "a listing is refused too");
+  assert.equal(under(closed.run, "/usr/bin/stat", documents).status, 0, "its metadata stays readable");
+  // What the project lists never hides the worktree, the worker's home or the job's directory, which the profile opens last.
+  const parent = prepared({}, { network: true, addDirs: [], denyRead: [realpathSync(tmpdir())] });
+  writeFileSync(join(parent.worktree, "plain.txt"), "fine\n");
+  assert.deepEqual(reads(parent.run, join(parent.worktree, "plain.txt"), join(zcodeHome(), "zcode-builtin.json")), [true, true]);
+});
+
+test("an entry of the project that holds a cache directory of --worker-add-dir leaves that directory readable, and closes the rest of its own", (t) => {
+  const user = realpathSync(temp("mandor-zuser-"));
+  const android = join(user, ".android");
+  const cache = join(android, "build-cache");
+  mkdirSync(cache, { recursive: true });
+  writeFileSync(join(cache, "entry"), "cache\n");
+  writeFileSync(join(android, "adbkey"), "key\n");
+  const saved = process.env.HOME;
+  process.env.HOME = user;
+  t.after(() => {
+    process.env.HOME = saved;
+  });
+  const { run } = prepared({}, { network: true, addDirs: [cache], denyRead: [android] });
+  assert.equal(under(run, "/bin/cat", join(android, "adbkey")).status === 0, false, "the rest of the entry is closed");
+  assert.deepEqual([under(run, "/bin/cat", join(cache, "entry")).status, under(run, "/bin/cat", join(cache, "entry")).stdout], [0, "cache\n"], "the cache directory that the project opens to its worker is read");
+});
+
 test("under the profile a command cannot remove, move or replace the worker's home, and still writes inside it", () => {
   const { run, worktree } = prepared();
   const home = zcodeHome();
@@ -593,14 +641,14 @@ function reap(home: string): void {
 }
 
 // A project whose workers may use the network, with a goal, and zcode signed in and switched on.
-function project(t: TestContext, opts: { network?: boolean; signedIn?: boolean } = {}) {
+function project(t: TestContext, opts: { network?: boolean; signedIn?: boolean; denyRead?: string[] } = {}) {
   const home = tempHome();
   writeZcodeConfig(home);
   if (opts.signedIn ?? true) zcodeSignIn();
   t.after(() => reap(home));
   const repo = tempRepo();
   const id = projectIdFor(repo);
-  saveProjectConfig(id, { ...emptyProjectConfig(), workerNetwork: opts.network ?? true });
+  saveProjectConfig(id, { ...emptyProjectConfig(), workerNetwork: opts.network ?? true, workerDenyRead: opts.denyRead ?? [] });
   const briefFile = join(scratchDir(id, "t"), "brief.md");
   writeFileSync(briefFile, "Create the file.\n");
   goalStart(repo, GOAL, null);
@@ -708,6 +756,19 @@ test("a task sent to zcode runs in its worktree under the worker's own HOME, and
   for (const line of jobs) assert.match(line, / zcode:GLM-5\.3-Flash@high done: modelRequestCount 1, inputTokens 1200, outputTokens 80$/);
   // The commands the report claims are checked against the ones the log shows.
   assert.deepEqual(reviewPack(p.repo, "hello").redFlags.filter((f) => f.kind === "unrun-claim"), []);
+});
+
+test("a path that the project lists is closed to the reads of its ZCode jobs, and one it does not list is not", async (t) => {
+  const listed = join(temp("mandor-zdeny-"), "listed.txt");
+  const other = join(temp("mandor-zdeny-"), "other.txt");
+  for (const p of [listed, other]) writeFileSync(p, "mine\n");
+  const p = project(t, { denyRead: [listed] });
+  mkdirSync(join(zcodeHome(), "fake"), { recursive: true });
+  writeFileSync(join(zcodeHome(), "fake", "readprobe"), `${listed}\n${other}\n`);
+  writeZcodeScenarios([{ writeFile: [{ path: "hello.txt", content: "hello\n" }] }]);
+  p.send("hello");
+  assert.ok(await until(() => loadState(p.id).tasks.hello.status === "needs-review"), showTask(p.id, "hello"));
+  assert.equal(readFileSync(join(zcodeHome(), "fake", "probe.log"), "utf8"), `${listed}: denied\n${other}: read\n`);
 });
 
 test("a zcode run on another model than the job's stalls the task, and a quota stop marks the tool exhausted", async (t) => {

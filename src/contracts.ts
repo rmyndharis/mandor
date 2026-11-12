@@ -64,7 +64,7 @@ export interface Adapter {
   tool: ToolName;
   detectModels(): ModelInfo[];
   version(): string;
-  prepare(job: JobRecord, files: { schemaPath: string; lastMessagePath: string }, project: { network: boolean; addDirs: string[]; sharedTemp?: boolean }): PreparedRun;
+  prepare(job: JobRecord, files: { schemaPath: string; lastMessagePath: string }, project: { network: boolean; addDirs: string[]; sharedTemp?: boolean; denyRead?: string[] }): PreparedRun;
   classify(raw: RawRun): JobResult;
   refine(result: JobResult, job: JobRecord): JobResult;  // structured quota fallback, resetsAt, credit signal
 }

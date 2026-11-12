@@ -41,6 +41,16 @@ async function run() {
     process.stderr.write("fake: no scenario\n");
     return 1;
   }
+  // A test that asks which paths a run may read names them in $HOME/fake/readprobe: each outcome goes to probe.log.
+  for (const path of (read("readprobe") ?? "").split("\n").filter(Boolean)) {
+    let outcome = "read";
+    try {
+      readFileSync(path);
+    } catch {
+      outcome = "denied";
+    }
+    appendFileSync(join(control, "probe.log"), `${path}: ${outcome}\n`);
+  }
   // The real CLI starts a session on the default of its personal provider file.
   const asked = JSON.parse(readFileSync(process.env.ZCODE_PERSONAL_PROVIDER_CONFIG_FILE, "utf8")).config.defaultModelSelection;
   const sessionId = opt("--resume") ?? s.sessionId ?? SESSION;

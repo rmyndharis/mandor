@@ -187,7 +187,7 @@ export const fitsReport = (v: Record<string, unknown>): boolean => parseReport(J
 // directories and the state directory hold cannot be read, but for the worktree, the worker's home and the job's own
 // directory, which holds the provider file; a path's metadata stays readable, as the CLI's database open resolves every
 // directory above its file. The paths are parameters.
-function sandbox(worktree: string, jobFiles: string, tmp: string | null, addDirs: string[]): string[] {
+function sandbox(worktree: string, jobFiles: string, tmp: string | null, addDirs: string[], denyRead: string[]): string[] {
   const user = homedir();
   // Seatbelt matches the real path of what a process opens, so a path that goes through a link (a state home spelled with
   // /tmp or /var, a cache directory that is a link) would match nothing. The state home is resolved, and what lies under
@@ -200,7 +200,9 @@ function sandbox(worktree: string, jobFiles: string, tmp: string | null, addDirs
     return rel === "" || rel.startsWith("..") || isAbsolute(rel) ? realOf(p) : join(real, rel);
   };
   // A credential path that is a link to a device (a .npmrc that leads to /dev/null) holds none, and /dev/null is read by commands.
-  const closed = PRIVATE_HOME_PATHS.map((p) => realOf(join(user, p))).filter((p) => !p.startsWith("/dev/"));
+  // The project's own paths close with the credential directories, and the worktree, the worker's home, the job's directory and
+  // the cache directories that the project opens are opened after them, so no entry can hide those.
+  const closed = [...new Set([...PRIVATE_HOME_PATHS.map((p) => join(user, p)), ...denyRead].map(realOf))].filter((p) => !p.startsWith("/dev/"));
   const params: [string, string][] = [["WT", worktree], ["WH", under(zcodeHome())], ["JOB", under(jobFiles)], ["STATE", real],
     ...(tmp === null ? [] : [["JT", under(tmp)] as [string, string]]),
     ...addDirs.map((d, i): [string, string] => [`ADD${i}`, realOf(d)]), ...closed.map((p, i): [string, string] => [`PRIV${i}`, p])];
@@ -211,7 +213,7 @@ function sandbox(worktree: string, jobFiles: string, tmp: string | null, addDirs
   // the CLI that signs in, to wherever the link goes.
   const profile = `(version 1)(allow default)(deny file-write*)(allow file-write-data (literal "/dev/null") (literal "/dev/tty") (literal "/dev/dtracehelper"))`
     + `(allow file-write* ${sub(writable)}${shared})(deny file-write-unlink (literal (param "WH")))`
-    + `(deny file-read-data ${sub(["STATE", ...closed.map((_, i) => `PRIV${i}`)])})(allow file-read-data ${sub(["WT", "WH", "JOB"])})`;
+    + `(deny file-read-data ${sub(["STATE", ...closed.map((_, i) => `PRIV${i}`)])})(allow file-read-data ${sub(["WT", "WH", "JOB", ...addDirs.map((_, i) => `ADD${i}`)])})`;
   return [...params.flatMap(([k, v]) => ["-D", `${k}=${v}`]), "-p", profile];
 }
 
@@ -279,7 +281,7 @@ export function createZcodeAdapter(cfg: Config): Adapter {
       writeJsonAtomic(personal, providerFile({ providerId: signedInProvider(), modelId: model, options: { reasoningLevel: effort } }));
       // No working directory option: the runner starts the worker in the worktree's root, which it has verified.
       const own = project.sharedTemp === true ? null : jobTmpDir(job.id);
-      const args = [...sandbox(job.worktree, dirname(personal), own, project.addDirs), ...zcodeStart(job.bin), ...(resume === null ? [] : ["--resume", resume]),
+      const args = [...sandbox(job.worktree, dirname(personal), own, project.addDirs, project.denyRead ?? []), ...zcodeStart(job.bin), ...(resume === null ? [] : ["--resume", resume]),
         "-p", prompt, "--output-format", "stream-json", "--mode", "yolo", "--disallowed-tools", DISALLOWED_TOOLS];
       return { command: "/usr/bin/sandbox-exec", args, env: { ...zcodeEnv(job.bin, job.env), ...(own === null ? {} : ownTempEnv(own)), ZCODE_PERSONAL_PROVIDER_CONFIG_FILE: personal } };
     },
