@@ -119,7 +119,7 @@ export function taskDiff(cwd: string, slug: string): string {
     const task = state.tasks[slug];
     if (task === undefined) throw new Error(`no task ${slug}; mandor status lists the tasks`);
     if (task.worktree === null || task.base === null) throw new Error(`task ${slug} has no worktree or base; the task's records are damaged: tell the user`);
-    // Staging takes the worktree's index lock, which a worker in the middle of a git command would meet.
+    // A worker that is still changing the files would hand back a tree that is gone by the time it is read.
     refuseOpenJob(state, slug);
     recoverRebaseLocked(root, id, task);
     return maskControls(gitStep(`stage task ${slug} for its diff`, () => stagedDiff(root, task.worktree!, task.base!)).text);

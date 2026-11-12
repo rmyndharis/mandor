@@ -314,7 +314,7 @@ function dropBranch(root: string, branch: string, tip: string): void {
 // A reservation holds a slug or goal branch from before its worktree exists until its ledger event, and records the
 // commit the branch is made at. Neither the branch nor the worktree path may exist when it is written, so whatever a
 // stale one finds there is what its dead owner left. It goes last, so a cleanup cut short can be done again.
-function reserve(root: string, all: string, file: string, worktree: string, branch: string, tip: string, busy: string): void {
+function reserve(root: string, all: string, file: string, worktree: string, branch: string, tip: string, busy: string, forGoal: boolean): void {
   const held = readOwnerFile(file);
   if (held !== undefined) {
     if (held !== null && processAlive(held.pid, held.start)) throw new Error(`${busy} by pid ${held.pid}; retry shortly`);
@@ -326,7 +326,11 @@ function reserve(root: string, all: string, file: string, worktree: string, bran
     if (typeof held?.tip === "string") dropBranch(root, branch, held.tip);
     rmSync(file);
   }
-  if (branchExists(root, branch)) throw new Error(`branch ${branch} already exists; choose another name, and start it from that branch with --from if the work is on it`);
+  // A goal has --from to start from a branch that holds the work, and a dispatch has none.
+  if (branchExists(root, branch)) {
+    if (forGoal) throw new Error(`branch ${branch} already exists; choose another name, and start it from that branch with --from if the work is on it`);
+    throw new Error(`branch ${branch} already exists; choose another slug, or tell the user, who deletes that branch if it is a leftover of an earlier task`);
+  }
   if (lstatSync(worktree, { throwIfNoEntry: false }) !== undefined) throw new Error(`${worktree} already exists; remove that directory, or choose another name`);
   ensureDir(dirname(file));
   writeFileSync(file, JSON.stringify({ pid: process.pid, start: processStart(process.pid), tip }), { flag: "wx", mode: 0o600 });
@@ -356,7 +360,7 @@ export function goalStart(cwd: string, branch: string, from: string | null): { g
     // By path too: two branch names can share a worktree path, and a reservation that outlived its goal must not take it.
     const taken = Object.values(loadState(id).goals).find((g) => g.branch === branch || g.integrationWorktree === path);
     if (taken !== undefined) throw new Error(`goal ${taken.branch} already exists; dispatch tasks to it, or choose another branch`);
-    reserve(root, all, reserved, path, branch, base, `goal ${branch} is being started`);
+    reserve(root, all, reserved, path, branch, base, `goal ${branch} is being started`, true);
   });
   let started = false;
   try {
@@ -481,7 +485,7 @@ export function dispatch(cwd: string, o: { goal: string; slug: string; tier: Tie
     // It could never start, and nothing would ever say so.
     if (o.after !== null && state.tasks[o.after].status === "cancelled") throw new Error(`--after ${o.after}: that task is cancelled; choose another task for --after, or leave it out`);
     const tip = revParse(root, `refs/heads/${o.goal}`);
-    reserve(root, all, reserved, worktree, branch, tip, `task ${slug} is being dispatched`);
+    reserve(root, all, reserved, worktree, branch, tip, `task ${slug} is being dispatched`, false);
     return tip;
   })!;
 

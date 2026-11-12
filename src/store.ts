@@ -73,7 +73,6 @@ export function fileRef(path: string): FileRef {
 
 const DASHES = new RegExp(`[${String.fromCharCode(0x2013, 0x2014, 0x2015)}]`, "g");
 
-// Cuts at 300 UTF-16 units and drops a high surrogate the cut would leave alone.
 // The control bytes of a worker's file, written as \xNN: printed raw they could rewrite lines already shown on a screen. A
 // tab and a line end stay, and so does the carriage return of a CRLF. The marks that make a reader's text run the other way
 // (U+202A to U+202E, U+2066 to U+2069) are written as \uNNNN, as they would show a name or a line as it is not.
@@ -83,6 +82,7 @@ export const maskControls = (text: string): string =>
     return code > 0xff ? `\\u${code.toString(16).padStart(4, "0")}` : `\\x${code.toString(16).padStart(2, "0")}`;
   });
 
+// Cuts at 300 UTF-16 units and drops a high surrogate the cut would leave alone.
 export function clampDetail(s: string): string {
   return s.replace(/\s+/g, " ").replace(DASHES, "-").trim().slice(0, 300).replace(/[\uD800-\uDBFF]$/, "").trimEnd();
 }

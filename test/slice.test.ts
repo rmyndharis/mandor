@@ -1697,7 +1697,8 @@ test("dispatch refuses a branch or a worktree path it did not create, and leaves
   fillSlots();
   goalStart(s.repo, GOAL, null);
   must(s.repo, "branch", "wip/mine", GOAL);
-  assert.throws(() => send(s, "mine", { use: null }), /branch wip\/mine already exists/);
+  // A dispatch has no --from: the way out for a leftover branch is another slug, or the user's deleting the branch.
+  assert.throws(() => send(s, "mine", { use: null }), /^Error: branch wip\/mine already exists; choose another slug, or tell the user, who deletes that branch if it is a leftover of an earlier task$/);
   assert.equal(must(s.repo, "rev-parse", "wip/mine"), must(s.repo, "rev-parse", GOAL));
   assert.equal(existsSync(reservationOf(s, "mine")), false);
 
@@ -2034,7 +2035,7 @@ test("goal start refuses a branch or a worktree path it did not create, and leav
   const s = setup(t);
   const head = must(s.repo, "rev-parse", "HEAD");
   // The branch the main checkout is on, and one merged into it, which a non-forced delete would take.
-  assert.throws(() => goalStart(s.repo, "main", null), /branch main already exists/);
+  assert.throws(() => goalStart(s.repo, "main", null), /^Error: branch main already exists; choose another name, and start it from that branch with --from if the work is on it$/);
   assert.deepEqual([must(s.repo, "symbolic-ref", "HEAD"), must(s.repo, "rev-parse", "main")], ["refs/heads/main", head]);
   must(s.repo, "branch", "merged", head);
   assert.throws(() => goalStart(s.repo, "merged", null), /branch merged already exists/);
