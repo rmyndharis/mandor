@@ -1,12 +1,12 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, copyFileSync, existsSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { parseReport, REPORT_SCHEMA } from "../brief.ts";
 import type { Config } from "../config.ts";
 import { resolveBin } from "../config.ts";
-import { realOf } from "../git.ts";
+import { realOf, writeConfined } from "../git.ts";
 import type { Adapter, JobResult, JobStatus, ModelInfo, RawRun, WorkerReport } from "../contracts.ts";
 import { jobTmpDir, mandorHome, ownTempEnv, workerEnv } from "../home.ts";
 import { clampDetail, ensureDir, readJson, writeJsonAtomic } from "../store.ts";
@@ -46,23 +46,39 @@ function layout(bin: string): { start: string[]; catalog: string; electron: bool
   return { start: [bin, join(app[1], "Resources", "glm", "zcode.cjs")], catalog: join(app[1], "Resources", "config", "provider", "zcode-builtin.json"), electron: true };
 }
 
-// What the CLI needs wherever it runs: the worker's HOME and the catalog, copied into that HOME because the CLI writes
-// lock files next to it.
-export function zcodeEnv(bin: string, base: Record<string, string>): Record<string, string> {
+// The worker writes its home, so it can replace the home, or a directory of the sign-in in it, with a link, and what mandor
+// writes or starts there would then work where the link leads. The profile keeps the home from being removed, the writes
+// below are confined to it, and this names what is wrong before any of them, where the CLI that signs in or lists its
+// version runs unconfined.
+function refuseLinks(): void {
   const home = zcodeHome();
-  ensureDir(home);
+  for (const path of [home, join(home, ".zcode"), join(home, ".zcode", "v2")]) {
+    let st;
+    try {
+      st = lstatSync(path, { throwIfNoEntry: false });
+    } catch (e) {
+      throw new Error(`cannot read ${path}: ${(e as NodeJS.ErrnoException).code}; tell the user, who repairs the permissions of the worker's home`);
+    }
+    if (st !== undefined && !st.isDirectory()) throw new Error(`refusing ${path}: not a directory in the worker's home; tell the user, who removes it`);
+  }
+}
+
+// What the CLI needs wherever it runs: the worker's HOME and the catalog, copied into that HOME because the CLI writes
+// lock files next to it. The copy is readable by the user only, as the app's catalog is readable by everyone.
+export function zcodeEnv(bin: string, base: Record<string, string>): Record<string, string> {
+  refuseLinks();
+  const home = zcodeHome();
+  ensureDir(dirname(home));
   const { catalog, electron } = layout(bin);
-  const copy = join(home, "zcode-builtin.json");
-  copyFileSync(catalog, copy);
-  // A copy takes the mode of its source each time, and the app's catalog is readable by everyone.
-  chmodSync(copy, 0o600);
-  return { ...base, HOME: home, ZCODE_BUILTIN_PROVIDER_CONFIG_FILE: copy, ...(electron ? { ELECTRON_RUN_AS_NODE: "1" } : {}) };
+  writeConfined(home, "zcode-builtin.json", readFileSync(catalog));
+  return { ...base, HOME: home, ZCODE_BUILTIN_PROVIDER_CONFIG_FILE: join(home, "zcode-builtin.json"), ...(electron ? { ELECTRON_RUN_AS_NODE: "1" } : {}) };
 }
 
 export const zcodeStart = (bin: string): string[] => layout(bin).start;
 
 // The plan the worker signed in with, which the sign-in writes as its default provider.
 function signedInProvider(): string {
+  refuseLinks();
   let provider: unknown;
   try {
     provider = get(readJson(join(zcodeHome(), ".zcode", "v2", "provider_config.json")), "config.defaultModelSelection.providerId");
@@ -95,13 +111,15 @@ const providerFile = (defaultModelSelection: object) => ({
 export function zcodeUseApiKey(family: string, key: string): { tool: "zcode"; home: string; provider: string } {
   const provider = `account:${family}-individual-coding-plan`;
   const identity = `key-${createHash("sha256").update(key).digest("hex").slice(0, 24)}`;
-  const dir = join(zcodeHome(), ".zcode", "v2");
-  writeJsonAtomic(join(dir, "credentials.json"), {
+  refuseLinks();
+  ensureDir(dirname(zcodeHome()));
+  const json = (v: unknown) => `${JSON.stringify(v, null, 2)}\n`;
+  writeConfined(zcodeHome(), join(".zcode", "v2", "credentials.json"), json({
     [`account-provider:${provider}:identity`]: identity,
     [`account-provider:${provider}:auth-source`]: "manual",
     [`account-provider:coding-plan:${provider}:account:${identity}:api-key`]: key,
-  });
-  writeJsonAtomic(join(dir, "provider_config.json"), providerFile({ providerId: provider, modelId: "GLM-5.3" }));
+  }));
+  writeConfined(zcodeHome(), join(".zcode", "v2", "provider_config.json"), json(providerFile({ providerId: provider, modelId: "GLM-5.3" })));
   return { tool: "zcode", home: zcodeHome(), provider };
 }
 
@@ -175,15 +193,19 @@ function sandbox(worktree: string, jobFiles: string, tmp: string | null, addDirs
     const rel = relative(home, p);
     return rel === "" || rel.startsWith("..") || isAbsolute(rel) ? realOf(p) : join(real, rel);
   };
+  // A credential path that is a link to a device (a .npmrc that leads to /dev/null) holds none, and /dev/null is read by commands.
+  const closed = PRIVATE_HOME_PATHS.map((p) => realOf(join(user, p))).filter((p) => !p.startsWith("/dev/"));
   const params: [string, string][] = [["WT", worktree], ["WH", under(zcodeHome())], ["JOB", under(jobFiles)], ["STATE", real],
     ...(tmp === null ? [] : [["JT", under(tmp)] as [string, string]]),
-    ...addDirs.map((d, i): [string, string] => [`ADD${i}`, realOf(d)]), ...PRIVATE_HOME_PATHS.map((p, i): [string, string] => [`PRIV${i}`, join(user, p)])];
+    ...addDirs.map((d, i): [string, string] => [`ADD${i}`, realOf(d)]), ...closed.map((p, i): [string, string] => [`PRIV${i}`, p])];
   const sub = (names: string[]) => names.map((n) => `(subpath (param "${n}"))`).join(" ");
   const writable = ["WT", "WH", ...(tmp === null ? [] : ["JT"]), ...addDirs.map((_, i) => `ADD${i}`)];
   const shared = tmp === null ? ' (subpath "/private/tmp") (subpath "/private/var/folders")' : "";
+  // The home is writable and is not the worker's to remove or move: a link put in its place would lead mandor's own writes, and
+  // the CLI that signs in, to wherever the link goes.
   const profile = `(version 1)(allow default)(deny file-write*)(allow file-write-data (literal "/dev/null") (literal "/dev/tty") (literal "/dev/dtracehelper"))`
-    + `(allow file-write* ${sub(writable)}${shared})`
-    + `(deny file-read-data ${sub(["STATE", ...PRIVATE_HOME_PATHS.map((_, i) => `PRIV${i}`)])})(allow file-read-data ${sub(["WT", "WH", "JOB"])})`;
+    + `(allow file-write* ${sub(writable)}${shared})(deny file-write-unlink (literal (param "WH")))`
+    + `(deny file-read-data ${sub(["STATE", ...closed.map((_, i) => `PRIV${i}`)])})(allow file-read-data ${sub(["WT", "WH", "JOB"])})`;
   return [...params.flatMap(([k, v]) => ["-D", `${k}=${v}`]), "-p", profile];
 }
 

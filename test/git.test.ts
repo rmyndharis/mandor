@@ -8,7 +8,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import {
   addWorktree, apply3way, applyCheck, applyToIndex, assertCommitIdentity, assertHeadIdentity, branchExists, changedPaths, commitStaged, configuredDrivers, configuredPromisors, deleteBranchAt,
   diffSinceBaseBytes, diffStat, dropLastCommit, git, ignoredChanged, indexLockPath, indexTree, isClean, isPlaceholderEmail, migrateObjects, projectRoot,
-  pathsAwayFromBase, removeOwnedWorktree, removeTree, resetHardHead, resetTo, revParse, stagedDiff, worktreeAddRunning, worktreeRoot,
+  pathsAwayFromBase, removeOwnedWorktree, removeTree, resetHardHead, resetTo, revParse, stagedDiff, worktreeAddRunning, worktreeRoot, writeConfined, firstLine,
 } from "../src/git.ts";
 import { diffSinceBase, temp as tempDir, tempHome, tempRepo } from "./helpers.ts";
 
@@ -612,6 +612,191 @@ test("removeTree removes a tree a worker made read-only and immutable, and a lin
   symlinkSync(home, join(dir, "viahome"));
   removeTree(join(dir, "viahome", "inner"));
   assert.equal(existsSync(join(home, "inner")), false);
+});
+
+test("writeConfined writes a file as a private one, makes the directories on the way, keeps bytes as they are, and replaces a file or a link at its name", () => {
+  const dir = owned();
+  const root = join(dir, "root");
+  mkdirSync(root);
+  writeConfined(root, "a/b/c.json", "one\n");
+  assert.equal(read(join(root, "a", "b", "c.json")), "one\n");
+  assert.equal(lstatSync(join(root, "a", "b", "c.json")).mode & 0o777, 0o600);
+  const bytes = Buffer.from(Array.from({ length: 256 }, (_, i) => i));
+  writeConfined(root, "bin", bytes);
+  assert.deepEqual(fs.readFileSync(join(root, "bin")), bytes);
+  writeConfined(root, "bin", "second\n");
+  assert.equal(read(join(root, "bin")), "second\n");
+  // A link at the name is replaced, and what it led to stays.
+  const precious = join(dir, "precious");
+  writeFileSync(precious, "keep\n");
+  symlinkSync(precious, join(root, "linked"));
+  writeConfined(root, "linked", "new\n");
+  assert.equal(read(precious), "keep\n");
+  assert.equal(lstatSync(join(root, "linked")).isFile(), true);
+  assert.equal(read(join(root, "linked")), "new\n");
+  assert.deepEqual(readdirSync(root).sort(), ["a", "bin", "linked"], "no temporary file is left");
+});
+
+test("writeConfined writes nothing outside its root, whether a link is in the way to the file, is the root itself, or is a directory at the file's name", () => {
+  const dir = owned();
+  const victim = join(dir, "victim");
+  mkdirSync(victim);
+  const root = join(dir, "root");
+  mkdirSync(join(root, "d"), { recursive: true });
+  symlinkSync(victim, join(root, "way"));
+  assert.throws(() => writeConfined(root, "way/key.json", "secret\n"), /^Error: could not write .*way\/key\.json: EPERM: operation not permitted, .*; tell the user, who removes what is in the way$/);
+  const linkedRoot = join(dir, "linked-root");
+  symlinkSync(victim, linkedRoot);
+  assert.throws(() => writeConfined(linkedRoot, "key.json", "secret\n"), /^Error: could not write .*linked-root\/key\.json: .*not permitted/);
+  assert.deepEqual(readdirSync(victim), [], "nothing was written where a link leads");
+  // A directory at the name is refused, and a link at the name that leads to one outside is replaced by the file: what it led to stays.
+  assert.throws(() => writeConfined(root, "d", "x\n"), /^Error: could not write .*\/d: .*\/d is a directory/);
+  assert.deepEqual(readdirSync(join(root, "d")), []);
+  symlinkSync(victim, join(root, "dirlink"));
+  writeConfined(root, "dirlink", "x\n");
+  assert.equal(lstatSync(join(root, "dirlink")).isFile(), true);
+  assert.deepEqual(readdirSync(victim), []);
+  assert.deepEqual(readdirSync(root).sort(), ["d", "dirlink", "way"], "no temporary file is left");
+});
+
+test("writeConfined holds against a worker that swaps a directory for a link while it writes", () => {
+  const dir = owned();
+  const victim = join(dir, "victim");
+  mkdirSync(victim);
+  const root = join(dir, "root");
+  mkdirSync(root);
+  // A second process flips the directory the file goes in between a directory and a link out, as fast as it can.
+  const flip = `const fs=require("fs");const [root,victim]=process.argv.slice(1);const d=root+"/sub";
+    for(;;){try{fs.rmSync(d,{recursive:true,force:true});fs.mkdirSync(d)}catch{}try{fs.rmSync(d,{recursive:true,force:true});fs.symlinkSync(victim,d)}catch{}}`;
+  const racer = spawn(process.execPath, ["-e", flip, root, victim], { stdio: "ignore" });
+  let written = 0;
+  let refused = 0;
+  try {
+    for (let i = 0; i < 150; i++) {
+      try {
+        writeConfined(root, "sub/key.json", "secret\n");
+        written++;
+      } catch {
+        refused++;
+      }
+    }
+  } finally {
+    racer.kill("SIGKILL");
+  }
+  assert.deepEqual(readdirSync(victim), [], `nothing reached where the link leads (${written} written, ${refused} refused)`);
+  assert.ok(written + refused === 150 && refused > 0, "the link was there for some of the writes");
+});
+
+test("writeConfined names its temporary file at random, so links planted at the names to come get nothing written through them", () => {
+  const dir = owned();
+  const outside = join(dir, "outside");
+  mkdirSync(outside);
+  const victim = join(outside, "victim.txt");
+  writeFileSync(victim, "keep\n");
+  const root = join(dir, "root");
+  mkdirSync(root);
+  const target = join(root, "key.json");
+  // The processes that start next take process ids just above that of a command started now, and a hard link to a file
+  // outside the root is written through by the confined process whatever the sandbox says of the path it was opened by.
+  const last = spawnSync("/usr/bin/true").pid!;
+  for (let i = 1; i <= 4000; i++) fs.linkSync(victim, `${target}.${((last + i - 100) % 99900) + 100}.tmp`); // ids wrap at 99999 and start again at 100
+  writeConfined(root, "key.json", "secret\n");
+  assert.equal(read(victim), "keep\n", "what the planted links lead to is untouched");
+  assert.equal(lstatSync(target).nlink, 1, "the name is a file of its own, not a link to the victim");
+  assert.equal(lstatSync(target).mode & 0o777, 0o600);
+  assert.equal(read(target), "secret\n");
+});
+
+test("writeConfined replaces a link at its name that leads to a directory, and never moves the file into it", () => {
+  const dir = owned();
+  const root = join(dir, "root");
+  mkdirSync(join(root, "stash"), { recursive: true });
+  symlinkSync(join(root, "stash"), join(root, "name"));
+  writeConfined(root, "name", "x\n");
+  assert.equal(lstatSync(join(root, "name")).isFile(), true);
+  assert.equal(read(join(root, "name")), "x\n");
+  assert.deepEqual(readdirSync(join(root, "stash")), []);
+});
+
+test("writeConfined keeps every byte of data larger than a pipe buffer", () => {
+  const root = join(owned(), "root");
+  const bytes = Buffer.from(Array.from({ length: 400_000 }, (_, i) => i % 251));
+  mkdirSync(root);
+  writeConfined(root, "big", bytes);
+  assert.deepEqual(fs.readFileSync(join(root, "big")), bytes);
+});
+
+test("writeConfined and removeTree say what stopped them when sandbox-exec cannot apply a profile, whatever the size of the data", () => {
+  const root = join(owned(), "root");
+  mkdirSync(root);
+  const script = join(temp(), "nested.ts");
+  writeFileSync(script, `import { removeTree, writeConfined } from ${JSON.stringify(join(import.meta.dirname, "..", "src", "git.ts"))};
+    const say = (f: () => void): string => { try { f(); return "no error"; } catch (e) { return (e as Error).message; } };
+    const root = process.argv[2];
+    console.log(JSON.stringify({ small: say(() => writeConfined(root, "f", "x\\n")), large: say(() => writeConfined(root, "f", Buffer.alloc(400_000, 1))), remove: say(() => removeTree(root)) }));
+  `);
+  // Another sandbox around the call, as Claude Code's Bash sandbox is: a profile with a deny rule cannot be applied inside it.
+  const r = spawnSync("/usr/bin/sandbox-exec", ["-p", "(version 1)(allow default)", process.execPath, script, root], { encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
+  const said = JSON.parse(r.stdout) as Record<string, string>;
+  for (const key of ["small", "large", "remove"]) {
+    assert.match(said[key], /sandbox_apply/, key);
+    assert.match(said[key], /; run mandor outside Claude Code's Bash sandbox, which sandbox-exec cannot nest in$/, key);
+    assert.doesNotMatch(said[key], /EPIPE|removes what is in the way|if it stays/, key);
+  }
+  assert.equal(existsSync(join(root, "f")), false);
+});
+
+test("firstLine reads what a confined command printed, and what ended it when it printed nothing or never ran", () => {
+  assert.equal(firstLine({ stderr: "a\nb\n", status: 1, signal: null }), "a");
+  assert.equal(firstLine({ error: new Error("spawnSync x EPIPE"), stderr: "sandbox-exec: sandbox_apply: Operation not permitted\n", status: 71, signal: null }), "sandbox-exec: sandbox_apply: Operation not permitted");
+  assert.equal(firstLine({ error: new Error("spawnSync x EAGAIN"), stderr: undefined as never, status: null, signal: null }), "spawnSync x EAGAIN", "a command that could not start has no stderr at all");
+  assert.equal(firstLine({ stderr: "", status: 3, signal: null }), "exit 3");
+  assert.equal(firstLine({ stderr: "", status: null, signal: "SIGKILL" }), "exit SIGKILL");
+  assert.equal(firstLine({ stderr: "x\u001b[31my\n", status: 1, signal: null }), "x?[31my");
+});
+
+test("a removal that fails on a file named after sandbox_apply keeps the step for a file in the way", () => {
+  const tree = join(owned(), "tree");
+  mkdirSync(tree);
+  const stuck = join(tree, "sandbox_apply");
+  writeFileSync(stuck, "a\n");
+  spawnSync("/bin/chmod", ["+a", "everyone deny delete", stuck]);
+  try {
+    assert.throws(() => removeTree(tree), /^Error: could not remove .*tree: rm: .*sandbox_apply: .*; if it stays, tell the user, who removes it$/);
+  } finally {
+    spawnSync("/bin/chmod", ["-N", stuck]);
+  }
+  removeTree(tree);
+});
+
+test("writeConfined runs in an environment of its own, so the lead's NODE_OPTIONS change neither what it says nor what it writes", () => {
+  const dir = owned();
+  const victim = join(dir, "victim");
+  mkdirSync(victim);
+  const root = join(dir, "root");
+  mkdirSync(root);
+  symlinkSync(victim, join(root, "way"));
+  const noise = join(temp(), "noise.cjs");
+  writeFileSync(noise, 'process.stderr.write("NOISE OF A REQUIRE HOOK\\n");\n');
+  withEnv({ NODE_OPTIONS: `--require ${noise}` }, () => {
+    assert.throws(() => writeConfined(root, "way/f", "x\n"), (e: Error) => /EPERM: operation not permitted/.test(e.message) && !/NOISE/.test(e.message), "a failure says its own cause");
+    writeConfined(root, "ok", "x\n");
+  });
+  assert.equal(read(join(root, "ok")), "x\n");
+  if (process.allowedNodeEnvironmentFlags.has("--experimental-default-type")) {
+    withEnv({ NODE_OPTIONS: "--experimental-default-type=module" }, () => writeConfined(root, "esm", "y\n"));
+    assert.equal(read(join(root, "esm")), "y\n", "whatever default module type is asked for");
+  }
+  assert.deepEqual(readdirSync(victim), []);
+});
+
+test("writeConfined into a directory that cannot be written says to repair its permissions, not to look for what is in the way", (t) => {
+  const root = join(owned(), "root");
+  mkdirSync(root);
+  chmodSync(root, 0o500);
+  t.after(() => chmodSync(root, 0o700));
+  assert.throws(() => writeConfined(root, "f", "x\n"), /^Error: could not write .*\/f: EACCES: permission denied, .*; tell the user, who repairs the permissions of that directory$/);
 });
 
 test("removeOwnedWorktree refuses a path outside the root and a non-wip branch", () => {

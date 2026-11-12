@@ -64,6 +64,9 @@ All notable changes to mandor are recorded here. The format follows [Keep a Chan
 - The staged tree of a review and an accept reads every file whatever `core.ignoreStat`, `core.trustCtime` and `core.checkStat` say of stat data, which let an edit that kept a file's size and times pass unseen.
 - The review pack names the ignored paths whose files changed since the task's first job began, such as `build/` or `node_modules/`, which the staged tree leaves out and the lead's proof commands may still run.
 - Before a fix, an answer, a drop or a reassign is recorded, and before each job, the root of the task worktree is checked for agent paths that the base commit does not hold as they are, ignored ones included. Nothing starts while one is there: the command is refused with the entries named and nothing recorded, and a job that a process wrote one for after the check fails the same way, which `reassign` runs again once they are removed or restored. Codex starts the tool servers that a `.codex/config.toml` names outside its sandbox, and a round of another tool can write one.
+- mandor's writes into the ZCode worker's home, the catalog copy and a stored key, are confined to that directory by the kernel and written under a random name that is renamed over the file's own, so a link or a file that a worker put in its home leads nowhere. The worker's commands cannot remove or move the home, and `login zcode`, a dispatch and the model list refuse while the home or a sign-in directory in it is not a directory.
+- An atomic write takes a temporary name that nothing can guess, and leaves none behind when it fails.
+- The ZCode profile denies a credential directory that is a link by the path it leads to, and leaves a path that leads to a device such as `/dev/null` readable.
 
 ## [0.2.0] - 2026-11-11
 

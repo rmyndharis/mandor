@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { appendFileSync, linkSync, mkdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { FileRef } from "./contracts.ts";
@@ -11,9 +11,18 @@ export function ensureDir(p: string): void {
 // Readers see the old file or the new one, never a partial write.
 export function writeFileAtomic(p: string, data: string | Uint8Array): void {
   ensureDir(dirname(p));
-  const tmp = `${p}.${process.pid}.tmp`;
-  writeFileSync(tmp, data, { mode: 0o600 });
-  renameSync(tmp, p);
+  // A name nobody else can guess, made only if nothing is there: in a directory that a worker can write, a link planted at
+  // a name that is the process id alone would be written through, to wherever it leads.
+  const tmp = `${p}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
+  try {
+    writeFileSync(tmp, data, { mode: 0o600, flag: "wx" });
+    renameSync(tmp, p);
+  } catch (e) {
+    try {
+      unlinkSync(tmp);
+    } catch {}
+    throw e;
+  }
 }
 
 export function writeJsonAtomic(p: string, v: unknown): void {

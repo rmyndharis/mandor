@@ -233,7 +233,7 @@ export function removeTree(raw: string): void {
   // The parent resolved, as the sandbox matches the real path: a home reached through a link (/tmp, /var) is denied otherwise.
   // The last entry stays as it is, so a link at the path itself is removed and never followed.
   const path = join(realOf(dirname(raw)), basename(raw));
-  const profile = '(version 1)(allow default)(deny file-write*)(allow file-write-data (literal "/dev/null"))(allow file-write* (subpath (param "ROOT")))';
+  const profile = CONFINED_TO_ROOT;
   // A directory without write permission (a Go module cache has them), or a file with the user immutable or append-only
   // flag, which a worker can make of its own files, stops the removal, so they are cleared first, inside the same
   // confinement. A failure to clear one is no answer: rm says. An ACL that denies the removal is left, and rm names the file.
@@ -241,9 +241,63 @@ export function removeTree(raw: string): void {
     'chflags -R nouchg,nouappnd -- "$1" 2>/dev/null; chmod -R u+rwX -- "$1" 2>/dev/null; exec rm -rf -- "$1"', "sh", path],
     { stdio: ["ignore", "ignore", "pipe"], encoding: "utf8" });
   if (r.status === 0) return;
-  // One line, control characters masked: the names in it are the worker's, and rm passes a tab, DEL and C1 codes through.
-  const why = r.error?.message ?? (r.stderr.split("\n")[0].replace(/[\x00-\x1f\x7f-\x9f]/g, "?") || `exit ${r.status ?? r.signal}`);
+  const why = firstLine(r);
+  if (SANDBOX_APPLY.test(why)) throw new Error(`could not remove ${path}: ${why}; run mandor outside Claude Code's Bash sandbox, which sandbox-exec cannot nest in`);
   throw new Error(`could not remove ${path}: ${why}; if it stays, tell the user, who removes it`);
+}
+
+// What a confined write may touch: the root and /dev/null, nothing else. ROOT is the real path, as seatbelt matches that one.
+const CONFINED_TO_ROOT = '(version 1)(allow default)(deny file-write*)(allow file-write-data (literal "/dev/null"))(allow file-write* (subpath (param "ROOT")))';
+
+// What sandbox-exec prints when it cannot apply a profile, as inside another sandbox: the start of the line, as a file of a worker's
+// that is named so would otherwise be taken for it.
+const SANDBOX_APPLY = /^sandbox-exec: sandbox_apply/;
+
+// One line of what a confined command printed, control characters masked: the names in it are the worker's, and rm passes a
+// tab, DEL and C1 codes through. A command that printed nothing says why it ended, and one that never ran has no stderr at all.
+export const firstLine = (r: { error?: Error; stderr?: string | null; status: number | null; signal: NodeJS.Signals | null }): string =>
+  (r.stderr ?? "").split("\n")[0].replace(/[\x00-\x1f\x7f-\x9f]/g, "?") || r.error?.message || `exit ${r.status ?? r.signal}`;
+
+// The writer that runs confined. It reads its data first, so that a failure after that never leaves the parent writing into a
+// closed pipe. It refuses a directory at the name, writes beside the name under a random name that nothing exists at, and
+// renames over the name: that replaces a link or a file there, and never moves the file into a directory as mv would.
+const CONFINED_WRITER = [
+  'const fs = require("node:fs");',
+  "const target = process.argv[1];",
+  "const data = fs.readFileSync(0);",
+  'const tmp = `${target}.${require("node:crypto").randomBytes(8).toString("hex")}.tmp`;',
+  "try {",
+  "  if (fs.lstatSync(target, { throwIfNoEntry: false })?.isDirectory()) {",
+  "    process.stderr.write(`${target} is a directory\\n`);",
+  "    process.exit(1);",
+  "  }",
+  '  fs.mkdirSync(require("node:path").dirname(target), { recursive: true, mode: 0o700 });',
+  '  fs.writeFileSync(tmp, data, { flag: "wx", mode: 0o600 });',
+  "  fs.renameSync(tmp, target);",
+  "} catch (e) {",
+  "  try { fs.unlinkSync(tmp); } catch {}",
+  '  process.stderr.write(`${String(e.message).split("\\n")[0]}\\n`);',
+  "  process.exit(1);",
+  "}",
+].join("\n");
+
+// Writes one file under a directory that a worker can also write, with the kernel confining the write to the real path of that
+// directory, as removeTree does: a link that the worker puts at the root or on the way to the file leads outside it, and the
+// write is denied there, whenever the link was put, even in the instant after a check. The file is made under a random name
+// and renamed over its name (CONFINED_WRITER), so what a worker planted at any name, a hard link included, is never written
+// through. The directories on the way are made, but for the root's own parent, which must exist.
+export function writeConfined(root: string, rel: string, data: string | Uint8Array): void {
+  const path = join(realOf(dirname(root)), basename(root));
+  const target = join(path, rel);
+  // An environment of its own: the writer needs none, and the lead's NODE_OPTIONS (a hook that prints, a default module type) would
+  // change what it says, or whether it runs.
+  const r = spawnSync("/usr/bin/sandbox-exec", ["-D", `ROOT=${path}`, "-p", CONFINED_TO_ROOT, process.execPath, "-e", CONFINED_WRITER, target],
+    { input: data, stdio: ["pipe", "ignore", "pipe"], encoding: "utf8", timeout: 30_000, killSignal: "SIGKILL", env: { PATH: "/usr/bin:/bin" } });
+  if (r.status === 0) return;
+  const why = firstLine(r);
+  if (SANDBOX_APPLY.test(why)) throw new Error(`could not write ${target}: ${why}; run mandor outside Claude Code's Bash sandbox, which sandbox-exec cannot nest in`);
+  if (/\bEACCES\b/.test(why)) throw new Error(`could not write ${target}: ${why}; tell the user, who repairs the permissions of that directory`);
+  throw new Error(`could not write ${target}: ${why}; tell the user, who removes what is in the way`);
 }
 
 // Forced removal is only for mandor's own worktrees and wip/ branches. It goes by what exists, so it also clears

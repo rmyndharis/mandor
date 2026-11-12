@@ -2,13 +2,13 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { TestContext } from "node:test";
 import { test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { getAdapter, loadModels, modelsReport, readModelCache, refreshModels } from "../src/adapters/index.ts";
-import { createZcodeAdapter, lastJsonObject, REPORT_FORMAT, TESTED_ZCODE_VERSION, zcodeEnv, zcodeHome } from "../src/adapters/zcode.ts";
+import { createZcodeAdapter, lastJsonObject, REPORT_FORMAT, TESTED_ZCODE_VERSION, zcodeEnv, zcodeHome, zcodeUseApiKey } from "../src/adapters/zcode.ts";
 import { REPORT_SCHEMA } from "../src/brief.ts";
 import { DEFAULT_CONFIG, resolveBin } from "../src/config.ts";
 import type { Candidate, JobRecord, RawRun } from "../src/contracts.ts";
@@ -263,6 +263,10 @@ test("prepare runs the CLI inside sandbox-exec, with the worker's own HOME, the 
   assert.equal(run.env.ELECTRON_RUN_AS_NODE, undefined, "only an app bundle is started as Node");
 });
 
+// A command run under the profile of a prepared run, as the CLI's own would be.
+const under = (run: { args: string[]; env: Record<string, string> }, ...command: string[]) =>
+  spawnSync("/usr/bin/sandbox-exec", [...run.args.slice(0, run.args.indexOf(FAKE)), ...command], { env: run.env, encoding: "utf8" });
+
 // What a command writes under the profile of a prepared run, each place by its own file, which is then removed.
 function writes(run: { args: string[]; env: Record<string, string> }, places: Record<string, string>): string[] {
   const at = run.args.indexOf(FAKE);
@@ -365,6 +369,135 @@ test("the catalog copy in the worker home is readable by the user only, and stay
     zcodeEnv(join(dir, "bin"), {});
     assert.equal(statSync(join(zcodeHome(), "zcode-builtin.json")).mode & 0o777, 0o600, `after the ${call} copy`);
   }
+});
+
+test("the catalog copy holds every byte of a catalog larger than a pipe buffer", () => {
+  tempHome();
+  const dir = temp("mandor-zcatalog-");
+  mkdirSync(join(dir, "provider"));
+  const bytes = Buffer.from(Array.from({ length: 300_000 }, (_, i) => i % 251));
+  writeFileSync(join(dir, "provider", "zcode-builtin.json"), bytes);
+  zcodeEnv(join(dir, "bin"), {});
+  assert.deepEqual(readFileSync(join(zcodeHome(), "zcode-builtin.json")), bytes);
+});
+
+test("a home that the worker made unreadable is refused with a step, not with a raw error", (t) => {
+  tempHome();
+  mkdirSync(join(zcodeHome(), ".zcode"), { recursive: true });
+  chmodSync(zcodeHome(), 0);
+  t.after(() => chmodSync(zcodeHome(), 0o700));
+  assert.throws(() => zcodeEnv(join(temp("mandor-zcatalog-"), "bin"), {}), /^Error: cannot read .*home\/\.zcode: EACCES; tell the user, who repairs the permissions of the worker's home$/);
+});
+
+test("the catalog copy replaces a link that the worker put at its name, and writes nothing through it", () => {
+  tempHome();
+  const dir = temp("mandor-zcatalog-");
+  mkdirSync(join(dir, "provider"));
+  writeFileSync(join(dir, "provider", "zcode-builtin.json"), "{}");
+  const victim = join(temp("mandor-zvictim-"), "precious");
+  writeFileSync(victim, "keep\n");
+  mkdirSync(zcodeHome(), { recursive: true });
+  symlinkSync(victim, join(zcodeHome(), "zcode-builtin.json"));
+  zcodeEnv(join(dir, "bin"), {});
+  assert.equal(readFileSync(victim, "utf8"), "keep\n", "what the link led to is untouched");
+  assert.equal(lstatSync(join(zcodeHome(), "zcode-builtin.json")).isFile(), true, "the name holds the catalog itself");
+  assert.equal(readFileSync(join(zcodeHome(), "zcode-builtin.json"), "utf8"), "{}");
+});
+
+test("a key is not stored through a link that the worker put in the directories it names, and a directory at the name of a file is refused with its path", () => {
+  tempHome();
+  const victim = temp("mandor-zvictim-");
+  mkdirSync(zcodeHome(), { recursive: true });
+  symlinkSync(victim, join(zcodeHome(), ".zcode"));
+  assert.throws(() => zcodeUseApiKey("zai", "k-secret"), /^Error: refusing .*\.zcode: not a directory in the worker's home; tell the user, who removes it$/);
+  assert.deepEqual(readdirSync(victim), [], "nothing was written where the link leads");
+  rmSync(join(zcodeHome(), ".zcode"));
+  mkdirSync(join(zcodeHome(), ".zcode", "elsewhere"), { recursive: true });
+  symlinkSync(join(zcodeHome(), ".zcode", "elsewhere"), join(zcodeHome(), ".zcode", "v2"));
+  assert.throws(() => zcodeUseApiKey("zai", "k-secret"), /^Error: refusing .*v2: not a directory in the worker's home/);
+  assert.deepEqual(readdirSync(join(zcodeHome(), ".zcode", "elsewhere")), []);
+  // A file where a directory is to be made is refused the same way.
+  rmSync(join(zcodeHome(), ".zcode", "v2"));
+  writeFileSync(join(zcodeHome(), ".zcode", "v2"), "x\n");
+  assert.throws(() => zcodeUseApiKey("zai", "k-secret"), /^Error: refusing .*v2: not a directory in the worker's home/);
+  rmSync(join(zcodeHome(), ".zcode", "v2"));
+  // A directory at the name of the key file is refused with that name, and no temporary file stays.
+  mkdirSync(join(zcodeHome(), ".zcode", "v2", "credentials.json"), { recursive: true });
+  assert.throws(() => zcodeUseApiKey("zai", "k-secret"), /^Error: could not write .*credentials\.json: .*credentials\.json is a directory; tell the user/);
+  assert.deepEqual(readdirSync(join(zcodeHome(), ".zcode", "v2")), ["credentials.json"]);
+  rmSync(join(zcodeHome(), ".zcode", "v2", "credentials.json"), { recursive: true });
+  assert.equal(zcodeUseApiKey("zai", "k-secret").provider, "account:zai-individual-coding-plan");
+  for (const file of ["credentials.json", "provider_config.json"]) assert.equal(statSync(join(zcodeHome(), ".zcode", "v2", file)).mode & 0o777, 0o600, file);
+  assert.equal(JSON.parse(readFileSync(join(zcodeHome(), ".zcode", "v2", "credentials.json"), "utf8"))["account-provider:account:zai-individual-coding-plan:identity"].startsWith("key-"), true);
+});
+
+test("a home that the worker replaced with a link is refused before anything is written or started, by the environment, the key and the model list", () => {
+  tempHome();
+  const victim = temp("mandor-zvictim-");
+  mkdirSync(dirname(zcodeHome()), { recursive: true });
+  symlinkSync(victim, zcodeHome());
+  const dir = temp("mandor-zcatalog-");
+  mkdirSync(join(dir, "provider"));
+  writeFileSync(join(dir, "provider", "zcode-builtin.json"), "{}");
+  const refused = /^Error: refusing .*home: not a directory in the worker's home; tell the user, who removes it$/;
+  assert.throws(() => zcodeEnv(join(dir, "bin"), {}), refused);
+  assert.throws(() => zcodeUseApiKey("zai", "k-secret"), refused);
+  assert.throws(() => zcode().detectModels(), refused);
+  assert.deepEqual(readdirSync(victim), [], "nothing was written where the link leads");
+});
+
+test("the profile denies the contents of a credential directory that is a link, by the path it leads to", (t) => {
+  const user = realpathSync(temp("mandor-zuser-"));
+  const elsewhere = join(user, "dotfiles", "ssh");
+  mkdirSync(elsewhere, { recursive: true });
+  writeFileSync(join(elsewhere, "id"), "secret\n");
+  symlinkSync(elsewhere, join(user, ".ssh"));
+  const saved = process.env.HOME;
+  process.env.HOME = user;
+  t.after(() => {
+    process.env.HOME = saved;
+  });
+  const { run, worktree } = prepared();
+  writeFileSync(join(worktree, "plain.txt"), "fine\n");
+  const plain = under(run, "/bin/cat", join(worktree, "plain.txt"));
+  assert.deepEqual([plain.status, plain.stdout], [0, "fine\n"], "the profile applies, so the denial below is the profile's");
+  const read = under(run, "/bin/cat", join(user, ".ssh", "id"));
+  assert.deepEqual([read.status === 0, read.stdout], [false, ""], "read through the link, as the sandbox sees the real path");
+});
+
+test("under the profile a command cannot remove, move or replace the worker's home, and still writes inside it", () => {
+  const { run, worktree } = prepared();
+  const home = zcodeHome();
+  // The same profile lets it write inside the home, so a refusal below is the profile's and not a failed start.
+  assert.equal(under(run, "/bin/sh", "-c", `echo x > "${home}/mark"`).status, 0);
+  assert.equal(readFileSync(join(home, "mark"), "utf8"), "x\n");
+  assert.notEqual(under(run, "/bin/sh", "-c", `mv "${home}" "${worktree}/moved"`).status, 0, "moved");
+  assert.equal(readFileSync(join(home, "mark"), "utf8"), "x\n", "what it held is where it was");
+  // What the home holds is the worker's to remove, and the home itself stays, which is what keeps a link from taking its place.
+  assert.notEqual(under(run, "/bin/sh", "-c", `rm -rf "${home}"`).status, 0, "removed");
+  assert.equal(lstatSync(home).isDirectory(), true);
+  assert.deepEqual(readdirSync(home), []);
+  // Empty, it goes no easier: not removed, and not renamed over by a directory of the worker's.
+  assert.notEqual(under(run, "/bin/rmdir", home).status, 0);
+  mkdirSync(join(worktree, "other"));
+  assert.notEqual(under(run, "/usr/bin/python3", "-c", "import os,sys; os.rename(sys.argv[1], sys.argv[2])", join(worktree, "other"), home).status, 0);
+  assert.equal(lstatSync(home).isDirectory(), true);
+  assert.equal(existsSync(join(worktree, "other")), true, "its own directory was not moved");
+});
+
+test("the profile leaves /dev/null readable when a credential path is a link to it", (t) => {
+  const user = realpathSync(temp("mandor-zuser-"));
+  symlinkSync("/dev/null", join(user, ".npmrc"));
+  const saved = process.env.HOME;
+  process.env.HOME = user;
+  t.after(() => {
+    process.env.HOME = saved;
+  });
+  const { run, worktree } = prepared();
+  writeFileSync(join(worktree, "plain.txt"), "fine\n");
+  const plain = under(run, "/bin/cat", join(worktree, "plain.txt"));
+  assert.deepEqual([plain.status, plain.stdout], [0, "fine\n"], "the profile applies, and a file of the worktree reads");
+  assert.equal(under(run, "/bin/cat", "/dev/null").status, 0);
 });
 
 test("detectModels lists the signed-in plan's enabled models with the levels the catalog's last matching rule gives", () => {

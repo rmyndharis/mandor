@@ -7,7 +7,7 @@ import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { test, type TestContext } from "node:test";
 import { assertOutsideRepos, mandorHome, processAlive, processStart, projectDir, scratchDir, workerEnv, worktreesDir } from "../src/home.ts";
-import { appendJsonl, clampDetail, ensureDir, fileRef, maskControls, readJson, readJsonl, withProjectLock, withSlotsLock, writeJsonAtomic } from "../src/store.ts";
+import { appendJsonl, clampDetail, ensureDir, fileRef, maskControls, readJson, readJsonl, withProjectLock, withSlotsLock, writeFileAtomic, writeJsonAtomic } from "../src/store.ts";
 import { temp, tempHome, tempRepo } from "./helpers.ts";
 
 const procs = join(import.meta.dirname, "procs");
@@ -392,6 +392,36 @@ test("maskControls writes the control bytes and the marks that turn text around 
   assert.equal(maskControls("a\u202eb\u2066c\u2069d\u202ae"), "a\\u202eb\\u2066c\\u2069d\\u202ae");
   assert.equal(maskControls("a\tb\nc\r\nd"), "a\tb\nc\r\nd");
   assert.equal(maskControls("a\rb"), "a\\x0db");
+});
+
+test("an atomic write that fails leaves no temporary file behind", () => {
+  tempHome();
+  const dir = temp("mandor-atomic-");
+  const target = join(dir, "name");
+  // A directory that is not empty at the name: the rename cannot replace it.
+  mkdirSync(join(target, "inner"), { recursive: true });
+  assert.throws(() => writeFileAtomic(target, "x\n"));
+  assert.deepEqual(readdirSync(dir), ["name"]);
+});
+
+test("an atomic write never writes through a link planted at a temporary name that can be guessed, and replaces a link at its own name", () => {
+  tempHome();
+  const dir = temp("mandor-atomic-");
+  const victim = join(temp("mandor-victim-"), "precious");
+  writeFileSync(victim, "keep\n");
+  const target = join(dir, "file.json");
+  // The names the write used to take: its pid, with nothing a second process could not guess.
+  symlinkSync(victim, `${target}.${process.pid}.tmp`);
+  writeFileAtomic(target, "new\n");
+  assert.equal(readFileSync(victim, "utf8"), "keep\n");
+  assert.equal(readFileSync(target, "utf8"), "new\n");
+  // A link at the name itself is replaced, and what it led to stays.
+  unlinkSync(target);
+  symlinkSync(victim, target);
+  writeFileAtomic(target, "newer\n");
+  assert.equal(readFileSync(victim, "utf8"), "keep\n");
+  assert.equal(readFileSync(target, "utf8"), "newer\n");
+  assert.equal(mode(target), 0o600);
 });
 
 test("a dangling symlink at the lock path counts as held without spinning", () => {
