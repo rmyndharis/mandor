@@ -79,7 +79,7 @@ export type LedgerEvent =
   | { t: "task.updated"; at: string; taskId: string; patch: Partial<TaskRecord>; reason: string }
   | { t: "job.started"; at: string; job: { id: string; taskId: string; seq: number; kind: JobKind; candidate: Candidate } }
   | { t: "job.finished"; at: string; jobId: string; outcome: JobOutcome }
-  | { t: "verdict"; at: string; taskId: string; verdict: Verdict; seq: number; file: FileRef | null };
+  | { t: "verdict"; at: string; taskId: string; verdict: Verdict; seq: number; file: FileRef | null; approved?: boolean; required?: boolean }; // approved and required: a takeover only
 export type ToolEvent =
   | { t: "tool.exhausted"; at: string; key: string; resetsAt: number | null; detail: string }  // key "codex" or "codex:<model>"
   | { t: "tool.ready"; at: string; tool: ToolName };

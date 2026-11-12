@@ -1288,7 +1288,10 @@ export function takeover(cwd: string, slug: string, approved: boolean): { cursor
     if (task.status !== "needs-review" && task.status !== "stalled") throw new Error(`task ${slug} is ${task.status}, not needs-review or stalled; run mandor show ${slug} to see where it stands`);
     refuseUnfinishedAccept(id, task);
     refuseOpenJob(loadState(id), slug);
-    if ((task.stallReason === "all-exhausted" || task.stallReason === "fix-rounds-exceeded") && !approved) throw new Error(`task ${slug} needs the user's approval for a takeover: ask, then pass --approved`);
+    // A stalled task is taken over on the user's word, whatever stopped it; a task under review is the lead's own call. The verdict
+    // records what the lead stated, and whether the task needed it.
+    const required = task.status === "stalled";
+    if (required && !approved) throw new Error(`task ${slug} is stalled, and a takeover of a stalled task needs the user's approval: ask, then pass --approved`);
     // The lead's work is a round of its own, which the task moves to, so what the lead records (an accept's evidence, the
     // change saved below) never lands on a record of an earlier round.
     const seq = freshRound(id, task);
@@ -1318,7 +1321,7 @@ export function takeover(cwd: string, slug: string, approved: boolean): { cursor
       patch.base = tip;
     }
     const at = now();
-    appendEvent(id, { t: "verdict", at, taskId: slug, verdict: "takeover", seq, file: null });
+    appendEvent(id, { t: "verdict", at, taskId: slug, verdict: "takeover", seq, file: null, approved, required });
     appendEvent(id, { t: "task.updated", at, taskId: slug, patch, reason: "taken over by the lead" });
     if (reset) clearRebase(id, slug);
     return { cursor };

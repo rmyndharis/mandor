@@ -2,9 +2,9 @@ import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { ROUND_FILES, askOf, roundReport } from "./brief.ts";
 import { formatCandidate } from "./config.ts";
-import type { JobRecord, JobResult, ProjectState, TaskRecord, ToolState } from "./contracts.ts";
+import type { JobRecord, JobResult, LedgerEvent, ProjectState, TaskRecord, ToolState } from "./contracts.ts";
 import { jobDir, projectDir, roundDir } from "./home.ts";
-import { ledgerSize, loadState, loadToolState } from "./ledger.ts";
+import { ledgerSize, loadState, loadToolState, readEvents } from "./ledger.ts";
 import { readJob, reconcileLocked } from "./runner.ts";
 import { readJson, withProjectLock } from "./store.ts";
 import { acceptInDoubt, loadCatalog, newerReason, resolveProject, unfinishedAccept, unrecordedCommits, unrecordedNote } from "./tasks.ts";
@@ -89,6 +89,13 @@ function jobLines(jobs: ProjectState["jobs"][string][]): string[] {
   });
 }
 
+// What each takeover of the task recorded of the user's approval: the lead's statement, which is not proof that the user was asked.
+function takeoverLines(projectId: string, slug: string): string[] {
+  const taken = readEvents(projectId).items.filter((e): e is Extract<LedgerEvent, { t: "verdict" }> => e.t === "verdict" && e.taskId === slug && e.verdict === "takeover");
+  const label = (e: (typeof taken)[number]) => (e.approved === undefined || e.required === undefined ? "not recorded" : !e.approved ? "not required" : e.required ? "approved" : "approved (not required)");
+  return taken.length === 0 ? [] : ["takeovers:", ...taken.map((e) => `  round ${e.seq}: ${label(e)}`)];
+}
+
 export function showTask(projectId: string, slug: string): string {
   const state = loadState(projectId);
   const t = taskOf(state, slug);
@@ -107,6 +114,7 @@ export function showTask(projectId: string, slug: string): string {
     ...(ask === null ? [] : [`next: answer: ${ask}`]),
     ...(files.length === 0 ? [] : ["round files:", ...files.map((f) => `  ${f}`)]),
     ...(jobs.length === 0 ? [] : ["jobs:", ...jobs]),
+    ...takeoverLines(projectId, slug),
   ].join("\n");
 }
 

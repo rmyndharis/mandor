@@ -28,6 +28,7 @@ All notable changes to mandor are recorded here. The format follows [Keep a Chan
 - A worker's file names and diffs show the marks that turn text around (U+202A to U+202E, U+2066 to U+2069) as `\uNNNN`, as they show control bytes as `\xNN`.
 - Error messages name the next step, and say to tell the user where only the user can take it. A usage error points at `mandor --help`. A test reads every message written out in the source.
 - While ZCode is on, `mandor init`, `mandor models`, the session summary and `dispatch` say that mandor does not switch billing off for it or detect billed usage, and that a stored key may be one that is billed per use. `mandor login zcode` says it too.
+- A takeover of a stalled task needs `--approved` whatever stopped it, where only `all-exhausted` and `fix-rounds-exceeded` did. The takeover verdict records whether `--approved` was passed and whether the task needed it, and `show` lists each takeover as `approved`, `approved (not required)`, `not required` or `not recorded`.
 
 ### Fixed
 

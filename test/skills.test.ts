@@ -113,6 +113,13 @@ test("lead skill leaves a state home or a repository under the shared temporary 
   assert.ok(read("lead").includes("A command of such a project that refuses because the state home or the repository lies under `/tmp` or `/var/folders` is the user's to settle too: tell them, and stop."));
 });
 
+test("lead skill says that a stalled task is taken over only with the user's approval, whatever stopped it", () => {
+  const lead = read("lead");
+  assert.ok(lead.includes("A stalled task needs the user's approval first, and the command refuses it without `--approved`; a task under review does not."));
+  assert.ok(lead.includes("Any stalled task needs that approval, whatever stopped it."));
+  assert.ok(lead.includes("then run `mandor verdict <slug> takeover --approved`. The worktree is reset"));
+});
+
 test("lead skill points at tiers for a tier with no candidate that can run", () => {
   assert.ok(read("lead").includes("`mandor tiers` shows each candidate and what keeps it from running"));
 });
