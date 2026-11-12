@@ -30,8 +30,10 @@ function isTestFile(path: string): boolean {
 // A trailing slash covers everything under the directory; any other entry is a path or a glob.
 const covers = (entry: string, path: string) => matchesGlob(path, entry.endsWith("/") ? `${entry}**` : entry);
 
-// xit( must not start inside another word, or process.exit( and System.exit( would match.
-const SKIP = /\.skip\(|\.only\(|(?<![\w$])xit\(|@Ignore(?!\w)|@Disabled(?!\w)/g;
+// xit( and assume...( must not start inside another word, or process.exit( and System.exit( would match. The conditional forms
+// (an assumption, JUnit's conditional annotations) are skips too: a failing test is quietly kept from running when it depends on
+// a clock, a platform or a variable.
+const SKIP = /\.skip\(|\.only\(|(?<![\w$])xit\(|@Ignore(?!\w)|@Disabled(?!\w)|@(?:Enabled|Disabled)(?:If|OnOs|OnJre|ForJreRange|InNativeImage)\w*|(?<![\w$])assume(?:True|False|That|NotNull|NoException)\(/g;
 const ASSERT = /assert|expect\(/i;
 const TODO = /\b(?:TODO|FIXME)\b/;
 

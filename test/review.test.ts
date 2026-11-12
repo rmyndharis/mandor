@@ -247,6 +247,22 @@ test("test-skipped flags added skips and ignores, and not process.exit or remove
   assert.deepEqual(details(p, "test-skipped").sort(), ["src/K.kt: @Disabled, @Ignore", "test/a.test.ts: .only(, .skip(, xit("]);
 });
 
+test("test-skipped flags a skip that depends on a condition: an assumption or a conditional JUnit annotation", (t) => {
+  const f = fixture(t, { "src/run.ts": "run();\n" });
+  put(f.wt, "src/ShiftTest.java", [
+    "@DisabledOnOs(OS.MAC)", "void a() {}", "@EnabledIfEnvironmentVariable(named = \"CI\", matches = \".*\")", "void b() {}",
+    "@DisabledIf(\"late\")", "void c() {}", "@EnabledForJreRange(min = JRE.JAVA_21)", "void d() {}", "@DisabledInNativeImage", "void e() {}", "@EnabledOnJre(JRE.JAVA_21)", "void g() {}",
+    "void h() { Assumptions.assumeTrue(LocalTime.now().isBefore(NOON)); }", "void i() { assumeFalse(late()); }", "void j() { Assume.assumeNotNull(x); }",
+    "void k() { assumeThat(x, is(1)); }", "void l() { assumeNoException(e); }", "",
+  ].join("\n"));
+  // Words that only begin like them are not skips.
+  put(f.wt, "src/run.ts", "assumeTruthy();\n// @DisabledNot @EnabledNothing @DisabledOnlyOnce\nconst assumeTrueValue = 1;\nfunction assumeTrue2() {}\nreassumeTrue(1);\n");
+  const p = reviewPack(f.repo, SLUG);
+  assert.deepEqual(details(p, "test-skipped"), [
+    "src/ShiftTest.java: @DisabledIf, @DisabledInNativeImage, @DisabledOnOs, @EnabledForJreRange, @EnabledIfEnvironmentVariable, @EnabledOnJre, assumeFalse(, assumeNoException(, assumeNotNull(, assumeThat(, assumeTrue(",
+  ]);
+});
+
 test("assert-removed counts removed assertion lines per file next to the added ones", (t) => {
   const f = fixture(t, {
     "test/a.test.ts": "assert.equal(a, 1);\nexpect(b).toBe(2);\nassertThat(c);\nconst keep = 1;\n",
