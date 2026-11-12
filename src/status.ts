@@ -7,7 +7,7 @@ import { jobDir, projectDir, roundDir } from "./home.ts";
 import { ledgerSize, loadState, loadToolState } from "./ledger.ts";
 import { readJob, reconcileLocked } from "./runner.ts";
 import { readJson, withProjectLock } from "./store.ts";
-import { acceptInDoubt, loadCatalog, newerReason, resolveProject, unrecordedCommits, unrecordedNote } from "./tasks.ts";
+import { acceptInDoubt, loadCatalog, newerReason, resolveProject, unfinishedAccept, unrecordedCommits, unrecordedNote } from "./tasks.ts";
 
 const NO_PROJECT = "mandor: no project here";
 
@@ -162,9 +162,7 @@ function statusReport(cwd: string, json: boolean): string {
   if (json) return JSON.stringify({ project: id, cursor, goals, tasks: Object.values(state.tasks), jobs: jobs.map(({ env, ...rest }) => rest), tools, unrecorded, unfinished }, null, 2);
   const notes = Object.entries(unrecorded).map(([branch, commits]) => `${unrecordedNote(branch, commits)}; accept refuses until the user removes them or runs mandor goal adopt ${branch}, which the lead does not run`);
   // "?" is a marker that cannot be read, so no accept can settle it: only the user can.
-  const doubts = Object.entries(unfinished).map(([branch, slug]) => slug === "?"
-    ? `goal ${branch}: an accept did not finish and its marker cannot be read: tell the user`
-    : `goal ${branch}: an accept of ${slug} did not finish; run its accept again, which settles it`);
+  const doubts = Object.entries(unfinished).map(([branch, slug]) => `goal ${branch}: ${unfinishedAccept(slug)}`);
   const where = goals.map((g) => `goal ${g.branch}: ${g.integrationWorktree}`);
   return `${[statusTable(state, jobs, tools, nowMs), ...where, ...doubts, ...notes].join("\n")}\ncursor: ${cursor}`;
 }

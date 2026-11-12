@@ -10,7 +10,7 @@ import { processAlive, projectDir } from "./home.ts";
 import { loadState, loadToolState, readEvents, replay } from "./ledger.ts";
 import { isRunnerAlive, neverStarted, readJob } from "./runner.ts";
 import { clampDetail, readJson } from "./store.ts";
-import { resolveProject } from "./tasks.ts";
+import { acceptInDoubt, resolveProject, unfinishedAccept } from "./tasks.ts";
 import { commandAt, commandIn, endsOpen, looseCommand, mayStart, replaceTraces } from "./toolname.ts";
 import { nextFor } from "./wait.ts";
 
@@ -89,8 +89,11 @@ export function sessionStartText(input: { cwd: string }): string {
   const { items, endByte: cursor } = readEvents(id);
   const { goals, tasks } = replay(items);
   // Newest first, since a long-lived project's older goals are the ones to leave out.
-  const goalLines = Object.values(goals).reverse().map((g) =>
-    `- ${g.branch}: ${g.description === null ? "no description" : neutral(g.description)}; plan ${g.plan?.path ?? "none"}; worktree ${g.integrationWorktree}`);
+  // The marker of a killed accept is only read here, as a hook settles nothing.
+  const goalLines = Object.values(goals).reverse().map((g) => {
+    const unfinished = acceptInDoubt(id, g);
+    return `- ${g.branch}: ${g.description === null ? "no description" : neutral(g.description)}; plan ${g.plan?.path ?? "none"}; worktree ${g.integrationWorktree}${unfinished === null ? "" : `; ${unfinishedAccept(unfinished)}`}`;
+  });
   const taskLines = Object.values(tasks).toSorted((a, b) => Number(isSettled(a)) - Number(isSettled(b))).map((t) => {
     const next = nextAction(t, t.status === "needs-review" && askOf(roundReport(id, t.id, t.seq)) !== null);
     return `- ${t.id}: ${t.status}${t.stallReason === null ? "" : ` (${t.stallReason})`}, ${t.candidate === null ? "no candidate" : formatCandidate(t.candidate)}, seq ${t.seq}, fix rounds ${t.fixRounds}${next === null ? "" : `; next: ${next}`}`;

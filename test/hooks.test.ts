@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { appendFileSync, chmodSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { ZCODE_BILLING } from "../src/adapters/zcode.ts";
@@ -405,6 +405,20 @@ test("the summary lists exhausted keys, and no detail, excerpt or reason", () =>
   const lines = r.stdout.trimEnd().split("\n");
   assert.ok(lines.includes("Exhausted: codex, codex:gpt-6-luna"), r.stdout);
   assert.ok(lines.includes("- a: stalled, no candidate, seq 1, fix rounds 0"), r.stdout);
+});
+
+test("the summary names a goal whose accept did not finish, and only reads its marker", () => {
+  const s = project();
+  const marker = join(projectDir(s.id), "goals", "feat__hooks", "accept-intent.json");
+  const goalLine = () => hook("session-start", { cwd: s.repo }).stdout.split("\n").find((l) => l.startsWith(`- ${GOAL}:`)) ?? "";
+  assert.doesNotMatch(goalLine(), /did not finish/);
+  mkdirSync(dirname(marker), { recursive: true });
+  writeFileSync(marker, JSON.stringify({ slug: "hello", tip: "0".repeat(40) }));
+  assert.match(goalLine(), /; an accept of hello did not finish; run its accept again, which settles it$/);
+  writeFileSync(marker, "{");
+  assert.match(goalLine(), /; an accept did not finish and its marker cannot be read: tell the user$/);
+  assert.equal(readFileSync(marker, "utf8"), "{", "the hook settles nothing");
+  assert.deepEqual(hookLog(s.home), []);
 });
 
 test("the summary says what a ZCode run may cost whenever ZCode is on, whatever the stored warnings say", () => {

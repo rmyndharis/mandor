@@ -103,6 +103,25 @@ test("a review works on a copy of the index, so a lock in the worktree's git dir
   assert.equal(existsSync(lock), true, "the lock is not the review's to remove");
 });
 
+test("the pack names an accept that did not finish, whichever task of the goal it was", (t) => {
+  const f = fixture(t, { "src/a.ts": "a\n" });
+  put(f.wt, "src/a.ts", "b\n");
+  const marker = join(projectDir(f.id), "goals", "feat__review", "accept-intent.json");
+  assert.deepEqual(details(reviewPack(f.repo, SLUG), "accept-unfinished"), [], "no marker, no flag");
+  mkdirSync(dirname(marker), { recursive: true });
+  writeFileSync(marker, JSON.stringify({ slug: SLUG, tip: "0".repeat(40) }));
+  assert.deepEqual(details(reviewPack(f.repo, SLUG), "accept-unfinished"), ["an accept of work did not finish; run its accept again, which settles it"]);
+  writeFileSync(marker, JSON.stringify({ slug: "other", tip: "0".repeat(40) }));
+  assert.deepEqual(details(reviewPack(f.repo, SLUG), "accept-unfinished"), ["an accept of other did not finish; run its accept again, which settles it"]);
+  writeFileSync(marker, "{");
+  assert.deepEqual(details(reviewPack(f.repo, SLUG), "accept-unfinished"), ["an accept did not finish and its marker cannot be read: tell the user"]);
+  // Advice, so the pack is whole, and the first thing the lead reads of it.
+  const pack = reviewPack(f.repo, SLUG);
+  assert.equal(pack.redFlags[0].kind, "accept-unfinished");
+  assert.deepEqual(pack.files, [{ path: "src/a.ts", status: "M" }]);
+  assert.equal(readFileSync(marker, "utf8"), "{", "a review settles nothing");
+});
+
 test("diff prints the task's change as text through the review's git layer, and records no review", (t) => {
   const f = fixture(t, { "src/a.ts": "a\n" });
   put(f.wt, "src/a.ts", "b\n");
@@ -138,7 +157,7 @@ test("diff into a reader that stops early is no failure and prints no stack", (t
   assert.equal(readFileSync(err, "utf8"), "");
 });
 
-test("diff refuses a task with a job in flight, whose worker may be using the index", (t) => {
+test("diff refuses a task with a job in flight, whose worker is still changing the files", (t) => {
   const f = fixture(t, { "src/a.ts": "a\n" });
   put(f.wt, "src/a.ts", "b\n");
   const candidate = { tool: "codex", model: "gpt-6-luna", effort: "medium" } as const;

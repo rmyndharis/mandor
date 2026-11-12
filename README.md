@@ -80,7 +80,7 @@ When a worker hits a quota, a model limit or an account mismatch, the task moves
 
 mandor registers two Claude Code hooks. Both do nothing outside a repository that already has a goal, with one exception below, and neither can break a session: a failure goes to `~/.mandor/logs/hooks.log` instead of reaching you. The exception is a Node the hooks cannot use. With no Node 22.18 or newer on the PATH the hooks run with, they do nothing and write nothing, as they cannot tell which directories have a goal. That PATH can differ from the one of Claude Code's Bash tool, for instance when an editor starts Claude Code. If you already have mandor state under `~/.mandor`, SessionStart then says in the session, in any directory, that the hooks are off.
 
-- **SessionStart** prints a short summary of the goals with their integration worktrees, the tasks with their status, stall reason and next action, any exhausted tool, and the warnings of the tools that are switched on, so a new, resumed or compacted session can pick the work up. It also refreshes the Codex model list in the background.
+- **SessionStart** prints a short summary of the goals with their integration worktrees (and an accept that was killed and not yet settled), the tasks with their status, stall reason and next action, any exhausted tool, and the warnings of the tools that are switched on, so a new, resumed or compacted session can pick the work up. It also refreshes the Codex model list in the background.
 - **Stop** blocks Claude from ending its turn, once, with a reminder to run `mandor wait` in the background, when this session has been leading, jobs are still running or waiting to start and no `wait` is watching them.
 
 ## Safety model
@@ -165,7 +165,7 @@ The lead's commands print JSON; `status`, `show` and `logs` print plain text.
 | `mandor plan set` | Record the plan: `--goal`, `--file` and `--description` |
 | `mandor dispatch` | Start a worker on a task: `--goal`, `--task`, `--tier` and `--brief`, and optionally `--scope` (repeatable), `--use <tool:model@effort>` and `--after <slug>`. It prints the warnings of the tools that are switched on |
 | `mandor wait --since <cursor>` | Return when a task needs the lead. `--timeout <seconds>` bounds the wait |
-| `mandor review <slug>` | Print the review pack, which also names the ignored paths that changed since the task's first job and a report that is blocked, partial or asks questions, and record the reviewed tree |
+| `mandor review <slug>` | Print the review pack, which also names the ignored paths that changed since the task's first job, a report that is blocked, partial or asks questions, and an accept of the goal that was killed and not yet settled, and record the reviewed tree |
 | `mandor diff <slug>` | Print the task's change as patch text, read through the same confined staging as the review. It records no review, and it refuses a task with a job in flight, whose worker is still changing the files |
 | `mandor verdict <slug> accept` | Commit the reviewed tree: `--evidence-file` and `--message-file` |
 | `mandor verdict <slug> fix` | Send notes back to the worker: `--notes` |

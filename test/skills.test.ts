@@ -105,6 +105,10 @@ test("lead skill says what to do with an accept that did not finish", () => {
   assert.ok(read("lead").includes("When `mandor status` says that an accept of a task did not finish, which it does only when it could not settle that accept itself, run `verdict accept` for that task again"));
 });
 
+test("lead skill says where else an accept that did not finish shows", () => {
+  assert.ok(read("lead").includes("The goal's line of a session summary and the `accept-unfinished` red flag of a `review` say the same of such an accept."));
+});
+
 test("lead skill points at tiers for a tier with no candidate that can run", () => {
   assert.ok(read("lead").includes("`mandor tiers` shows each candidate and what keeps it from running"));
 });

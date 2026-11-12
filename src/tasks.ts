@@ -564,6 +564,11 @@ export function acceptInDoubt(id: string, goal: GoalRecord): string | null {
   }
 }
 
+// What a command says of an accept that was killed and that nothing has settled yet: the slug its marker names, or "?" for a
+// marker that cannot be read, which only the user can settle.
+export const unfinishedAccept = (slug: string): string =>
+  slug === "?" ? "an accept did not finish and its marker cannot be read: tell the user" : `an accept of ${slug} did not finish; run its accept again, which settles it`;
+
 // An accept that was killed leaves its marker, and the next accept settles it. A wait and a status settle it too, so that a
 // task whose accept landed shows as integrating, and one whose accept did not as it was, with no marker left to explain.
 // What cannot be settled from here (a git index lock, a state that needs the user to decide) stays for the accept to

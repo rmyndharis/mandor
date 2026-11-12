@@ -7,7 +7,7 @@ import { jobDir } from "./home.ts";
 import { loadState, now } from "./ledger.ts";
 import { loadProjectConfig } from "./provision.ts";
 import { clampDetail, maskControls, withProjectLock, writeJsonAtomic } from "./store.ts";
-import { diffDeny, diffExact, gitStep, recoverRebaseLocked, refuseOpenJob, refuseUnsupported, resolveProject, reviewedFile } from "./tasks.ts";
+import { acceptInDoubt, diffDeny, diffExact, gitStep, recoverRebaseLocked, refuseOpenJob, refuseUnsupported, resolveProject, reviewedFile, unfinishedAccept } from "./tasks.ts";
 
 export interface ReviewPack {
   diffStat: string;
@@ -156,6 +156,11 @@ export function reviewPack(cwd: string, slug: string): ReviewPack {
     const flags: { kind: string; detail: string }[] = [];
     const flag = (kind: string, detail: string) => flags.push({ kind, detail: clampDetail(detail) });
     const count = (lines: string[], re: RegExp) => lines.filter((l) => re.test(l)).length;
+
+    // An accept of this goal that was killed and that nothing has settled: the next accept of any of its tasks settles it first.
+    const goal = state.goals[task.goalBranch];
+    const unfinished = goal === undefined ? null : acceptInDoubt(id, goal);
+    if (unfinished !== null) flag("accept-unfinished", unfinishedAccept(unfinished));
 
     files.forEach((f) => f.status === "D" && isTestFile(f.path) && flag("test-deleted", f.path));
     files.forEach((f, i) => {
