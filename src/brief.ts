@@ -75,7 +75,8 @@ export function renderAnswerMessage(notes: string): string {
 // a question. Only counts and the status are named, as the questions are the worker's own text.
 export function askOf(report: WorkerReport | null): string | null {
   if (report === null) return null;
-  const questions = report.questions_for_lead.filter((q) => q.trim() !== "").length;
+  // A question of nothing but blanks and invisible characters is none.
+  const questions = report.questions_for_lead.filter((q) => q.replace(/[\s\p{Default_Ignorable_Code_Point}]/gu, "") !== "").length;
   const says = report.status === "done" ? null : `the report says ${report.status}`;
   const asks = questions === 0 ? null : `${says === null ? "the report asks" : "asks"} ${questions} question${questions === 1 ? "" : "s"}`;
   return [says, asks].filter((p) => p !== null).join(" and ") || null;

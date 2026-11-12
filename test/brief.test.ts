@@ -187,7 +187,7 @@ test("askOf names what a report asks of the lead, and is null for a report that 
   assert.equal(askOf(report({ questions_for_lead: ["a?", "b?"] })), "the report asks 2 questions");
   assert.equal(askOf(report({ status: "blocked", questions_for_lead: ["a?", "b?"] })), "the report says blocked and asks 2 questions");
   assert.equal(askOf(report({ status: "partial", questions_for_lead: ["a?"] })), "the report says partial and asks 1 question");
-  assert.equal(askOf(report({ questions_for_lead: ["", "  "] })), null, "a blank question asks nothing");
+  assert.equal(askOf(report({ questions_for_lead: ["", "  ", "\u200b", "\u2060\ufeff"] })), null, "a blank question, and one of invisible characters, asks nothing");
 });
 
 test("renderAnswerMessage says the notes answer the report, and ends with the report reminder", () => {

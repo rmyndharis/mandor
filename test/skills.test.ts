@@ -47,6 +47,7 @@ test("lead skill has the lead answer a report that is blocked, partial or asks, 
   for (const term of [
     "`mandor verdict <slug> answer --notes <file>`", "`report-asks` red flag", "an `answer` is section 6's",
     "the round is not counted against the limit of fix rounds", "`answer` refuses a report that asks nothing",
+    "answered as many times as a fix is allowed", "An interrupted accept does not stop its commit", "so go on with section 7",
   ]) {
     assert.ok(lead.includes(term), term);
   }

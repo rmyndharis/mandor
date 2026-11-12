@@ -20,8 +20,19 @@ const absDir = (d: string): string => resolve(d.replace(/^~\//, `${homedir()}/`)
 // Each run states the whole configuration, so it replaces project.json rather than merging into it, unless it is given
 // --update: it then starts from what is stored, its flags add to the lists and replace the single settings, and the
 // --remove-* and --no-* flags take one setting away. A removal comes after the additions, and names what is stored.
+// The flags of project setup that take no value, so that a value is never taken for one.
+const SETUP_SWITCHES = new Set(["--update", "--worker-network", "--name-is-a-word", "--shared-temp", "--no-worker-network", "--no-setup", "--no-name-is-a-word", "--no-shared-temp"]);
+
+function asksUpdate(args: string[]): boolean {
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--update") return true;
+    if (!SETUP_SWITCHES.has(args[i])) i++; // its value
+  }
+  return false;
+}
+
 function projectSetup(id: string, args: string[]): ProjectConfig {
-  const update = args.includes("--update");
+  const update = asksUpdate(args);
   const c = update ? loadProjectConfig(id) : emptyProjectConfig();
   const byPath = new Map<string, string[]>(Object.entries(c.generators)); // keeps a path named __proto__ an ordinary key
   const added: string[] = [];
@@ -72,35 +83,39 @@ function projectSetup(id: string, args: string[]): ProjectConfig {
   if (off.has("setup")) c.setup = null;
   if (off.has("name-is-a-word")) c.nameIsWord = false;
   if (off.has("shared-temp")) c.sharedTemp = false;
-  const take = (flag: string, list: string[], value: string): string[] => {
-    if (!list.includes(value)) throw new Error(`refusing ${flag} ${value}: the configuration holds no such entry`);
-    return list.filter((e) => e !== value);
+  // same: how an entry is compared with the value that names it, which is the way the entry is stored for a path.
+  const take = (flag: string, list: string[], value: string, same: (entry: string) => boolean = (entry) => entry === value): string[] => {
+    if (!list.some(same)) throw new Error(`refusing ${flag} ${value}: the configuration holds no such entry`);
+    return list.filter((entry) => !same(entry));
   };
+  const plain = (path: string): string => posix.normalize(path).replace(/\/+$/, "");
   c.shared = [...new Set(c.shared)];
   c.deny = [...new Set(c.deny)];
   c.workerAddDirs = [...new Set(c.workerAddDirs)];
+  // Before the removals, as a removal comes after the additions: a generator added and removed in one run is not kept.
+  for (const g of added) {
+    const eq = g.indexOf("=");
+    const key = eq > 0 ? checkClonePath(g.slice(0, eq), c.deny) : "";
+    if (eq === g.length - 1 || eq <= 0) throw new Error(`refusing --generator ${g}: expected <clone path>=<glob> naming a --clone path`);
+    byPath.set(key, [...new Set([...(byPath.get(key) ?? []), g.slice(eq + 1)])]);
+  }
   for (const { flag, value } of removing) {
-    if (flag === "--remove-clone") c.clone = take(flag, c.clone, posix.normalize(value).replace(/\/+$/, ""));
+    if (flag === "--remove-clone") c.clone = take(flag, c.clone, value, (entry) => plain(entry) === plain(value));
     else if (flag === "--remove-shared") c.shared = take(flag, c.shared, value);
     else if (flag === "--remove-deny") c.deny = take(flag, c.deny, value);
     else if (flag === "--remove-worker-add-dir") c.workerAddDirs = take(flag, c.workerAddDirs, absDir(value));
     else {
       const eq = value.indexOf("=");
-      const key = eq > 0 ? posix.normalize(value.slice(0, eq)).replace(/\/+$/, "") : "";
+      const key = eq > 0 ? plain(value.slice(0, eq)) : "";
       const left = take(flag, byPath.get(key) ?? [], eq > 0 ? value.slice(eq + 1) : "");
       if (left.length > 0) byPath.set(key, left);
       else byPath.delete(key);
     }
   }
-  // Checked after every flag is read, so each --deny applies whatever the order.
+  // Checked after every flag is read and every removal made, so each --deny applies whatever the order, and a path that a
+  // --deny now denies can be removed in the same run.
   c.clone = checkClonePaths(c.clone, c.deny);
-  for (const g of added) {
-    const eq = g.indexOf("=");
-    const key = eq > 0 ? checkClonePath(g.slice(0, eq), c.deny) : "";
-    if (!c.clone.includes(key) || eq === g.length - 1) throw new Error(`refusing --generator ${g}: expected <clone path>=<glob> naming a --clone path`);
-    byPath.set(key, [...new Set([...(byPath.get(key) ?? []), g.slice(eq + 1)])]);
-  }
-  // What was stored must still name a clone path, whatever a removal took away.
+  // Whatever is left, stored or added, must name a clone path that is left.
   for (const [key, globs] of byPath) {
     if (!c.clone.includes(key)) throw new Error(`refusing --generator ${key}=${globs[0]}: expected <clone path>=<glob> naming a --clone path`);
   }

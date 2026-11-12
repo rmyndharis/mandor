@@ -1,10 +1,11 @@
+import type { SpawnSyncOptions } from "node:child_process";
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { closeSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { basename, delimiter, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { inflateSync } from "node:zlib";
 import { foldPath } from "./guards.ts";
-import { mandorHome } from "./home.ts";
+import { mandorHome, processStart } from "./home.ts";
 import { ensureDir } from "./store.ts";
 
 // Inherited, these would point git at another repository or work tree than the one asked for.
@@ -29,19 +30,42 @@ function gitEnv(location: Location): Record<string, string | undefined> {
 // limitMs: a command whose hooks can run for as long as they like gets a limit. It starts in a process group of its own, so
 // that what is left of its hooks, a child that outlives git, goes with it when the time is up.
 function run(args: string[], cwd: string, location: Location = {}, limitMs?: number): Result {
+  if (limitMs !== undefined) return runWithin(args, cwd, location, limitMs);
   // Node's default 1 MiB buffer kills git and truncates large ignored-file listings and diffs.
-  const r = spawnSync("git", args, { cwd, env: gitEnv(location), maxBuffer: 64 * 1024 * 1024, ...(limitMs === undefined ? {} : { timeout: limitMs, killSignal: "SIGKILL", detached: true }) });
-  if (limitMs !== undefined && (r.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT") {
-    if (r.pid !== undefined) {
-      try {
-        process.kill(-r.pid, "SIGKILL");
-      } catch {} // the group is gone already
-    }
-    return { code: 1, stdout: Buffer.alloc(0), stderr: `git ${args.find((a) => !a.startsWith("-") && !a.includes("=")) ?? ""} did not end within ${Math.round(limitMs / 1000)} s and was stopped, with what it started` };
-  }
+  const r = spawnSync("git", args, { cwd, env: gitEnv(location), maxBuffer: 64 * 1024 * 1024 });
   if (r.error === undefined && typeof r.status === "number") return { code: r.status, stdout: r.stdout, stderr: r.stderr.toString() };
   // A spawn error or a kill is a failure, and its partial output is never handed on.
   return { code: 1, stdout: Buffer.alloc(0), stderr: r.error ? r.error.message : `git ${args[0]} killed by ${r.signal}` };
+}
+
+// A command whose hooks run for as long as they like, with its output in files and not in pipes: a child of a hook that
+// outlives git would hold a pipe open and keep this call waiting for the whole limit, whatever git had said, and a hook's
+// words are kept when the command is stopped. It starts in a process group of its own, so that what is left of its hooks
+// goes with it when the time is up. Such a command goes on if this process is killed, as its group is not this one's: the
+// next accept, and `wait` and `status`, settle what it made, and stop one that outlives the limit (stopOverdueCommit).
+function runWithin(args: string[], cwd: string, location: Location, limitMs: number): Result {
+  const dir = mkdtempSync(join(stagesDir(), "c-"));
+  const [out, err] = [openSync(join(dir, "out"), "w"), openSync(join(dir, "err"), "w")];
+  try {
+    // detached is honored by spawnSync, which the typings leave out.
+    const r = spawnSync("git", args, { cwd, env: gitEnv(location), stdio: ["ignore", out, err], timeout: limitMs, killSignal: "SIGKILL", detached: true } as SpawnSyncOptions);
+    closeSync(out);
+    closeSync(err);
+    const [stdout, stderr] = [readFileSync(join(dir, "out")), readFileSync(join(dir, "err"), "utf8")];
+    if ((r.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT") {
+      if (r.pid !== undefined) {
+        try {
+          process.kill(-r.pid, "SIGKILL");
+        } catch {} // the group is gone already
+      }
+      const said = `git ${args.find((a) => !a.startsWith("-") && !a.includes("=")) ?? ""} did not end within ${Math.round(limitMs / 1000)} s and was stopped, with what it started`;
+      return { code: 1, stdout: Buffer.alloc(0), stderr: stderr === "" ? said : `${said}\n${stderr}` };
+    }
+    if (r.error === undefined && typeof r.status === "number") return { code: r.status, stdout, stderr };
+    return { code: 1, stdout: Buffer.alloc(0), stderr: r.error ? r.error.message : `git ${args[0]} killed by ${r.signal}` };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 // A git command that failed. Its message holds git's own words, which can quote what a worker wrote or what a hook
@@ -147,6 +171,21 @@ function taggedProcess(tag: string): number | null {
 export const worktreeAddRunning = (path: string) => taggedProcess(pathTag("add", path));
 // The pid of a commit still working in this worktree, or null.
 export const commitRunning = (worktree: string) => taggedProcess(pathTag("commit", worktree));
+
+// A commit that its accept left running when that command was killed goes on without the limit the accept enforced, a hook that
+// never returns included. One that has run longer than the limit is stopped here, whole group, as the accept would have done.
+// Returns whether it did, in which case the lock that git left is the stopped commit's own.
+export function stopOverdueCommit(worktree: string, limitMs = COMMIT_LIMIT_MS): boolean {
+  const pid = commitRunning(worktree);
+  if (pid === null) return false;
+  // The start time reads as UTC, as processStart asks ps for.
+  const began = Date.parse(`${processStart(pid) ?? ""} UTC`);
+  if (Number.isNaN(began) || Date.now() - began < limitMs) return false;
+  try {
+    process.kill(-pid, "SIGKILL");
+  } catch {} // the group is gone already
+  return true;
+}
 
 function commonDirOf(repo: string): string {
   // Exactly one absolute path: git before 2.31 echoes the unknown --path-format flag instead.

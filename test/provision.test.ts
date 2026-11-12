@@ -461,6 +461,49 @@ test("project setup --update starts from the stored configuration, so one settin
   assert.deepEqual(stored(), { ...emptyProjectConfig(), shared: ["only.txt"] });
 });
 
+test("project setup --update takes a path as the repository spells it when it removes one, and a worker directory, a name flag and a generator in one run", (t) => {
+  const repo = tempRepo();
+  mkdirSync(join(repo, "build"), { recursive: true });
+  mkdirSync(join(repo, "gen"), { recursive: true });
+  const stored = () => loadProjectConfig(projectIdFor(repo));
+  assert.equal(cli(repo, "--clone", "build", "--clone", "gen", "--name-is-a-word").status, 0);
+  // A removal names a path with a slash or a dot as the clone was added without them.
+  assert.equal(cli(repo, "--update", "--remove-clone", "./build/").status, 0);
+  assert.deepEqual(stored().clone, ["gen"]);
+  // An added path and its removal in one run leave nothing, whichever way each is spelled.
+  assert.equal(cli(repo, "--update", "--clone", "./build/", "--remove-clone", "build").status, 0);
+  assert.deepEqual(stored().clone, ["gen"]);
+  assert.equal(cli(repo, "--update", "--no-name-is-a-word").status, 0);
+  assert.equal(stored().nameIsWord, false);
+  // A path that a new --deny denies can go in the same run, though a stored one that stays is refused.
+  assert.equal(cli(repo, "--update", "--deny", "gen/**", "--remove-clone", "gen").status, 0);
+  assert.deepEqual([stored().clone, stored().deny], [[], ["gen/**"]]);
+  assert.equal(cli(repo, "--update", "--remove-deny", "gen/**", "--clone", "gen").status, 0);
+  assert.deepEqual([stored().clone, stored().deny], [["gen"], []]);
+  // A generator that is added and removed in one run is not stored, as a shared path is not either.
+  assert.equal(cli(repo, "--update", "--generator", "gen=new/**", "--remove-generator", "gen=new/**").status, 0);
+  assert.deepEqual(stored().generators, {});
+  assert.equal(cli(repo, "--update", "--shared", "x.txt", "--remove-shared", "x.txt").status, 0);
+  assert.deepEqual(stored().shared, []);
+  if (GRADLE_ADD_DIRS.length > 0) {
+    const dir = resolve(homedir(), GRADLE_ADD_DIRS[0]);
+    assert.equal(cli(repo, "--update", "--worker-add-dir", `~/${GRADLE_ADD_DIRS[0]}`).status, 0);
+    assert.deepEqual(stored().workerAddDirs, [dir]);
+    assert.equal(cli(repo, "--update", "--remove-worker-add-dir", `${dir}/`).status, 0);
+    assert.deepEqual(stored().workerAddDirs, []);
+  } else t.diagnostic("GRADLE_ADD_DIRS is empty");
+});
+
+test("project setup takes --update for the flag only where a flag stands, and not where it is the value of another", () => {
+  const repo = tempRepo();
+  assert.equal(cli(repo, "--shared", "keep.txt", "--setup", "make").status, 0);
+  const r = cli(repo, "--setup", "--update");
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual([loadProjectConfig(projectIdFor(repo)).setup, loadProjectConfig(projectIdFor(repo)).shared], ["--update", []], "a setup that is not an update replaces the whole configuration");
+  assert.equal(cli(repo, "--shared", "--update").status, 0);
+  assert.deepEqual(loadProjectConfig(projectIdFor(repo)).shared, ["--update"]);
+});
+
 test("project setup refuses a removal without --update, and a flag together with its opposite, with exit 2", () => {
   const repo = tempRepo();
   for (const [args, said] of [

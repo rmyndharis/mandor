@@ -8,7 +8,7 @@ import type { Candidate, FileRef, GoalRecord, JobKind, JobRecord, LedgerEvent, M
 import {
   addWorktree, apply3way, applyCheck, applyToIndex, assertCommitIdentity, assertHeadIdentity, assertHomeOutsideRepos, assertRepoOutsideHome, branchExists, changedPaths, commitRunning, commitStaged, configuredDrivers, configuredPromisors,
   confineProblem, deleteBranchAt, diffSinceBaseBytes, diffStat, dropLastCommit, git, GitFailure, indexLockPath, indexTree, isClean, PARTIAL_CLONE, projectRoot,
-  removeOwnedWorktree, resetHardHead, resetTo, revParse, stagedDiff, worktreeAddRunning, worktreeLeft, worktreeRoot,
+  removeOwnedWorktree, resetHardHead, resetTo, revParse, stagedDiff, stopOverdueCommit, worktreeAddRunning, worktreeLeft, worktreeRoot,
 } from "./git.ts";
 import { checkCommitMessage, checkDiff, checkName } from "./guards.ts";
 import { assertOutsideRepos, jobDir, mandorHome, processAlive, processStart, projectDir, projectIdFor, roundDir, workerEnv, worktreesDir } from "./home.ts";
@@ -571,7 +571,7 @@ export function settleAcceptsLocked(projectId: string): void {
   for (const goal of Object.values(loadState(projectId).goals)) {
     if (acceptInDoubt(projectId, goal) === null) continue;
     try {
-      recoverAcceptLocked(root, projectId, goal, false);
+      recoverAcceptLocked(root, projectId, goal, false, undefined, true);
     } catch (e) {
       const complaint = `settle an earlier accept of ${goal.branch}: ${(e as Error).message}`;
       if (!settledAlready.has(`${projectId} ${complaint}`)) logRunner(complaint);
@@ -590,12 +590,15 @@ function refuseUnfinishedAccept(id: string, task: TaskRecord): void {
 // A killed accept leaves its marker. Under the project lock nothing else moves the goal, so what the marker and HEAD
 // say decides: nothing landed and it is undone, or one commit landed from the recorded tip and tree and it stands, or
 // the user decides. Returns a commit it adopted.
-function recoverAcceptLocked(root: string, id: string, goal: GoalRecord, allowTestIdentity: boolean): { slug: string; commit: string } | null {
+function recoverAcceptLocked(root: string, id: string, goal: GoalRecord, allowTestIdentity: boolean, limitMs?: number, polled = false): { slug: string; commit: string } | null {
   const file = intentFile(id, goal.branch);
   if (!existsSync(file)) return null;
   const { slug, tip, tree } = readJson<{ slug: string; tip: string; tree?: string }>(file);
   const integration = goal.integrationWorktree;
   const lock = indexLockPath(root, integration);
+  // The commit of a killed accept goes on in a group of its own, with no limit left to stop it: one past the limit is stopped
+  // here, and the lock that git left behind was its own.
+  if (stopOverdueCommit(integration, limitMs)) rmSync(lock, { force: true });
   if (existsSync(lock)) throw new Error(`an earlier accept is still finishing; retry shortly. If no git runs there, remove ${lock}`);
   const running = commitRunning(integration);
   if (running !== null) throw new Error(`an earlier accept is still finishing; retry shortly (git pid ${running})`);
@@ -605,7 +608,7 @@ function recoverAcceptLocked(root: string, id: string, goal: GoalRecord, allowTe
   const goalAt = revParse(root, `refs/heads/${goal.branch}`);
   if (goalAt !== head) throw stop(`${goal.branch} is at ${goalAt}`);
   if (head === tip) {
-    gitStep(`settle an earlier accept of ${goal.branch}`, () => resetHardHead(root, integration));
+    (polled ? gitStepOnce : gitStep)(`settle an earlier accept of ${goal.branch}`, () => resetHardHead(root, integration));
     rmSync(file);
     return null;
   }
@@ -613,6 +616,7 @@ function recoverAcceptLocked(root: string, id: string, goal: GoalRecord, allowTe
   if (parents.length !== 1 || parents[0] !== tip) throw stop(`it is not one commit on ${tip}`);
   if (revParse(integration, "HEAD^{tree}") !== tree) throw stop(`its tree is not the recorded ${tree ?? "(none)"}`);
   const task = loadState(id).tasks[slug];
+  if (task !== undefined && task.goalBranch !== goal.branch) throw stop(`task ${slug} belongs to goal ${task.goalBranch}`);
   if (task?.integratedCommit !== head) {
     if (task?.status !== "needs-review" && task?.status !== "takeover") throw stop(`task ${slug} is ${task?.status ?? "unknown"}`);
     // The hooks ran in the killed command, whose check of the commit they might have changed never came.
@@ -644,6 +648,19 @@ export function fixedFailure(what: string, e: unknown): Error {
   logRunnerTail(what, e.message);
   logGit(what, e.message);
   return new Error(`could not ${what}; see ${gitLogPath()}`);
+}
+
+// A step that a wait or a status repeats at every poll writes the words of its failure to the logs once a process: the next
+// poll would only say them again, and the lead is told by the fixed sentence each time.
+const failuresLogged = new Set<string>();
+function gitStepOnce<T>(what: string, step: () => T): T {
+  try {
+    return step();
+  } catch (e) {
+    if (e instanceof GitFailure && failuresLogged.has(`${what} ${e.message}`)) throw new Error(`could not ${what}; see ${gitLogPath()}`);
+    if (e instanceof GitFailure) failuresLogged.add(`${what} ${e.message}`);
+    throw fixedFailure(what, e);
+  }
 }
 
 export function gitStep<T>(what: string, step: () => T): T {
@@ -817,7 +834,7 @@ export function verdictAccept(cwd: string, slug: string, evidenceFile: string, m
     const cursor = ledgerSize(id);
     const wanted = loadState(id).tasks[slug];
     if (wanted === undefined) throw new Error(`no task ${slug}`);
-    const adopted = recoverAcceptLocked(root, id, loadState(id).goals[wanted.goalBranch], allowTestIdentity);
+    const adopted = recoverAcceptLocked(root, id, loadState(id).goals[wanted.goalBranch], allowTestIdentity, opts.commitLimitMs);
     if (adopted?.slug === slug) {
       pumpAfterCommand(id, models, `accept of ${slug}`);
       return { commit: adopted.commit, cursor };
@@ -985,6 +1002,10 @@ function resumeWithNotes(cwd: string, slug: string, notesFile: string, verdict: 
     if (verdict === "fix") startFixRoundLocked(id, task, renderFixMessage(notes), true, models, "fix");
     else {
       if (askOf(roundReport(id, slug, task.seq)) === null) throw new Error(`task ${slug}: its newest report neither says blocked or partial nor asks a question, so there is nothing to answer; send notes with verdict fix`);
+      // An answer is no fix round, so a worker that asks at every round would be answered for ever: as many answers as fixes.
+      const answered = readEvents(id).items.filter((e) => e.t === "verdict" && e.taskId === slug && e.verdict === "answer").length;
+      const { maxFixRounds } = loadConfig();
+      if (answered >= maxFixRounds) throw new Error(`task ${slug} was answered ${answered} times and still asks, which is the limit of rounds; take it over with verdict takeover, cancel it, or ask the user`);
       startFixRoundLocked(id, task, renderAnswerMessage(notes), false, models, "answer");
     }
     return { cursor };

@@ -8,7 +8,7 @@ import { join } from "node:path";
 import type { TestContext } from "node:test";
 import { test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
-import { renderAnswerMessage, renderConflictMessage, renderFixMessage } from "../src/brief.ts";
+import { renderAnswerMessage, renderConflictMessage, renderFixMessage, saveRoundFile } from "../src/brief.ts";
 import { DEFAULT_CONFIG } from "../src/config.ts";
 import type { Candidate, GoalRecord, JobRecord, LedgerEvent, ModelInfo, StallReason, TaskRecord, ToolName, WorkerReport } from "../src/contracts.ts";
 import { jobDir, processStart, projectDir, projectIdFor, scratchDir, worktreesDir } from "../src/home.ts";
@@ -365,6 +365,64 @@ test("a report that is blocked, partial or asks a question has the next action a
   assert.doesNotMatch(showTask(s.id, "hello"), /^next:/m);
   assert.throws(() => tasks.verdictAnswer(s.repo, "hello", s.file("again.md", notes)), /task hello: its newest report neither says blocked or partial nor asks a question, so there is nothing to answer; send notes with verdict fix/);
   assert.deepEqual(verdicts(s), ["hello:answer"]);
+});
+
+test("a worker that keeps asking is answered as many times as a fix is allowed, and then the task is for the lead to take over", async (t) => {
+  const s = setup(t);
+  tasks.goalStart(s.repo, GOAL, null);
+  writeScenarios([ASKS({ status: "partial" }), ASKS({ status: "partial" }), ASKS({ status: "partial" }), ASKS({ status: "partial" }), DONE]);
+  send(s, "hello");
+  await needsReview(s, "hello");
+  for (let n = 1; n <= 3; n++) {
+    tasks.verdictAnswer(s.repo, "hello", s.file(`answer-${n}.md`, "Yes.\n"));
+    await needsReview(s, "hello");
+  }
+  assert.throws(() => tasks.verdictAnswer(s.repo, "hello", s.file("answer-4.md", "Yes.\n")), /task hello was answered 3 times and still asks, which is the limit of rounds; take it over with verdict takeover, cancel it, or ask the user/);
+  assert.deepEqual([task(s, "hello").status, task(s, "hello").fixRounds, verdicts(s).length], ["needs-review", 0, 3]);
+  tasks.verdictFix(s.repo, "hello", s.file("notes.md", NOTES));
+  await needsReview(s, "hello");
+});
+
+test("only a task that waits for its review is answered: a stalled one with an asking report is not, and neither is a task in takeover or one whose accept did not finish", async (t) => {
+  const s = setup(t);
+  const { goal } = tasks.goalStart(s.repo, GOAL, null);
+  void goal;
+  writeScenarios([ASKS({ status: "blocked" }), DONE]);
+  send(s, "hello");
+  await needsReview(s, "hello");
+  // A stalled task whose round holds an asking report: wait says inspect, and show names no answer.
+  const asking = JSON.stringify({ status: "blocked", summary: "Stuck.", files_changed: [], commands_run: [], tests: { ran: false, passed: 0, failed: 0, notes: "" }, open_issues: [], questions_for_lead: ["Which?"] });
+  ledgerTask(s, "early", { status: "stalled", stallReason: "failed", seq: 1 });
+  saveRoundFile(s.id, "early", 1, "report.json", asking);
+  assert.doesNotMatch(showTask(s.id, "early"), /^next:/m);
+  const woke = await waitForNext(s.repo, { since: 0, timeoutMs: 30_000 });
+  assert.deepEqual(woke.kind === "events" && woke.items.filter((i) => i.task === "early").map((i) => [i.next, i.detail]), [["inspect", ""]], "the stall is the news, not the report");
+  // A killed accept that nothing settled: the lead runs that accept again, so an answer is refused until then.
+  const marker = join(projectDir(s.id), "goals", "feat__lifecycle", "accept-intent.json");
+  const lock = join(must(loadState(s.id).goals[GOAL].integrationWorktree, "rev-parse", "--absolute-git-dir"), "index.lock");
+  writeJsonAtomic(marker, { slug: "hello", tip: must(s.repo, "rev-parse", GOAL) });
+  writeFileSync(lock, "");
+  assert.throws(() => tasks.verdictAnswer(s.repo, "hello", s.file("answer.md", "Yes.\n")), /an earlier accept of task hello did not finish: run its accept again, which settles it/);
+  rmSync(lock);
+  rmSync(marker);
+  // A task the lead took over has no worker to answer.
+  tasks.takeover(s.repo, "hello", false);
+  assert.throws(() => tasks.verdictAnswer(s.repo, "hello", s.file("answer.md", "Yes.\n")), /task hello is takeover, not needs-review/);
+  assert.deepEqual(verdicts(s).filter((v) => v.endsWith(":answer")), []);
+});
+
+test("wait settles a killed accept as status does, undone when nothing landed", async (t) => {
+  const s = setup(t);
+  must(s.repo, "config", "user.email", "dev@host.test");
+  tasks.goalStart(s.repo, GOAL, null);
+  writeScenarios([{ ...DONE, writeFile: [{ path: "hello.txt", content: "hello\n" }] }]);
+  send(s, "hello");
+  await needsReview(s, "hello");
+  const marker = join(projectDir(s.id), "goals", "feat__lifecycle", "accept-intent.json");
+  writeJsonAtomic(marker, { slug: "hello", tip: must(s.repo, "rev-parse", GOAL) });
+  await waitForNext(s.repo, { since: ledgerSize(s.id), timeoutMs: 1_500 });
+  assert.equal(existsSync(marker), false, "the wait settled it");
+  assert.equal(task(s, "hello").status, "needs-review");
 });
 
 test("a partial report, and a done report that asks a question, are answered like a blocked one", async (t) => {
@@ -1943,6 +2001,68 @@ test("a commit hook that never returns is stopped at the limit with what it star
   assert.equal(task(s, "hello").status, "integrating");
 });
 
+test("a commit hook whose child outlives git does not hold the accept, and a hook that fails keeps its words in the log", async (t) => {
+  const s = setup(t);
+  tasks.goalStart(s.repo, GOAL, null);
+  writeScenarios([{ ...DONE, writeFile: [{ path: "hello.txt", content: "hello\n" }] }, DONE]);
+  send(s, "hello");
+  await needsReview(s, "hello");
+  const pids = join(s.home, "hook.pids");
+  const hook = (body: string) => {
+    const file = join(s.repo, ".git", "hooks", "pre-commit");
+    writeFileSync(file, `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+  };
+  t.after(() => {
+    for (const pid of (existsSync(pids) ? readFileSync(pids, "utf8") : "").split("\n").filter(Boolean)) kill(Number(pid));
+  });
+  reviewPack(s.repo, "hello");
+  const evidence = s.file("evidence.md", "node --test: 1 passed\n");
+  const message = s.file("message.txt", MESSAGE);
+  // A child that goes on, holding the output of the hook, after the hook and git are done. The accept does not wait for it.
+  hook(`sleep 30 &\necho $! >> "${pids}"\nexit 0`);
+  const started = Date.now();
+  const out = tasks.verdictAccept(s.repo, "hello", evidence, message, { allowTestIdentity: true, commitLimitMs: 20_000 }) as { commit: string };
+  assert.ok(Date.now() - started < 10_000, "the accept did not wait for the child of its hook");
+  assert.equal(must(s.repo, "rev-parse", GOAL), out.commit);
+  // A hook that refuses and leaves a child: git's words, the hook's included, are in the log.
+  tasks.drop(s.repo, "hello", s.file("drop.md", "Redo it.\n"));
+  await needsReview(s, "hello");
+  hook(`echo "LINT-WORDS: fix the header" >&2\nsleep 30 &\necho $! >> "${pids}"\nexit 1`);
+  reviewPack(s.repo, "hello");
+  assert.throws(() => tasks.verdictAccept(s.repo, "hello", evidence, message, { allowTestIdentity: true, commitLimitMs: 20_000 }), /could not commit the change of hello; see .*git\.stderr$/);
+  assert.match(readFileSync(join(s.home, "logs", "git.stderr"), "utf8"), /LINT-WORDS: fix the header/);
+});
+
+test("a commit that outlived its killed accept is left while it is younger than the limit, and stopped by the next accept once it is older", async (t) => {
+  const s = setup(t);
+  must(s.repo, "config", "user.email", "dev@host.test"); // the command is a real one, which refuses a placeholder identity
+  tasks.goalStart(s.repo, GOAL, null);
+  writeScenarios([{ ...DONE, writeFile: [{ path: "hello.txt", content: "hello\n" }] }]);
+  send(s, "hello");
+  await needsReview(s, "hello");
+  reviewPack(s.repo, "hello");
+  const stop = stopPoint();
+  // git, as a kill leaves it: its own lock in the git directory, and a hook that does not return.
+  const unshim = shimGit(t, `*" commit --cleanup=verbatim "*`, `touch "$GIT_DIR/index.lock"; ${stop.action}`);
+  const evidence = s.file("evidence.md", "node --test: 1 passed\n");
+  const message = s.file("message.txt", MESSAGE);
+  const c: ChildProcess = spawn(LAUNCHER, ["verdict", "hello", "accept", "--evidence-file", evidence, "--message-file", message], { cwd: s.repo, stdio: "ignore", detached: true });
+  t.after(() => kill(-c.pid!));
+  assert.ok(await until(stop.reached), "the commit reaches its hook");
+  const ended = new Promise<void>((done) => c.once("exit", () => done()));
+  kill(-c.pid!); // the command's own group: the commit has a group of its own
+  await ended;
+  unshim();
+  assert.equal(stop.reached(), true, "the commit outlives the command that started it");
+  assert.throws(() => tasks.verdictAccept(s.repo, "hello", evidence, message, { allowTestIdentity: true }), /an earlier accept is still finishing; retry shortly/);
+  assert.equal(stop.reached(), true, "younger than the limit, it is left alone");
+  await sleep(1300); // a start time has a resolution of a second
+  const out = tasks.verdictAccept(s.repo, "hello", evidence, message, { allowTestIdentity: true, commitLimitMs: 500 }) as { commit: string };
+  assert.equal(stop.reached(), false, "the commit is stopped, with its group");
+  assert.equal(must(s.repo, "rev-parse", GOAL), out.commit);
+  assert.equal(task(s, "hello").status, "integrating");
+});
+
 test("a cancel of a task whose worktree directory is already gone has no change to copy, and still clears what git kept of it", async (t) => {
   const s = setup(t);
   tasks.goalStart(s.repo, GOAL, null);
@@ -2483,6 +2603,39 @@ test("status settles an accept that was killed: undone when nothing landed, adop
   assert.doesNotMatch(plainStatus(s), /did not finish|did not record/);
   assert.equal(existsSync(marker), false);
   assert.deepEqual([task(s, "hello").status, task(s, "hello").integratedCommit], ["integrating", commit]);
+});
+
+test("a reset that fails when status settles a killed accept is logged once a process, and not at every poll", async (t) => {
+  const s = setup(t);
+  tasks.goalStart(s.repo, GOAL, null);
+  writeScenarios([{ ...DONE, writeFile: [{ path: "hello.txt", content: "hello\n" }] }]);
+  send(s, "hello");
+  await needsReview(s, "hello");
+  writeJsonAtomic(join(projectDir(s.id), "goals", "feat__lifecycle", "accept-intent.json"), { slug: "hello", tip: must(s.repo, "rev-parse", GOAL) });
+  shimGit(t, `*" read-tree --reset -u "*`, `echo "INJECT-RESET-FAILS" >&2; exit 128`);
+  withProjectLock(s.id, () => {
+    for (let poll = 0; poll < 3; poll++) tasks.settleAcceptsLocked(s.id);
+  });
+  const times = (text: string) => text.split("INJECT-RESET-FAILS").length - 1;
+  assert.equal(times(runnerLog()), 1);
+  assert.equal(times(readFileSync(join(s.home, "logs", "git.stderr"), "utf8")), 1);
+});
+
+test("a marker that names a task of another goal adopts nothing", async (t) => {
+  const s = setup(t);
+  must(s.repo, "config", "user.email", "dev@host.test");
+  const { goal } = tasks.goalStart(s.repo, GOAL, null);
+  tasks.goalStart(s.repo, "feat/other", null);
+  writeScenarios([{ ...DONE, writeFile: [{ path: "elsewhere.txt", content: "x\n" }] }]);
+  send(s, "elsewhere", { goal: "feat/other" });
+  await needsReview(s, "elsewhere");
+  const tip = must(s.repo, "rev-parse", GOAL);
+  const commit = moveGoal(goal, (dir) => writeFileSync(join(dir, "elsewhere.txt"), "x\n"), false);
+  const marker = join(projectDir(s.id), "goals", "feat__lifecycle", "accept-intent.json");
+  writeJsonAtomic(marker, { slug: "elsewhere", tip, tree: must(s.repo, "rev-parse", `${commit}^{tree}`) });
+  assert.match(plainStatus(s), /did not finish/);
+  assert.equal(existsSync(marker), true);
+  assert.deepEqual([task(s, "elsewhere").status, task(s, "elsewhere").integratedCommit], ["needs-review", null]);
 });
 
 test("an accept that status cannot settle stays for the accept to report, and is logged once a process", async (t) => {
