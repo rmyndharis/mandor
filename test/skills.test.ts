@@ -120,6 +120,10 @@ test("lead skill says that a stalled task is taken over only with the user's app
   assert.ok(lead.includes("then run `mandor verdict <slug> takeover --approved`. The worktree is reset"));
 });
 
+test("lead skill adds one fixed sentence about the vendor's terms when it offers a change of account", () => {
+  assert.ok(read("lead").includes("say this sentence as it stands: \"Whether a change of account fits the vendor's terms is a question for the account holder.\""));
+});
+
 test("lead skill points at tiers for a tier with no candidate that can run", () => {
   assert.ok(read("lead").includes("`mandor tiers` shows each candidate and what keeps it from running"));
 });
