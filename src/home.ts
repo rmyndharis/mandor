@@ -26,6 +26,14 @@ export function jobDir(jobId: string): string {
   return join(mandorHome(), "jobs", jobId);
 }
 
+// The home that the jobs of one project run on, one directory of the ZCode state per project (adapters/zcode.ts says why). What the
+// tool keeps there between runs, and whatever a worker leaves in it, reaches the later jobs of that project and of no other.
+export const zcodeHomesDir = (): string => join(mandorHome(), "zcode", "homes");
+export function zcodeProjectHome(projectId: string): string {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(projectId) || projectId.includes("..")) throw new Error(`refusing the project id ${projectId}: it is not a plain name; this is a bug in mandor: tell the user`);
+  return join(zcodeHomesDir(), projectId);
+}
+
 // The one temporary directory a Codex or ZCode worker may write besides its worktree: the shared ones (/tmp, $TMPDIR) are
 // where the lead's proofs and the user's own tools keep caches and compiled files, so a worker is given its own, inside the
 // job's directory, which the runner makes before the start.

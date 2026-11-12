@@ -147,17 +147,19 @@ export function readAgyLog(): { argv: string[]; env: Record<string, string>; cwd
   return existsSync(p) ? readFileSync(p, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)) : [];
 }
 
-const zcodeFakeDir = () => join(process.env.MANDOR_HOME!, "zcode", "home", "fake");
+// The fake's control directory is in the home it runs with: a project's own for a job, the one that holds the sign-in for login and
+// the version call.
+const zcodeFakeDir = (projectId?: string) => join(process.env.MANDOR_HOME!, "zcode", ...(projectId === undefined ? ["home"] : ["homes", projectId]), "fake");
 
 // The runs the fake zcode plays, in order; see the fake for a scenario's fields.
-export function writeZcodeScenarios(entries: object[]): void {
-  mkdirSync(zcodeFakeDir(), { recursive: true });
-  rmSync(join(zcodeFakeDir(), "claims"), { recursive: true, force: true });
-  writeFileSync(join(zcodeFakeDir(), "scenarios.json"), JSON.stringify(entries));
+export function writeZcodeScenarios(entries: object[], projectId?: string): void {
+  mkdirSync(zcodeFakeDir(projectId), { recursive: true });
+  rmSync(join(zcodeFakeDir(projectId), "claims"), { recursive: true, force: true });
+  writeFileSync(join(zcodeFakeDir(projectId), "scenarios.json"), JSON.stringify(entries));
 }
 
-export function readZcodeLog(): { argv: string[]; env: Record<string, string>; cwd: string }[] {
-  const p = join(zcodeFakeDir(), "log.jsonl");
+export function readZcodeLog(projectId?: string): { argv: string[]; env: Record<string, string>; cwd: string }[] {
+  const p = join(zcodeFakeDir(projectId), "log.jsonl");
   return existsSync(p) ? readFileSync(p, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)) : [];
 }
 

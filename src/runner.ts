@@ -6,7 +6,7 @@ import { REPORT_SCHEMA, saveRoundFile } from "./brief.ts";
 import { loadConfig } from "./config.ts";
 import type { Adapter, JobRecord, JobResult, JobStatus, ModelInfo, PreparedRun, ProjectState, StallReason, TaskRecord } from "./contracts.ts";
 import { confineProblem, removeTree, sharedTempHolder, worktreeRoot } from "./git.ts";
-import { jobDir, jobTmpDir, mandorHome, processAlive, processStart, projectDir } from "./home.ts";
+import { jobDir, jobTmpDir, mandorHome, processAlive, processStart, projectDir, zcodeHomesDir } from "./home.ts";
 import { appendEvent, appendToolEvent, listProjects, loadState, loadToolState, now, readEvents } from "./ledger.ts";
 import { loadProjectConfig } from "./provision.ts";
 import { catalogGap, countActiveJobs, selectCandidate } from "./routing.ts";
@@ -128,6 +128,21 @@ export function pruneJobs(): void {
   } catch (e) {
     logRunner(`old jobs not pruned: ${(e as Error).message}`);
   }
+  pruneZcodeHomes();
+}
+
+// The ZCode homes of projects that are gone: a project's directory in the state home is what says it exists. Never throws, as it
+// runs where an error would hide the job that just ended.
+export function pruneZcodeHomes(): void {
+  try {
+    for (const id of readdirSync(zcodeHomesDir())) {
+      try {
+        if (!existsSync(projectDir(id))) removeTree(join(zcodeHomesDir(), id));
+      } catch (e) {
+        logRunner(`zcode home of ${id} not pruned: ${(e as Error).message}`);
+      }
+    }
+  } catch {}
 }
 
 const STALLS: readonly JobStatus[] = ["quota", "model-limit", "account-mismatch", "failed", "timeout"];

@@ -1,24 +1,54 @@
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
-import { existsSync, lstatSync, readFileSync } from "node:fs";
+import { createHash, randomBytes } from "node:crypto";
+import { existsSync, lstatSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { parseReport, REPORT_SCHEMA } from "../brief.ts";
 import type { Config } from "../config.ts";
 import { resolveBin } from "../config.ts";
-import { realOf, spawnConfined, writeConfined } from "../git.ts";
+import { realOf, removeTree, spawnConfined, writeConfined } from "../git.ts";
 import type { Adapter, JobResult, JobStatus, ModelInfo, RawRun, WorkerReport } from "../contracts.ts";
-import { jobTmpDir, mandorHome, ownTempEnv, workerEnv } from "../home.ts";
+import { jobTmpDir, mandorHome, ownTempEnv, workerEnv, zcodeProjectHome } from "../home.ts";
 import { ZCODE_BILLING } from "../modelcache.ts";
 import { clampDetail, ensureDir, readJson, writeJsonAtomic } from "../store.ts";
 import { keepVendorStderr, lostSession } from "./vendor.ts";
 
 export const TESTED_ZCODE_VERSION = "0.17.1";
 
-// The worker's own HOME. The CLI reads the user's MCP servers, plugins, hooks, skills and instructions from HOME and
-// nothing moves them, so a worker on the user's HOME loads all of it into every turn. A sign-in also only works under
-// the HOME it was made with, so the worker signs in and runs with this one.
+// The home that holds the sign-in, which `login`, a stored key and the version call use. No worker runs on it and none can read it:
+// each project's jobs run on a home of their own (zcodeProjectHome), which gets a copy of the sign-in at every job start.
+// The CLI reads the user's MCP servers, plugins, hooks, skills and instructions from HOME and nothing moves them, so a worker on
+// the user's HOME would load all of it into every turn.
 export const zcodeHome = (): string => join(mandorHome(), "zcode", "home");
+
+// The key that the CLI encrypts a browser sign-in with is derived from the home directory unless this is set, so a sign-in made
+// under one home would not open under another. One secret for the state home, made on first use, lets the sign-in that `login`
+// makes be read under every project's home. A stored API key is plain and needs none of it.
+function credentialSecret(): string {
+  const file = join(mandorHome(), "zcode", "credential-secret");
+  const read = (): string | null => {
+    try {
+      const text = readFileSync(file, "utf8").trim();
+      return /^[0-9a-f]{64}$/.test(text) ? text : null;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw e;
+    }
+  };
+  const held = read();
+  if (held !== null) return held;
+  ensureDir(dirname(file));
+  const secret = randomBytes(32).toString("hex");
+  try {
+    writeFileSync(file, `${secret}\n`, { flag: "wx", mode: 0o600 });
+    return secret;
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+    const raced = read();
+    if (raced === null) throw new Error(`${file} does not hold a secret; tell the user, who removes it`);
+    return raced;
+  }
+}
 
 const SESSION = /^sess_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const IDS = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|(?<![A-Za-z0-9])(?:(?:org|user)-[A-Za-z0-9]{20,}|req_[A-Za-z0-9]{16,})/gi;
@@ -51,8 +81,7 @@ function layout(bin: string): { start: string[]; catalog: string; electron: bool
 // writes or starts there would then work where the link leads. The profile keeps the home from being removed, the writes
 // below are confined to it, and this names what is wrong before any of them and before the CLI starts, which signs in with
 // no profile at all and lists its version with only its writes confined to the home.
-function refuseLinks(): void {
-  const home = zcodeHome();
+function refuseLinks(home: string = zcodeHome()): void {
   for (const path of [home, join(home, ".zcode"), join(home, ".zcode", "v2")]) {
     let st;
     try {
@@ -64,15 +93,34 @@ function refuseLinks(): void {
   }
 }
 
-// What the CLI needs wherever it runs: the worker's HOME and the catalog, copied into that HOME because the CLI writes
-// lock files next to it. The copy is readable by the user only, as the app's catalog is readable by everyone.
-export function zcodeEnv(bin: string, base: Record<string, string>): Record<string, string> {
-  refuseLinks();
-  const home = zcodeHome();
+// What the CLI needs wherever it runs: a HOME, the home of the sign-in unless a project's is given, and the catalog, copied into that
+// HOME because the CLI writes lock files next to it, and the secret that its credentials are encrypted with. The copy is readable
+// by the user only, as the app's catalog is readable by everyone.
+export function zcodeEnv(bin: string, base: Record<string, string>, home: string = zcodeHome()): Record<string, string> {
+  refuseLinks(home);
   ensureDir(dirname(home));
   const { catalog, electron } = layout(bin);
   writeConfined(home, "zcode-builtin.json", readFileSync(catalog));
-  return { ...base, HOME: home, ZCODE_BUILTIN_PROVIDER_CONFIG_FILE: join(home, "zcode-builtin.json"), ...(electron ? { ELECTRON_RUN_AS_NODE: "1" } : {}) };
+  return { ...base, HOME: home, ZCODE_BUILTIN_PROVIDER_CONFIG_FILE: join(home, "zcode-builtin.json"), ZCODE_CREDENTIAL_SECRET: credentialSecret(), ...(electron ? { ELECTRON_RUN_AS_NODE: "1" } : {}) };
+}
+
+const SIGN_IN_FILES = [join(".zcode", "v2", "credentials.json"), join(".zcode", "v2", "provider_config.json")];
+
+// The sign-in of the home that holds it, copied into a project's home at every job start: what a worker did to its own copy, a
+// key or a plan put in its place, is undone by the next job, and no worker ever reaches the original. A file the sign-in lacks is
+// taken out of the project's home as well.
+function seedSignIn(home: string): void {
+  refuseLinks();
+  for (const rel of SIGN_IN_FILES) {
+    let data: Buffer | null = null;
+    try {
+      data = readFileSync(join(zcodeHome(), rel));
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+    }
+    if (data !== null) writeConfined(home, rel, data);
+    else if (lstatSync(join(home, rel), { throwIfNoEntry: false }) !== undefined) removeTree(join(home, rel));
+  }
 }
 
 export const zcodeStart = (bin: string): string[] => layout(bin).start;
@@ -187,7 +235,7 @@ export const fitsReport = (v: Record<string, unknown>): boolean => parseReport(J
 // directories and the state directory hold cannot be read, but for the worktree, the worker's home and the job's own
 // directory, which holds the provider file; a path's metadata stays readable, as the CLI's database open resolves every
 // directory above its file. The paths are parameters.
-function sandbox(worktree: string, jobFiles: string, tmp: string | null, addDirs: string[], denyRead: string[]): string[] {
+function sandbox(worktree: string, workerHome: string, jobFiles: string, tmp: string | null, addDirs: string[], denyRead: string[]): string[] {
   const user = homedir();
   // Seatbelt matches the real path of what a process opens, so a path that goes through a link (a state home spelled with
   // /tmp or /var, a cache directory that is a link) would match nothing. The state home is resolved, and what lies under
@@ -203,7 +251,7 @@ function sandbox(worktree: string, jobFiles: string, tmp: string | null, addDirs
   // The project's own paths close with the credential directories, and the worktree, the worker's home, the job's directory and
   // the cache directories that the project opens are opened after them, so no entry can hide those.
   const closed = [...new Set([...PRIVATE_HOME_PATHS.map((p) => join(user, p)), ...denyRead].map(realOf))].filter((p) => !p.startsWith("/dev/"));
-  const params: [string, string][] = [["WT", worktree], ["WH", under(zcodeHome())], ["JOB", under(jobFiles)], ["STATE", real],
+  const params: [string, string][] = [["WT", worktree], ["WH", under(workerHome)], ["JOB", under(jobFiles)], ["STATE", real],
     ...(tmp === null ? [] : [["JT", under(tmp)] as [string, string]]),
     ...addDirs.map((d, i): [string, string] => [`ADD${i}`, realOf(d)]), ...closed.map((p, i): [string, string] => [`PRIV${i}`, p])];
   const sub = (names: string[]) => names.map((n) => `(subpath (param "${n}"))`).join(" ");
@@ -278,12 +326,16 @@ export function createZcodeAdapter(cfg: Config): Adapter {
       if (resume !== null && !SESSION.test(resume)) throw new Error("zcode resume needs a session id; run mandor reassign on the task, which starts a new session");
       // The CLI has no model option: a session starts on the default of the personal provider file it is given.
       const personal = join(dirname(files.schemaPath), "zcode-provider.json");
-      writeJsonAtomic(personal, providerFile({ providerId: signedInProvider(), modelId: model, options: { reasoningLevel: effort } }));
+      const provider = signedInProvider();
+      const home = zcodeProjectHome(job.projectId);
+      writeJsonAtomic(personal, providerFile({ providerId: provider, modelId: model, options: { reasoningLevel: effort } }));
       // No working directory option: the runner starts the worker in the worktree's root, which it has verified.
       const own = project.sharedTemp === true ? null : jobTmpDir(job.id);
-      const args = [...sandbox(job.worktree, dirname(personal), own, project.addDirs, project.denyRead ?? []), ...zcodeStart(job.bin), ...(resume === null ? [] : ["--resume", resume]),
+      const env = zcodeEnv(job.bin, job.env, home);
+      seedSignIn(home);
+      const args = [...sandbox(job.worktree, home, dirname(personal), own, project.addDirs, project.denyRead ?? []), ...zcodeStart(job.bin), ...(resume === null ? [] : ["--resume", resume]),
         "-p", prompt, "--output-format", "stream-json", "--mode", "yolo", "--disallowed-tools", DISALLOWED_TOOLS];
-      return { command: "/usr/bin/sandbox-exec", args, env: { ...zcodeEnv(job.bin, job.env), ...(own === null ? {} : ownTempEnv(own)), ZCODE_PERSONAL_PROVIDER_CONFIG_FILE: personal } };
+      return { command: "/usr/bin/sandbox-exec", args, env: { ...env, ...(own === null ? {} : ownTempEnv(own)), ZCODE_PERSONAL_PROVIDER_CONFIG_FILE: personal } };
     },
 
     classify(raw: RawRun): JobResult {

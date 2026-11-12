@@ -13,11 +13,11 @@ import { createZcodeAdapter, lastJsonObject, REPORT_FORMAT, TESTED_ZCODE_VERSION
 import { REPORT_SCHEMA } from "../src/brief.ts";
 import { DEFAULT_CONFIG, resolveBin } from "../src/config.ts";
 import type { Candidate, JobRecord, RawRun } from "../src/contracts.ts";
-import { jobDir, jobTmpDir, mandorHome, processStart, projectIdFor, scratchDir } from "../src/home.ts";
+import { jobDir, jobTmpDir, mandorHome, processStart, projectDir, projectIdFor, scratchDir, zcodeProjectHome } from "../src/home.ts";
 import { loadState, loadToolState } from "../src/ledger.ts";
 import { emptyProjectConfig, saveProjectConfig } from "../src/provision.ts";
 import { reviewPack } from "../src/review.ts";
-import { readJob } from "../src/runner.ts";
+import { pruneZcodeHomes, readJob } from "../src/runner.ts";
 import { showTask } from "../src/status.ts";
 import { dispatch, goalStart, verdictFix } from "../src/tasks.ts";
 import { readZcodeLog, temp, tempHome, tempRepo, writeZcodeConfig, writeZcodeScenarios, zcodeSignIn } from "./helpers.ts";
@@ -225,8 +225,8 @@ function prepared(over: Partial<JobRecord> = {}, project: { network: boolean; ad
 
 test("prepare runs the CLI inside sandbox-exec, with the worker's own HOME, the prompt as its argument and the job's model in a file of its own", () => {
   const { home, dir, run, worktree, j } = prepared();
-  const workerHome = join(home, "zcode", "home");
-  assert.equal(zcodeHome(), workerHome);
+  const workerHome = zcodeProjectHome(j.projectId);
+  assert.equal(workerHome, join(home, "zcode", "homes", j.projectId));
   assert.equal(run.command, "/usr/bin/sandbox-exec");
   const at = run.args.indexOf(FAKE);
   assert.ok(at > 0, "the worker binary follows the sandbox's own arguments");
@@ -264,6 +264,111 @@ test("prepare runs the CLI inside sandbox-exec, with the worker's own HOME, the 
   assert.equal(run.env.ELECTRON_RUN_AS_NODE, undefined, "only an app bundle is started as Node");
 });
 
+// What prepare takes: the job's own files, as prepared() makes them.
+const filesOf = (dir: string) => ({ schemaPath: join(dir, "schema.json"), lastMessagePath: join(dir, "last-message.json") });
+
+test("a job runs on a home of its project's own, and the home that holds the sign-in is not the worker's", () => {
+  const { home, run, j } = prepared();
+  const mine = zcodeProjectHome(j.projectId);
+  assert.equal(mine, join(home, "zcode", "homes", j.projectId));
+  assert.notEqual(mine, zcodeHome());
+  assert.equal(run.env.HOME, mine);
+  assert.equal(run.env.ZCODE_BUILTIN_PROVIDER_CONFIG_FILE, join(mine, "zcode-builtin.json"));
+  assert.ok(existsSync(join(mine, "zcode-builtin.json")), "the catalog is copied to where the worker may lock it");
+  const sandbox = run.args.slice(0, run.args.indexOf(FAKE));
+  assert.ok(sandbox.includes(`WH=${mine}`), sandbox.join(" "));
+  assert.ok(!sandbox.includes(`WH=${zcodeHome()}`), "the home of the sign-in is not opened");
+  assert.throws(() => zcodeProjectHome("../escape"), /^Error: refusing the project id \.\.\/escape: .*; this is a bug in mandor: tell the user$/);
+});
+
+test("each job start copies the sign-in into the project's home, and what a worker changed of it is put back", () => {
+  const { dir, j } = prepared();
+  zcodeUseApiKey("zai", "k-secret-1");
+  const base = join(zcodeHome(), ".zcode", "v2");
+  const mine = join(zcodeProjectHome(j.projectId), ".zcode", "v2");
+  zcode().prepare(j, filesOf(dir), { network: true, addDirs: [] });
+  for (const file of ["credentials.json", "provider_config.json"]) {
+    assert.equal(readFileSync(join(mine, file), "utf8"), readFileSync(join(base, file), "utf8"), file);
+    assert.equal(statSync(join(mine, file)).mode & 0o777, 0o600, file);
+  }
+  // The worker replaced its copies: the key with another, the plan with one of its choosing.
+  writeFileSync(join(mine, "credentials.json"), '{"changed":true}');
+  writeFileSync(join(mine, "provider_config.json"), JSON.stringify({ schemaVersion: 1, config: { defaultModelSelection: { providerId: "account:other-plan", modelId: "GLM-5.3" } } }));
+  const again = zcode().prepare(j, filesOf(dir), { network: true, addDirs: [] });
+  for (const file of ["credentials.json", "provider_config.json"]) assert.equal(readFileSync(join(mine, file), "utf8"), readFileSync(join(base, file), "utf8"), `${file} is put back`);
+  assert.equal(JSON.parse(readFileSync(again.env.ZCODE_PERSONAL_PROVIDER_CONFIG_FILE, "utf8")).config.defaultModelSelection.providerId, PLAN, "the plan is the one of the sign-in");
+  // A sign-in that was taken away does not stay in the project's home.
+  rmSync(join(base, "credentials.json"));
+  zcode().prepare(j, filesOf(dir), { network: true, addDirs: [] });
+  assert.equal(existsSync(join(mine, "credentials.json")), false);
+});
+
+test("under the profile a command reads and writes its own project's home, and neither another project's home nor the home that holds the sign-in", () => {
+  const { j, dir, run } = prepared();
+  zcodeUseApiKey("zai", "k-secret-2");
+  const own = zcodeProjectHome(j.projectId);
+  const other = prepare2("beta-000000000002");
+  function prepare2(projectId: string) {
+    const made = zcode().prepare({ ...j, projectId }, filesOf(dir), { network: true, addDirs: [] });
+    writeFileSync(join(zcodeProjectHome(projectId), "marker"), "of the other project\n");
+    return made;
+  }
+  const mine = zcode().prepare(j, filesOf(dir), { network: true, addDirs: [] });
+  writeFileSync(join(own, "marker"), "mine\n");
+  const reads = (path: string) => under(mine, "/bin/cat", path).status === 0;
+  assert.equal(reads(join(own, "marker")), true, "its own home");
+  assert.equal(reads(join(own, ".zcode", "v2", "credentials.json")), true, "its own copy of the key, which the CLI reads");
+  assert.equal(reads(join(zcodeProjectHome("beta-000000000002"), "marker")), false, "another project's home");
+  assert.equal(reads(join(zcodeHome(), ".zcode", "v2", "credentials.json")), false, "the home that holds the sign-in");
+  assert.equal(under(mine, "/bin/sh", "-c", `echo x > "${own}/written"`).status, 0, "it writes its own home");
+  assert.notEqual(under(mine, "/bin/sh", "-c", `echo x > "${zcodeProjectHome("beta-000000000002")}/written"`).status, 0, "and not another's");
+  assert.equal(existsSync(join(zcodeProjectHome("beta-000000000002"), "written")), false);
+  assert.ok(run.args.length > 0 && other.args.length > 0);
+});
+
+test("every run of the CLI gets the same credential secret, kept in a file of the state home that only the user reads", () => {
+  const { home, run, j, dir } = prepared();
+  const file = join(home, "zcode", "credential-secret");
+  const secret = readFileSync(file, "utf8").trim();
+  assert.match(secret, /^[0-9a-f]{64}$/);
+  assert.equal(statSync(file).mode & 0o777, 0o600);
+  assert.equal(run.env.ZCODE_CREDENTIAL_SECRET, secret);
+  assert.equal(zcodeEnv(FAKE, {}).ZCODE_CREDENTIAL_SECRET, secret, "the sign-in and the version call as well");
+  const other = zcode().prepare({ ...j, projectId: "other-000000000003" }, filesOf(dir), { network: true, addDirs: [] });
+  assert.equal(other.env.ZCODE_CREDENTIAL_SECRET, secret, "another project, the same secret, so a sign-in made once is read everywhere");
+  assert.ok(!run.args.some((a) => a.includes(secret)), "never an argument");
+  assert.equal(readFileSync(file, "utf8").trim(), secret, "and not made again");
+});
+
+test("a project's home, or a directory of its sign-in, that the worker replaced with a link is refused before anything is written", () => {
+  const { dir, j } = prepared();
+  const mine = zcodeProjectHome(j.projectId);
+  const victim = temp("mandor-zvictim-");
+  const refuse = (path: string) => new RegExp(`^Error: refusing ${path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}: not a directory in the worker's home; tell the user, who removes it$`);
+  rmSync(join(mine, ".zcode"), { recursive: true });
+  symlinkSync(victim, join(mine, ".zcode"));
+  assert.throws(() => zcode().prepare(j, filesOf(dir), { network: true, addDirs: [] }), refuse(join(mine, ".zcode")));
+  assert.deepEqual(readdirSync(victim), [], "nothing was written where the link leads");
+  rmSync(mine, { recursive: true });
+  symlinkSync(victim, mine);
+  assert.throws(() => zcode().prepare(j, filesOf(dir), { network: true, addDirs: [] }), refuse(mine));
+  assert.deepEqual(readdirSync(victim), [], "nor through the home");
+});
+
+test("the homes of projects that no longer exist are removed, and the others stay", () => {
+  const home = tempHome();
+  mkdirSync(projectDir("live-000000000001"), { recursive: true });
+  for (const id of ["live-000000000001", "gone-000000000002"]) {
+    mkdirSync(join(home, "zcode", "homes", id, ".zcode"), { recursive: true });
+    writeFileSync(join(home, "zcode", "homes", id, "mark"), "x");
+  }
+  pruneZcodeHomes();
+  assert.deepEqual(readdirSync(join(home, "zcode", "homes")), ["live-000000000001"]);
+  assert.equal(existsSync(join(home, "zcode", "homes", "live-000000000001", "mark")), true);
+  rmSync(join(home, "zcode", "homes"), { recursive: true });
+  assert.doesNotThrow(() => pruneZcodeHomes(), "no homes at all");
+});
+
 // A command run under the profile of a prepared run, as the CLI's own would be.
 const under = (run: { args: string[]; env: Record<string, string> }, ...command: string[]) =>
   spawnSync("/usr/bin/sandbox-exec", [...run.args.slice(0, run.args.indexOf(FAKE)), ...command], { env: run.env, encoding: "utf8" });
@@ -291,7 +396,7 @@ test("the profile names the paths under the state home as they really are, so a 
   const { run, worktree, j, home } = prepared({}, { network: true, addDirs: [] }, true, true);
   const own = jobTmpDir(j.id);
   mkdirSync(own, { recursive: true });
-  assert.deepEqual(writes(run, { wt: worktree, own, home: zcodeHome() }), ["wt-ok", "own-ok", "home-ok"]);
+  assert.deepEqual(writes(run, { wt: worktree, own, home: zcodeProjectHome(j.projectId) }), ["wt-ok", "own-ok", "home-ok"]);
   const secret = join(realpathSync(home), "secret.txt");
   writeFileSync(secret, "state\n");
   const at = run.args.indexOf(FAKE);
@@ -356,7 +461,7 @@ test("an app bundle is started as Node with its script, and its catalog is the b
   const at = run.args.indexOf(j.bin);
   assert.deepEqual(run.args.slice(at, at + 3), [j.bin, join(app, "Resources", "glm", "zcode.cjs"), "-p"]);
   assert.equal(run.env.ELECTRON_RUN_AS_NODE, "1");
-  assert.equal(readFileSync(join(home, "zcode", "home", "zcode-builtin.json"), "utf8"), readFileSync(join(app, "Resources", "config", "provider", "zcode-builtin.json"), "utf8"));
+  assert.equal(readFileSync(join(zcodeProjectHome(j.projectId), "zcode-builtin.json"), "utf8"), readFileSync(join(app, "Resources", "config", "provider", "zcode-builtin.json"), "utf8"));
 });
 
 test("the catalog copy in the worker home is readable by the user only, and stays so when it is copied again", () => {
@@ -494,7 +599,7 @@ test("the profile denies the contents of the paths that the project lists beside
   // What the project lists never hides the worktree, the worker's home or the job's directory, which the profile opens last.
   const parent = prepared({}, { network: true, addDirs: [], denyRead: [realpathSync(tmpdir())] });
   writeFileSync(join(parent.worktree, "plain.txt"), "fine\n");
-  assert.deepEqual(reads(parent.run, join(parent.worktree, "plain.txt"), join(zcodeHome(), "zcode-builtin.json")), [true, true]);
+  assert.deepEqual(reads(parent.run, join(parent.worktree, "plain.txt"), join(zcodeProjectHome(parent.j.projectId), "zcode-builtin.json")), [true, true]);
 });
 
 test("an entry of the project that holds a cache directory of --worker-add-dir leaves that directory readable, and closes the rest of its own", (t) => {
@@ -515,8 +620,8 @@ test("an entry of the project that holds a cache directory of --worker-add-dir l
 });
 
 test("under the profile a command cannot remove, move or replace the worker's home, and still writes inside it", () => {
-  const { run, worktree } = prepared();
-  const home = zcodeHome();
+  const { run, worktree, j } = prepared();
+  const home = zcodeProjectHome(j.projectId);
   // The same profile lets it write inside the home, so a refusal below is the profile's and not a failed start.
   assert.equal(under(run, "/bin/sh", "-c", `echo x > "${home}/mark"`).status, 0);
   assert.equal(readFileSync(join(home, "mark"), "utf8"), "x\n");
@@ -727,7 +832,7 @@ test("a task sent to zcode runs in its worktree under the worker's own HOME, and
   writeZcodeScenarios([
     { writeFile: [{ path: "hello.txt", content: "hello\n" }], commands: ["ls -a"] },
     { writeFile: [{ path: "hello.txt", content: "hello\nworld\n" }] },
-  ]);
+  ], p.id);
   const { task } = p.send("hello");
   assert.deepEqual([task.status, task.candidate], ["working", FLASH]);
   assert.ok(await until(() => loadState(p.id).tasks.hello.status === "needs-review"), showTask(p.id, "hello"));
@@ -736,8 +841,8 @@ test("a task sent to zcode runs in its worktree under the worker's own HOME, and
   assert.equal(readFileSync(join(done.worktree!, "hello.txt"), "utf8"), "hello\n");
   const job1 = readJob(done.jobIds[0])!;
   assert.equal(job1.bin, join(import.meta.dirname, "fake-bin", "fake-zcode.mjs"));
-  const [run1] = readZcodeLog();
-  assert.equal(run1.env.HOME, join(p.home, "zcode", "home"));
+  const [run1] = readZcodeLog(p.id);
+  assert.equal(run1.env.HOME, zcodeProjectHome(p.id));
   assert.equal(run1.cwd, realpathSync.native(done.worktree!));
   assert.equal(run1.env.MANDOR_JOB, job1.id);
   assert.equal(run1.argv[run1.argv.indexOf("-p") + 1], readFileSync(done.briefPath, "utf8") + REPORT_FORMAT, "the prompt is the rendered brief and the report's format");
@@ -747,7 +852,7 @@ test("a task sent to zcode runs in its worktree under the worker's own HOME, and
   writeFileSync(notes, "Add a second line.\n");
   verdictFix(p.repo, "hello", notes);
   assert.ok(await until(() => loadState(p.id).tasks.hello.status === "needs-review" && loadState(p.id).tasks.hello.seq === 2), showTask(p.id, "hello"));
-  const run2 = readZcodeLog()[1];
+  const run2 = readZcodeLog(p.id)[1];
   assert.deepEqual(run2.argv.slice(0, 2), ["--resume", "sess_00000000-0000-7000-8000-000000000b01"]);
   assert.equal(readFileSync(join(done.worktree!, "hello.txt"), "utf8"), "hello\nworld\n");
   // Each run's usage is its own: the second is not reduced by the first.
@@ -763,17 +868,16 @@ test("a path that the project lists is closed to the reads of its ZCode jobs, an
   const other = join(temp("mandor-zdeny-"), "other.txt");
   for (const p of [listed, other]) writeFileSync(p, "mine\n");
   const p = project(t, { denyRead: [listed] });
-  mkdirSync(join(zcodeHome(), "fake"), { recursive: true });
-  writeFileSync(join(zcodeHome(), "fake", "readprobe"), `${listed}\n${other}\n`);
-  writeZcodeScenarios([{ writeFile: [{ path: "hello.txt", content: "hello\n" }] }]);
+  writeZcodeScenarios([{ writeFile: [{ path: "hello.txt", content: "hello\n" }] }], p.id);
+  writeFileSync(join(zcodeProjectHome(p.id), "fake", "readprobe"), `${listed}\n${other}\n`);
   p.send("hello");
   assert.ok(await until(() => loadState(p.id).tasks.hello.status === "needs-review"), showTask(p.id, "hello"));
-  assert.equal(readFileSync(join(zcodeHome(), "fake", "probe.log"), "utf8"), `${listed}: denied\n${other}: read\n`);
+  assert.equal(readFileSync(join(zcodeProjectHome(p.id), "fake", "probe.log"), "utf8"), `${listed}: denied\n${other}: read\n`);
 });
 
 test("a zcode run on another model than the job's stalls the task, and a quota stop marks the tool exhausted", async (t) => {
   const p = project(t);
-  writeZcodeScenarios([{ model: "GLM-5.3" }, { kind: "quota" }]);
+  writeZcodeScenarios([{ model: "GLM-5.3" }, { kind: "quota" }], p.id);
   p.send("wrong");
   assert.ok(await until(() => loadState(p.id).tasks.wrong.status === "stalled"), showTask(p.id, "wrong"));
   assert.match(showTask(p.id, "wrong"), /last outcome: failed: ran on GLM-5\.3, not on GLM-5\.3-Flash/);
@@ -787,7 +891,7 @@ test("a claimed command the zcode log does not show is flagged", async (t) => {
   const p = project(t);
   const report = { status: "done", summary: "Done.", files_changed: ["a.txt"], commands_run: [{ command: "npm test", exit_code: 0, summary: "passed" }, { command: "ls -a", exit_code: 0, summary: "listed" }],
     tests: { ran: true, passed: 3, failed: 0, notes: "" }, open_issues: [], questions_for_lead: [] };
-  writeZcodeScenarios([{ writeFile: [{ path: "a.txt", content: "a\n" }], commands: ["ls -a"], response: JSON.stringify(report) }]);
+  writeZcodeScenarios([{ writeFile: [{ path: "a.txt", content: "a\n" }], commands: ["ls -a"], response: JSON.stringify(report) }], p.id);
   p.send("claim");
   assert.ok(await until(() => loadState(p.id).tasks.claim.status === "needs-review"), showTask(p.id, "claim"));
   assert.deepEqual(reviewPack(p.repo, "claim").redFlags.filter((f) => f.kind === "unrun-claim"), [{ kind: "unrun-claim", detail: "commands_run[0] has no command_execution item in the job's raw.log" }]);
@@ -795,10 +899,10 @@ test("a claimed command the zcode log does not show is flagged", async (t) => {
 
 test("dispatch refuses while an enabled tool's binary is missing, and a zcode candidate in a project without the network", (t) => {
   const p = project(t, { network: false });
-  writeZcodeScenarios([{}]);
+  writeZcodeScenarios([{}], p.id);
   assert.throws(() => p.send("closed"), /^Error: cannot use zcode:GLM-5.3-Flash@high: zcode needs worker network, which this project does not allow; pass another candidate to --use, or dispatch without it$/);
   assert.equal(loadState(p.id).tasks.closed, undefined, "no task is left behind");
-  assert.equal(readZcodeLog().length, 0, "the worker never started");
+  assert.equal(readZcodeLog(p.id).length, 0, "the worker never started");
   const cfg = JSON.parse(readFileSync(join(p.home, "config.json"), "utf8"));
   cfg.tools.zcode.bin = "/nonexistent/zcode";
   writeFileSync(join(p.home, "config.json"), JSON.stringify(cfg));
