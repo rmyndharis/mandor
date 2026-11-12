@@ -310,6 +310,34 @@ test("three counted fixes run and the fourth stalls with fix-rounds-exceeded", a
   assert.deepEqual(woke.kind === "events" && woke.items.map((i) => [i.task, i.next]), [["hello", "fix-rounds-exceeded"]]);
 });
 
+test("a review whose ignored paths cannot be listed still gives its pack, with a flag that says to rebuild, and accept follows it", async (t) => {
+  const s = setup(t);
+  tasks.goalStart(s.repo, GOAL, null);
+  writeScenarios([{ ...DONE, writeFile: [{ path: "hello.txt", content: "hello\n" }] }]);
+  send(s, "hello");
+  await needsReview(s, "hello");
+  const unshim = shimGit(t, `*" ls-files -z --others --ignored "*`, "echo INJECT-LISTING-ERROR >&2; exit 128");
+  const pack = reviewPack(s.repo, "hello");
+  unshim();
+  assert.deepEqual(pack.redFlags.filter((f) => f.kind === "ignored-changed").map((f) => f.detail), ["the ignored paths could not be listed, so delete them and rebuild before the proofs"]);
+  assert.ok(!JSON.stringify(pack).includes("INJECT-LISTING-ERROR"), "git's words are not passed on");
+  assert.ok((unreviewedAccept(s, "hello") as { commit: string }).commit.length >= 7, "the review that gave the pack is the one accept follows");
+});
+
+test("a review that fails after it staged the worktree leaves no review on record, so accept does not follow it", async (t) => {
+  const s = setup(t);
+  tasks.goalStart(s.repo, GOAL, null);
+  writeScenarios([{ ...DONE, writeFile: [{ path: "hello.txt", content: "hello\n" }] }]);
+  send(s, "hello");
+  await needsReview(s, "hello");
+  // A round file that cannot be read stops the pack after the staging.
+  const report = roundFile(s, "hello", 1, "report.json");
+  rmSync(report);
+  mkdirSync(report);
+  assert.throws(() => reviewPack(s.repo, "hello"), /EISDIR/);
+  assert.throws(() => unreviewedAccept(s, "hello"), /task hello has no review on record; run mandor review hello first/);
+});
+
 test("a fix at the tool's limit waits, and the pump starts it when a slot frees", async (t) => {
   const s = setup(t);
   tasks.goalStart(s.repo, GOAL, null);
@@ -725,6 +753,30 @@ test("a conflict over the fix limit still runs its round: it does not count", as
   assert.deepEqual([task(s, "hello").base, task(s, "hello").fixRounds, task(s, "hello").status], [tip, 4, "working"]);
   assert.notEqual(before.base, tip);
   await needsReview(s, "hello");
+});
+
+test("a rebase puts the worker's files back when the worker's own ignore rules had made them visible", async (t) => {
+  const s = setup(t);
+  writeFileSync(join(s.repo, ".gitignore"), "dist/*\n");
+  must(s.repo, "add", ".gitignore");
+  must(s.repo, "commit", "-qm", "Ignore the output");
+  const goal = tenLineGoal(s);
+  const files = [
+    { path: "f.txt", content: tenWith({ 3: "task" }) }, { path: ".gitignore", content: "dist/*\n!dist/config.json\n" }, { path: "dist/config.json", content: "{}\n" },
+  ];
+  writeScenarios([{ ...DONE, writeFile: files }, DONE, DONE]);
+  send(s, "hello");
+  await needsReview(s, "hello");
+  onGoal(goal, tenWith({ 5: "goal" }));
+  const before = ledgerSize(s.id);
+  assert.deepEqual(accept(s, "hello"), { rebased: true, cursor: before });
+  const wt = task(s, "hello").worktree!;
+  assert.equal(readFileSync(join(wt, "dist", "config.json"), "utf8"), "{}\n");
+  assert.equal(readFileSync(join(wt, ".gitignore"), "utf8"), "dist/*\n!dist/config.json\n");
+  assert.equal(readFileSync(join(wt, "f.txt"), "utf8"), tenWith({ 3: "task", 5: "goal" }));
+  assert.deepEqual([existsSync(rebaseFile(s, "rebase.json")), existsSync(rebaseFile(s, "rebase.patch"))], [false, false]);
+  const commit = committed(s, "hello");
+  assert.equal(must(s.repo, "show", `${commit}:dist/config.json`), "{}");
 });
 
 test("context-only overlap: clean merge returns to needs-review with no worker job", async (t) => {

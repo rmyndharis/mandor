@@ -901,6 +901,107 @@ test("ignoredChanged counts the ignored files whose status changed since a time,
   assert.deepEqual(ignoredChanged(repo, wt, Date.now() + 60_000), [], "nothing changed after a later time");
 });
 
+test("ignoredChanged counts a path it cannot read as changed, and passes no error on", () => {
+  const { repo, wt } = withWorktree();
+  writeFileSync(join(wt, ".gitignore"), "build/\n");
+  mkdirSync(join(wt, "build", "sub"), { recursive: true });
+  writeFileSync(join(wt, "build", "sub", "a.js"), "x\n");
+  // A directory that can be listed and not searched: git names its file, and looking at the file fails with EACCES.
+  chmodSync(join(wt, "build", "sub"), 0o600);
+  try {
+    assert.deepEqual(ignoredChanged(repo, wt, Date.now() + 60_000), [{ path: "build/", files: 1 }], "what cannot be shown unchanged counts, whatever the time");
+  } finally {
+    chmodSync(join(wt, "build", "sub"), 0o755);
+  }
+});
+
+test("a staging removes what a killed one left in the staging directory an hour ago or more, and keeps a newer one", () => {
+  const { repo, wt, base } = withWorktree();
+  const stages = join(home, "stage");
+  mkdirSync(join(stages, "s-killed", "objects", "ab"), { recursive: true });
+  writeFileSync(join(stages, "s-killed", "objects", "ab", "tmp_obj_1"), "left\n");
+  mkdirSync(join(stages, "s-running"));
+  const old = new Date(Date.now() - 2 * 3_600_000);
+  utimesSync(join(stages, "s-killed"), old, old);
+  diffStat(repo, wt, base);
+  assert.deepEqual(readdirSync(stages), ["s-running"]);
+  rmSync(join(stages, "s-running"), { recursive: true });
+});
+
+test("staging reads the files whatever the user's configuration trusts of the stat data an index holds", async () => {
+  for (const [key, value] of [["core.ignoreStat", "true"], ["core.trustctime", "false"], ["core.checkStat", "minimal"]]) {
+    const repo = tempRepo();
+    must(repo, "config", key, value);
+    const base = revParse(repo, "HEAD");
+    const wt = join(owned(), "task");
+    addWorktree(repo, wt, "wip/task", base);
+    // A checkout that is not racy any more: the file is ten seconds older than the index that records it.
+    const file = join(wt, "README.md");
+    const past = new Date(Date.now() - 10_000);
+    utimesSync(file, past, past);
+    must(wt, "-c", "core.ignoreStat=false", "update-index", "--really-refresh");
+    // The same size, the same inode and the recorded modification time: only the change time moved, which git reads in whole
+    // seconds, so a second goes by first.
+    await sleep(1100);
+    const text = readFileSync(file, "utf8");
+    writeFileSync(file, text.replace(/\w/, (c) => (c === "z" ? "y" : "z")));
+    utimesSync(file, past, past);
+    assert.match(diffStat(repo, wt, base), /README\.md/, `${key}=${value}`);
+  }
+});
+
+test("staging a worktree whose index is split reads the whole of it, and leaves no shared index in the git directory", () => {
+  const repo = tempRepo();
+  must(repo, "config", "core.splitIndex", "true");
+  const base = revParse(repo, "HEAD");
+  const wt = join(owned(), "task");
+  addWorktree(repo, wt, "wip/task", base);
+  must(wt, "update-index", "--split-index");
+  const admin = must(wt, "rev-parse", "--absolute-git-dir").trim();
+  const shared = () => readdirSync(admin).filter((n) => n.startsWith("sharedindex.")).sort();
+  assert.ok(shared().length > 0, "the index is split");
+  const before = shared();
+  writeFileSync(join(wt, "README.md"), "changed\n");
+  writeFileSync(join(wt, "new.txt"), "new\n");
+  assert.match(diffStat(repo, wt, base), /README\.md[\s\S]*new\.txt/);
+  assert.deepEqual(shared(), before, "nothing was written beside the worker's own index");
+});
+
+test("staging works in a repository whose path holds a colon, as the alternate object directory is quoted", () => {
+  const colon = join(temp(), "a:b");
+  mkdirSync(colon);
+  must(colon, "init", "-q", "-b", "main");
+  must(colon, "config", "user.name", "Test");
+  must(colon, "config", "user.email", "test@example.invalid");
+  writeFileSync(join(colon, "README.md"), "temp repo\n");
+  must(colon, "add", "README.md");
+  must(colon, "commit", "-q", "-m", "Initial commit");
+  const base = revParse(colon, "HEAD");
+  const wt = join(owned(), "task");
+  addWorktree(colon, wt, "wip/task", base);
+  writeFileSync(join(wt, "README.md"), "changed\n");
+  assert.match(diffStat(colon, wt, base), /README\.md/);
+  // The apply reads the blobs of the index through the same alternate directory.
+  const patch = patchOf(colon, wt, base);
+  const other = join(owned(), "other");
+  addWorktree(colon, other, "wip/other", base);
+  applyToIndex(colon, other, patch);
+  assert.equal(read(join(other, "README.md")), "changed\n");
+});
+
+test("ignoredChanged goes by a link's own status time and not by the file it leads to", async () => {
+  const { repo, wt } = withWorktree();
+  writeFileSync(join(wt, ".gitignore"), "cache/\n");
+  mkdirSync(join(wt, "cache"));
+  const target = join(temp(), "old.txt");
+  writeFileSync(target, "old\n");
+  await sleep(60);
+  const since = Date.now();
+  await sleep(60);
+  symlinkSync(target, join(wt, "cache", "link"));
+  assert.deepEqual(ignoredChanged(repo, wt, since), [{ path: "cache/", files: 1 }]);
+});
+
 const objectIds = (repo: string): string[] =>
   execFileSync("git", ["cat-file", "--batch-all-objects", "--batch-check=%(objectname)"], { cwd: repo, encoding: "utf8" }).split("\n").filter(Boolean).sort();
 

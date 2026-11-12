@@ -408,7 +408,10 @@ function bind(repo: string, worktree: string, userConfig = false): Bound {
   // --config-env splits at the last equals sign, so a name that holds one still reaches git whole; -c would split at the first.
   const hooksOff = [...new Set(configured)].map((name) => `--config-env=hook.${name}.enabled=LEAD_HOOK_OFF`);
   const env: Location = hooksOff.length > 0 ? { ...location, LEAD_HOOK_OFF: "false" } : location;
-  const pre = userConfig ? ["-c", "core.fsmonitor=false"] : ["-c", `core.hooksPath=${emptyHooks()}`, "-c", "core.fsmonitor=false", "-c", "diff.ignoreSubmodules=dirty", ...hooksOff];
+  // Hardened callers also read every file as it is: a configuration that trusts less of the stat data (core.ignoreStat, a
+  // checkStat of minimal, no trust in the change time) lets an edit that keeps a file's size and times pass unseen.
+  const pre = userConfig ? ["-c", "core.fsmonitor=false"] : ["-c", `core.hooksPath=${emptyHooks()}`, "-c", "core.fsmonitor=false", "-c", "diff.ignoreSubmodules=dirty",
+    "-c", "core.ignoreStat=false", "-c", "core.trustCtime=true", "-c", "core.checkStat=default", ...hooksOff];
   const make = (e: Location): Bound => ({
     gitDir: named[0],
     worktree: real,
@@ -433,6 +436,8 @@ export function isClean(repo: string, worktree: string): boolean {
 
 // A plain index, so no split-index write (sharedindex.*) lands in the admin dir outside the narrow allow set.
 const SPLIT_OFF = ["-c", "core.splitIndex=false"];
+// git splits the list of alternate object directories at colons, and reads an entry in double quotes as one path.
+const alternate = (dir: string): string => `"${dir.replace(/[\\"]/g, "\\$&")}"`;
 // git worktree add resets without recursing into submodules. A user's submodule.recurse would make read-tree do so, and
 // create their directories in the git dir, where the sandbox denies a write.
 const READ_TREE = [...SPLIT_OFF, "read-tree", "--reset", "-u", "--no-recurse-submodules"];
@@ -446,7 +451,9 @@ function checkoutAllow(g: Bound): [string, string][] {
 // reset --hard, as a confined checkout plus a branch move outside it. The worktree checkout (read-tree -u, which may
 // also write the index) and the untracked sweep (clean, the worktree only) run under the sandbox, so a process left in
 // the worktree cannot steer either to a link reaching outside. The branch ref moves through the trusted repository.
-export function resetTo(repo: string, worktree: string, ref: string): void {
+// replaced: the files a patch is about to add. Where the worker's own ignore rules had made one visible, the rules of the
+// target ignore it, and neither the checkout nor the sweep below takes it off, so the patch would find it in the way.
+export function resetTo(repo: string, worktree: string, ref: string, replaced: string[] = []): void {
   const g = bind(repo, worktree);
   // The reset moves whatever branch is checked out, so that must be one of mandor's own.
   const branch = lines(g.run(["symbolic-ref", "-q", "HEAD"]).stdout.toString())[0];
@@ -454,6 +461,7 @@ export function resetTo(repo: string, worktree: string, ref: string): void {
   const target = g.ok(["rev-parse", "--verify", `${ref}^{commit}`]).trim();
   okConfined(g, checkoutAllow(g), [...READ_TREE, target]); // tracked files to the target tree
   okConfined(g, [["subpath", g.worktree]], ["clean", "-ffd"]); // -ff also removes a nested repository; no -x, so ignored stay
+  if (replaced.length > 0) okConfined(g, [["subpath", g.worktree]], ["clean", "-ffdxq", "--", ...replaced.map((p) => `:(literal)${p}`)]);
   ok(["update-ref", branch, target], repo); // the shared branch, from the repo, not the worktree
 }
 
@@ -469,7 +477,21 @@ const DIFF_INDEX = ["diff-index", "--cached", "--no-renames", "--ignore-submodul
 // pointer as the index already holds it, which diff-index --ignore-submodules=dirty still reports.
 function stageAll(g: Bound): void {
   const gitlinks = g.ok(["ls-files", "--stage", "-z"]).split("\0").filter((l) => l.startsWith("160000 ")).map((l) => l.slice(l.indexOf("\t") + 1));
-  g.ok(["add", "-A", "--", ".", ...gitlinks.map((p) => `:(exclude)${p}`)]);
+  g.ok([...SPLIT_OFF, "add", "-A", "--", ".", ...gitlinks.map((p) => `:(exclude)${p}`)]);
+}
+
+// The directory of the stagings, with what a killed one left in it gone: nothing else removes that, and a directory of
+// an hour's age is no staging that still runs.
+function stagesDir(): string {
+  const stages = join(mandorHome(), "stage");
+  ensureDir(stages);
+  const stale = Date.now() - 3_600_000;
+  for (const name of readdirSync(stages)) {
+    try {
+      if (statSync(join(stages, name)).mtimeMs < stale) removeTree(join(stages, name));
+    } catch {} // one that stays is tried again by the next staging
+  }
+  return stages;
 }
 
 // What staging for a read leaves behind. In the repository's own object store every worker file it read would stay as an
@@ -479,24 +501,20 @@ function stageAll(g: Bound): void {
 // makes has the id it would have made anywhere else, as an id is a hash of the content.
 function privateStage<T>(repo: string, worktree: string, use: (g: Bound) => T): T {
   const g = bind(repo, worktree);
-  const stages = join(mandorHome(), "stage");
-  ensureDir(stages);
+  const stages = stagesDir();
   const dir = mkdtempSync(join(stages, "s-"));
   try {
-    // A split index keeps most of its entries in a shared file beside it. A copy keeps the modification time of its original:
-    // git trusts an entry whose file looks unchanged only when the entry is older than the index, so an index that looked
-    // newer than it is would let an edit of the same size, within the second of the last write, pass unseen.
-    for (const name of readdirSync(g.gitDir)) {
-      if (name !== "index" && !name.startsWith("sharedindex.")) continue;
-      const from = join(g.gitDir, name);
-      const at = statSync(from);
-      copyFileSync(from, join(dir, name));
-      // Rounded down, so that no entry that was racy in the original reads as safe in the copy.
-      utimesSync(join(dir, name), Math.floor(at.atimeMs / 1000), Math.floor(at.mtimeMs * 1000) / 1e6);
-    }
+    // A copy keeps the modification time of its original: git trusts an entry whose file looks unchanged only when the entry
+    // is older than the index, so an index that looked newer than it is would let an edit of the same size, within the second
+    // of the last write, pass unseen. A split index finds its shared part in the git directory, which is only read.
+    const from = join(g.gitDir, "index");
+    const at = statSync(from);
+    copyFileSync(from, join(dir, "index"));
+    // Rounded down, so that no entry that was racy in the original reads as safe in the copy.
+    utimesSync(join(dir, "index"), Math.floor(at.atimeMs / 1000), Math.floor(at.mtimeMs * 1000) / 1e6);
     const objects = join(dir, "objects");
     mkdirSync(objects, { mode: 0o700 });
-    return use(g.with({ GIT_INDEX_FILE: join(dir, "index"), GIT_OBJECT_DIRECTORY: objects, GIT_ALTERNATE_OBJECT_DIRECTORIES: join(g.commonDir, "objects") }));
+    return use(g.with({ GIT_INDEX_FILE: join(dir, "index"), GIT_OBJECT_DIRECTORY: objects, GIT_ALTERNATE_OBJECT_DIRECTORIES: alternate(join(g.commonDir, "objects")) }));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -510,8 +528,14 @@ export function ignoredChanged(repo: string, worktree: string, sinceMs: number):
   const g = bind(repo, worktree);
   const found = new Map<string, number>();
   for (const path of g.okBytes(["ls-files", "-z", "--others", "--ignored", "--exclude-standard"]).toString().split("\0").filter(Boolean)) {
-    const stat = lstatSync(join(g.worktree, path), { throwIfNoEntry: false });
-    if (stat === undefined || !(stat.ctimeMs > sinceMs)) continue;
+    // A file that cannot be read (a worker can take the permission off its directory, or name a path too long to open) cannot
+    // be shown unchanged, so it counts as changed. The error itself is not passed on: it quotes the worker's names.
+    let changed = true;
+    try {
+      const stat = lstatSync(join(g.worktree, path), { throwIfNoEntry: false });
+      changed = stat !== undefined && stat.ctimeMs > sinceMs;
+    } catch {}
+    if (!changed) continue;
     const slash = path.indexOf("/");
     const key = slash < 0 ? path : `${path.slice(0, slash)}/`;
     found.set(key, (found.get(key) ?? 0) + 1);
@@ -594,7 +618,7 @@ function applyConfined(g: Bound, mode: string, patchFile: string): Result {
   rmSync(quarantine, { recursive: true, force: true });
   mkdirSync(join(quarantine, "pack"), { recursive: true, mode: 0o700 });
   try {
-    return g.confined([...checkoutAllow(g), ["subpath", quarantine]], [...SPLIT_OFF, ...RERERE_OFF, ...APPLY, mode, patchFile], { GIT_OBJECT_DIRECTORY: quarantine, GIT_ALTERNATE_OBJECT_DIRECTORIES: objects });
+    return g.confined([...checkoutAllow(g), ["subpath", quarantine]], [...SPLIT_OFF, ...RERERE_OFF, ...APPLY, mode, patchFile], { GIT_OBJECT_DIRECTORY: quarantine, GIT_ALTERNATE_OBJECT_DIRECTORIES: alternate(objects) });
   } finally {
     migrateObjects(quarantine, objects);
     rmSync(quarantine, { recursive: true, force: true });

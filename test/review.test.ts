@@ -299,6 +299,27 @@ test("violations are what accept refuses: agent files, default and project deny,
   ]);
 });
 
+test("the ignored paths of a review count from five seconds after the first job began, by its UTC time, and not from the newest job", (t) => {
+  const f = fixture(t, { "src/a.ts": "a\n" });
+  endJob(f);
+  writeFileSync(join(f.wt, ".gitignore"), "build/\n");
+  mkdirSync(join(f.wt, "build"));
+  writeFileSync(join(f.wt, "build", "x.js"), "x\n");
+  // Job ids hold the time they were queued, in UTC, to the second.
+  const ids = (...at: number[]) => at.map((ms, i) => `j-${new Date(ms).toISOString().replace(/[-:T]/g, "").slice(0, 14)}-aaa${i}`);
+  const setJobs = (jobIds: string[]) => appendEvent(f.id, { t: "task.updated", at: now(), taskId: SLUG, patch: { jobIds }, reason: "test" });
+  const flagged = () => details(reviewPack(f.repo, SLUG), "ignored-changed");
+  const t0 = Date.now();
+  setJobs(ids(t0 - 3_000));
+  assert.deepEqual(flagged(), [], "the first seconds are the provisioning's");
+  setJobs(ids(t0 - 30_000));
+  assert.deepEqual(flagged(), ["build/: 1 file changed since the first job began"]);
+  setJobs(ids(t0 - 30_000, t0 + 60_000));
+  assert.deepEqual(flagged(), ["build/: 1 file changed since the first job began"], "the first job counts, not the newest");
+  setJobs(ids(t0 + 60_000));
+  assert.deepEqual(flagged(), [], "nothing changed after a job that has not begun");
+});
+
 // A job that ran `npm test` and reported two commands, one of which it never ran.
 const REPORT = {
   status: "done", summary: "Done.", files_changed: [],

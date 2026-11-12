@@ -674,6 +674,9 @@ function clearRebase(id: string, slug: string): void {
   rmSync(rebasePatch(id, slug), { force: true });
 }
 
+// The paths a patch adds, which the worktree must not hold before it is applied.
+const addedBy = (patch: string): string[] => changedPaths(patch).filter((c) => c.status === "A").map((c) => c.path);
+
 function restoreWorkerChanges(root: string, task: TaskRecord, oldBase: string, patch: string): void {
   try {
     resetTo(root, task.worktree!, oldBase);
@@ -759,7 +762,7 @@ function rebaseLocked(root: string, id: string, task: TaskRecord, tip: string, b
   let outcome: { rebased: true } | { conflict: string[] } | null = null;
   let failed = false;
   try {
-    resetTo(root, task.worktree!, tip);
+    resetTo(root, task.worktree!, tip, addedBy(bytes.toString()));
     const { applied, conflicted } = apply3way(root, task.worktree!, patch);
     if (applied) {
       if (conflicted.length > 0 && !inTakeover) startFixRoundLocked(id, { ...task, base: tip }, renderConflictMessage(task.goalBranch, conflicted), false, models, "fix");

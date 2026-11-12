@@ -133,7 +133,7 @@ export function reviewPack(cwd: string, slug: string): ReviewPack {
   const { root, id } = resolveProject(cwd);
   // Staging the worktree would run a driver configured since dispatch, as accept's staging would.
   refuseUnsupported(root);
-  // The diff calls stage the worktree's index, so they wait for an accept that is doing the same.
+  // Under the project lock, so that it does not run while an accept stages and commits the same worktree.
   return withProjectLock(id, () => {
     const state = loadState(id);
     const task = state.tasks[slug];
@@ -143,8 +143,6 @@ export function reviewPack(cwd: string, slug: string): ReviewPack {
     recoverRebaseLocked(root, id, task);
     const project = loadProjectConfig(id);
     const { text, stat, tree } = gitStep(`stage task ${slug} for its review`, () => stagedDiff(root, task.worktree!, task.base!));
-    // What this pack shows is what accept may commit: it checks the staged tree against this record.
-    writeJsonAtomic(reviewedFile(id, slug), { tree, at: now() });
     const files = changedPaths(text);
 
     // Added and removed lines per file; headers before the first hunk are not content.
@@ -193,9 +191,16 @@ export function reviewPack(cwd: string, slug: string): ReviewPack {
     const began = task.jobIds.map((j) => /^j-(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})-/.exec(j)).find((m) => m !== null);
     if (began !== undefined && began !== null) {
       const [y, mo, d, h, mi, s] = began.slice(1).map(Number);
-      const changed = ignoredChanged(root, task.worktree!, Date.UTC(y, mo - 1, d, h, mi, s) + 5_000);
-      for (const c of changed.slice(0, 10)) flag("ignored-changed", `${c.path}: ${c.files} file${c.files === 1 ? "" : "s"} changed since the first job began`);
-      if (changed.length > 10) flag("ignored-changed", `and ${changed.length - 10} more ignored paths changed`);
+      // A listing that fails is no reason to withhold the pack: the error would quote the worker's own names, so it is not passed on.
+      let changed: { path: string; files: number }[] | null = null;
+      try {
+        changed = ignoredChanged(root, task.worktree!, Date.UTC(y, mo - 1, d, h, mi, s) + 5_000);
+      } catch {}
+      if (changed === null) flag("ignored-changed", "the ignored paths could not be listed, so delete them and rebuild before the proofs");
+      else {
+        for (const c of changed.slice(0, 10)) flag("ignored-changed", `${c.path}: ${c.files} file${c.files === 1 ? "" : "s"} changed since the first job began`);
+        if (changed.length > 10) flag("ignored-changed", `and ${changed.length - 10} more ignored paths changed`);
+      }
     }
 
     files.forEach((f) => {
@@ -205,9 +210,13 @@ export function reviewPack(cwd: string, slug: string): ReviewPack {
     });
     for (const h of attributionHints(text)) flag("attribution-hint", `${h.path}: ${h.detail}`);
 
-    return {
+    const pack = {
       diffStat: stat, files, redFlags: flags, violations: checkDiff(text, diffDeny(project), project.nameIsWord, diffExact(project)),
       worktree: task.worktree, reportPath: round === undefined ? null : join(round.dir, "report.json"),
     };
+    // What this pack shows is what accept may commit: it checks the staged tree against this record, which is written last,
+    // so a review that failed on the way leaves none.
+    writeJsonAtomic(reviewedFile(id, slug), { tree, at: now() });
+    return pack;
   })!;
 }
