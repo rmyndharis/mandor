@@ -9,6 +9,7 @@ All notable changes to mandor are recorded here. The format follows [Keep a Chan
 - A new worktree is checked out confined, after its own configuration was read, so the repository's `post-checkout` and `post-index-change` hooks no longer run when mandor creates one.
 - The README says that the commit hooks at accept can run scripts that the reviewed change altered, that a commit which a hook changes is rolled back, and that mandor starts no git command that names a remote.
 - The help and the README describe `mandor models` as the list read at the last refresh.
+- The README says that the ZCode worker's home is shared by every project and never reset, that the hooks, tool servers and instructions left in it are loaded by every later job, and that it keeps the input and output of every session.
 - The lead's playbook covers a task that stalls on a filter or merge driver, as it covers a command that refuses one.
 - An Antigravity job is refused in a project without `--worker-network`, as a ZCode job is. Run `mandor project setup --worker-network` to allow it.
 - `init`, `models`, `project setup`, `goal start` and `dispatch` refuse a `MANDOR_HOME` inside a git working tree.
@@ -69,7 +70,7 @@ All notable changes to mandor are recorded here. The format follows [Keep a Chan
 - mandor's writes into the ZCode worker's home, the catalog copy and a stored key, are confined to that directory by the kernel and written under a random name that is renamed over the file's own, so a link or a file that a worker put in its home leads nowhere. The worker's commands cannot remove or move the home, and `login zcode`, a dispatch and the model list refuse while the home or a sign-in directory in it is not a directory.
 - An atomic write takes a temporary name that nothing can guess, and leaves none behind when it fails.
 - The ZCode profile denies a credential directory that is a link by the path it leads to, and leaves a path that leads to a device such as `/dev/null` readable.
-- The ZCode version call runs confined to the worker's home, as mandor's own writes into it do.
+- The writes of the ZCode version call are confined to the worker's home, as mandor's own writes into it are.
 - A plan id in the ZCode worker's sign-in file that is not of the shape `account:<name>` is refused, where it was printed and written into each job's provider file as it stood.
 
 ## [0.2.0] - 2026-11-11

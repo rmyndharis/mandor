@@ -49,8 +49,8 @@ function layout(bin: string): { start: string[]; catalog: string; electron: bool
 
 // The worker writes its home, so it can replace the home, or a directory of the sign-in in it, with a link, and what mandor
 // writes or starts there would then work where the link leads. The profile keeps the home from being removed, the writes
-// below are confined to it, and this names what is wrong before any of them, where the CLI that signs in or lists its
-// version runs unconfined.
+// below are confined to it, and this names what is wrong before any of them and before the CLI starts, which signs in with
+// no profile at all and lists its version with only its writes confined to the home.
 function refuseLinks(): void {
   const home = zcodeHome();
   for (const path of [home, join(home, ".zcode"), join(home, ".zcode", "v2")]) {
