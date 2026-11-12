@@ -99,8 +99,9 @@ function reap(home: string): void {
   }
 }
 
-function home(t: TestContext): string {
-  const h = tempHome({ config: true });
+// away: the state home lies outside the shared temporary directories, as a project that keeps those open needs.
+function home(t: TestContext, away = false): string {
+  const h = tempHome({ config: true, away });
   t.after(() => reap(h));
   return h;
 }
@@ -117,8 +118,8 @@ function createTask(over: Partial<TaskRecord>): TaskRecord {
 }
 
 // A task whose worktree is a plain directory: enough for the fake.
-function setup(t: TestContext, over: Partial<TaskRecord> = {}): TaskRecord {
-  home(t);
+function setup(t: TestContext, over: Partial<TaskRecord> = {}, away = false): TaskRecord {
+  home(t, away);
   return createTask({ worktree: temp("mandor-wt-"), ...over });
 }
 
@@ -623,7 +624,7 @@ test("a Codex worker gets a temporary directory of its own, made before it start
 });
 
 test("a project that keeps the shared temporary directories open gives its worker no directory of its own and leaves the environment as it was", async (t) => {
-  setup(t);
+  setup(t, {}, true);
   saveProjectConfig(PROJECT, { ...emptyProjectConfig(), sharedTemp: true });
   writeScenarios([{ stdout: "generated:done" }]);
   const job = queueJob();
@@ -633,6 +634,19 @@ test("a project that keeps the shared temporary directories open gives its worke
   assert.equal(entry.env.TMPPREFIX, undefined);
   assert.ok(!entry.argv.some((a) => a.includes("exclude_slash_tmp")));
   assert.equal(existsSync(jobTmpDir(job.id)), false);
+});
+
+test("a job of a project that keeps the shared temporary directories open fails before its worker starts when the state home lies under them, with no repository root recorded either", async (t) => {
+  setup(t);
+  saveProjectConfig(PROJECT, { ...emptyProjectConfig(), sharedTemp: true });
+  writeScenarios([{ stdout: "generated:done" }]);
+  const job = queueJob();
+  await runJob(job.id);
+  const outcome = finishedEvents(job.id)[0].outcome;
+  assert.equal(outcome.status, "failed");
+  assert.match(outcome.detail, /^the project keeps the shared temporary directories open and the mandor home lies under them; tell the user, who sets MANDOR_HOME elsewhere or runs mandor project setup --update --no-shared-temp$/);
+  assert.equal(execs().length, 0, "the worker never started");
+  assert.match(readFileSync(join(process.env.MANDOR_HOME!, "logs", "runner.log"), "utf8"), new RegExp(`job ${job.id}: the mandor home .+ lies under .+, which the workers of a project set up with --shared-temp may write`));
 });
 
 test("what a worker leaves in its temporary directory goes with the run, a read-only directory and an immutable file included", async (t) => {
@@ -654,7 +668,7 @@ test("a temporary directory that exists already is made private to the user befo
 });
 
 test("a project that keeps the shared temporary directories open has no directory of the job's own while the worker runs", async (t) => {
-  setup(t);
+  setup(t, {}, true);
   saveProjectConfig(PROJECT, { ...emptyProjectConfig(), sharedTemp: true });
   const worker = script(`[ -e "${join(process.env.MANDOR_HOME!, "jobs")}/$MANDOR_JOB/tmp" ] && echo yes > "$0.seen" || echo no > "$0.seen"`);
   const job = queueJob({ bin: worker });

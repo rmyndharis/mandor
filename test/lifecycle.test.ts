@@ -97,6 +97,29 @@ const ledgerText = (s: Lab) => readFileSync(join(projectDir(s.id), "ledger.jsonl
 const exhaust = (key: string) => appendToolEvent({ t: "tool.exhausted", at: now(), key, resetsAt: null, detail: "limit" });
 const writeCatalog = (models: ModelInfo[]) => writeJsonAtomic(join(process.env.MANDOR_HOME!, "models.json"), { fetchedAt: new Date().toISOString(), codexVersion: "0.166.0", models });
 
+test("a job that the pump starts once the project keeps the shared temporary directories open fails before its worker starts, over a state home under them", async (t) => {
+  const s = setup(t);
+  must(s.repo, "config", "user.email", "dev@host.test");
+  tasks.goalStart(s.repo, GOAL, null);
+  writeScenarios([DONE, DONE]);
+  send(s, "first");
+  await needsReview(s, "first");
+  send(s, "second", { after: "first" });
+  assert.equal(task(s, "second").status, "waiting");
+  // The user opens the shared directories while the second task waits: no command that starts a job looks at the project
+  // again before the pump starts that one.
+  saveProjectConfig(s.id, { ...loadProjectConfig(s.id), sharedTemp: true });
+  setTask(s, "first", { status: "accepted", pending: null });
+  pump(s);
+  await stalled(s, "second", "failed");
+  const job = Object.values(loadState(s.id).jobs).findLast((j) => j.taskId === "second")!;
+  const outcome = job.outcome!;
+  assert.equal(outcome.status, "failed");
+  assert.match(outcome.detail, /^the project keeps the shared temporary directories open and the mandor home lies under them; tell the user, who sets MANDOR_HOME elsewhere or runs mandor project setup --update --no-shared-temp$/);
+  assert.equal(readFakeLog().some((run) => run.env.MANDOR_JOB === job.id), false, "the worker of the second task never started");
+  assert.equal(readFakeLog().some((run) => run.env.MANDOR_JOB === Object.values(loadState(s.id).jobs).find((j) => j.taskId === "first")!.id), true, "the first task's did, so the log would show it");
+});
+
 type Updated = Extract<LedgerEvent, { t: "task.updated" }>;
 const lastUpdate = (s: Lab, slug: string) => readEvents(s.id).items.findLast((e): e is Updated => e.t === "task.updated" && e.taskId === slug)!;
 const setTask = (s: Lab, slug: string, patch: Partial<TaskRecord>) => appendEvent(s.id, { t: "task.updated", at: now(), taskId: slug, patch, reason: "test" });

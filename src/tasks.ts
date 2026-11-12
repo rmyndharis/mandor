@@ -738,8 +738,9 @@ export function plantedMessage(slug: string, planted: string[], then: string): s
 }
 
 // Before a command records a round or queues a job: nothing is counted or reset for a job that would not start. A project that
-// keeps the shared temporary directories open runs no job while the state home or the repository lies under them, and none
-// starts over an agent path that the repository does not hold.
+// keeps the shared temporary directories open is refused while the state home or the repository lies under them (the runner
+// looks again as each job starts, since the pump starts jobs that no command saw), and so is a task whose worktree root holds an
+// agent path that the repository does not hold as it is.
 function refuseUnsafeStart(id: string, task: TaskRecord, then: string): void {
   if (loadProjectConfig(id).sharedTemp === true) assertOutsideSharedTemp(recordedRoot(id));
   if (task.worktree === null) return;

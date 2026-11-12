@@ -62,6 +62,14 @@ export function temp(prefix: string): string {
   return dir;
 }
 
+// A fresh directory outside the shared temporary directories (/tmp and /var/folders), for the state home of a project that keeps
+// those open, which may not lie under them. /var/tmp is neither of them.
+export function tempAway(prefix: string): string {
+  const dir = realpathSync(mkdtempSync(join("/var/tmp", prefix)));
+  made.push(dir);
+  return dir;
+}
+
 // Inherited from a git hook or an outer git command, these would point every git call at that repository instead of
 // the temp one asked for, and GIT_CONFIG_* would hand it config: tempRepo once wrote its test identity into the real
 // repository a hook ran it from.
@@ -86,8 +94,8 @@ export function writeTestConfig(home: string): void {
 
 // A fresh state root, with a Codex home holding the fake CLI's control directory.
 // No config file is written unless asked for, so loadConfig can be seen creating it.
-export function tempHome(opts: { config?: boolean } = {}): string {
-  const home = temp("mandor-home-");
+export function tempHome(opts: { config?: boolean; away?: boolean } = {}): string {
+  const home = opts.away ? tempAway("mandor-home-") : temp("mandor-home-");
   const codexHome = temp("mandor-codex-");
   mkdirSync(join(codexHome, "fake"));
   process.env.MANDOR_HOME = home;

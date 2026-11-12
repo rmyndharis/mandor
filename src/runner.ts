@@ -5,13 +5,13 @@ import { dirname, join } from "node:path";
 import { REPORT_SCHEMA, saveRoundFile } from "./brief.ts";
 import { loadConfig } from "./config.ts";
 import type { Adapter, JobRecord, JobResult, JobStatus, ModelInfo, PreparedRun, ProjectState, StallReason, TaskRecord } from "./contracts.ts";
-import { confineProblem, removeTree, worktreeRoot } from "./git.ts";
+import { confineProblem, removeTree, sharedTempHolder, worktreeRoot } from "./git.ts";
 import { jobDir, jobTmpDir, mandorHome, processAlive, processStart, projectDir } from "./home.ts";
 import { appendEvent, appendToolEvent, listProjects, loadState, loadToolState, now, readEvents } from "./ledger.ts";
 import { loadProjectConfig } from "./provision.ts";
 import { catalogGap, countActiveJobs, selectCandidate } from "./routing.ts";
 import { clampDetail, ensureDir, readJson, withProjectLock, withSlotsLock, writeFileAtomic, writeJsonAtomic } from "./store.ts";
-import { cancelStands, cancelStandsLocked, COULD_NOT_BUILD, handoffPrompt, plantedAgentPaths, plantedMessage, pumpLocked, settleAcceptsLocked, startJobLocked } from "./tasks.ts";
+import { cancelStands, cancelStandsLocked, COULD_NOT_BUILD, handoffPrompt, plantedAgentPaths, plantedMessage, pumpLocked, recordedRoot, settleAcceptsLocked, startJobLocked } from "./tasks.ts";
 
 const jobFile = (jobId: string) => join(jobDir(jobId), "job.json");
 const resultFile = (jobId: string) => join(jobDir(jobId), "result.json");
@@ -269,6 +269,15 @@ export function spawnInRoot(worktree: string, run: PreparedRun, stdio: StdioOpti
   }
 }
 
+// A project whose root was never recorded has no repository to look at, and the home is looked at all the same.
+function recordedRootOrNull(projectId: string): string | null {
+  try {
+    return recordedRoot(projectId);
+  } catch {
+    return null;
+  }
+}
+
 // One worker run between the claim and the completion; it writes result.json.
 async function work(job: JobRecord, adapter: Adapter): Promise<JobResult> {
   const dir = jobDir(job.id);
@@ -283,6 +292,13 @@ async function work(job: JobRecord, adapter: Adapter): Promise<JobResult> {
   const task = loadState(job.projectId).tasks[job.taskId];
   const planted = task === undefined ? [] : plantedAgentPaths(job.projectId, task, root);
   if (planted.length > 0) return failedResult(clampDetail(plantedMessage(job.taskId, planted, `run mandor reassign ${job.taskId}`)));
+  // The commands that start a job look at this too, but the pump starts jobs they never saw (a task that waited behind another, a
+  // handoff), and the project can have opened the shared directories since. The job's own TMPDIR is the one its worker gets.
+  const held = project.sharedTemp === true ? sharedTempHolder(recordedRootOrNull(job.projectId), job.env.TMPDIR) : null;
+  if (held !== null) {
+    logRunner(`job ${job.id}: ${held.what} ${held.path} lies under ${held.root}, which the workers of a project set up with --shared-temp may write`);
+    return failedResult(`the project keeps the shared temporary directories open and ${held.what} lies under them; tell the user, who ${held.way} or runs mandor project setup --update --no-shared-temp`);
+  }
   // The worker's own temporary directory, which the adapters of Codex and ZCode open to it in place of the shared ones.
   // One answer for the runner and the adapters: only a project that says so keeps the shared ones.
   const sharedTemp = project.sharedTemp === true;

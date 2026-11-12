@@ -808,6 +808,9 @@ test("assertOutsideSharedTemp refuses a state home or a repository under the sha
     assert.throws(() => assertOutsideSharedTemp(join(tmpdir(), "repo")), refusal("the repository"));
     assert.throws(() => assertOutsideSharedTemp("/tmp/work/repo"), /lies under \/private\/tmp,/);
     assert.throws(() => assertOutsideSharedTemp("/private/var/folders/zz/yy/C/repo"), /lies under \/private\/var\/folders,/);
+    // The data volume's own spellings of the same two directories reach them as well.
+    assert.throws(() => assertOutsideSharedTemp("/System/Volumes/Data/private/tmp/work/repo"), /lies under \/System\/Volumes\/Data\/private\/tmp,/);
+    assert.throws(() => assertOutsideSharedTemp("/System/Volumes/Data/private/var/folders/zz/yy/C/repo"), /lies under \/System\/Volumes\/Data\/private\/var\/folders,/);
     assert.throws(() => assertOutsideSharedTemp(join(tmpdir(), "repo")), /moves the repository or runs mandor project setup --update --no-shared-temp$/);
   });
   withEnv({ MANDOR_HOME: join(tmpdir(), "state") }, () => {
@@ -818,6 +821,11 @@ test("assertOutsideSharedTemp refuses a state home or a repository under the sha
   withEnv({ MANDOR_HOME: join(away, ".mandor"), TMPDIR: join(away, "scratch") }, () => {
     assert.throws(() => assertOutsideSharedTemp(join(away, "scratch", "repo")), /lies under .*scratch,/);
     assertOutsideSharedTemp(join(away, "repo"));
+  });
+  // The TMPDIR that a job is going to get counts as well, and it can differ from the one of the process that looks.
+  withEnv({ MANDOR_HOME: join(away, ".mandor") }, () => {
+    assertOutsideSharedTemp(join(away, "repo"), join(away, "jobtmp"));
+    assert.throws(() => assertOutsideSharedTemp(join(away, "jobtmp", "repo"), join(away, "jobtmp")), /lies under .*jobtmp,/);
   });
   // A path that reaches the shared directory through a link is judged by where it really is.
   const link = join(temp(), "link");

@@ -115,15 +115,25 @@ export function assertHomeOutsideRepos(): void {
 }
 
 // What a Codex or ZCode worker may write once its project keeps the shared temporary directories open (--shared-temp): /tmp, the
-// per-user temporary directory that the lead's TMPDIR names, and for ZCode all of /var/folders. A state home or a repository
-// under one of them would be the worker's to write, so neither may lie there while the project keeps them open.
-export function assertOutsideSharedTemp(repo: string): void {
-  const roots = [...new Set(["/private/tmp", "/private/var/folders", realOf(tmpdir())])]; // tmpdir() is the TMPDIR of this process, if it has one
-  for (const [what, path, way] of [["the mandor home", mandorHome(), "sets MANDOR_HOME elsewhere"], ["the repository", repo, "moves the repository"]] as const) {
+// per-user temporary directory that the lead's TMPDIR names, and for ZCode all of /var/folders, each also by the name of the data
+// volume that holds it. A state home or a repository under one of them would be the worker's to write, so neither may lie there
+// while the project keeps them open. jobTmpdir is the TMPDIR a job is going to get, which can differ from this process's own.
+export function sharedTempHolder(repo: string | null, jobTmpdir?: string): { what: string; path: string; root: string; way: string } | null {
+  const roots = [...new Set(["/private/tmp", "/private/var/folders", "/System/Volumes/Data/private/tmp", "/System/Volumes/Data/private/var/folders",
+    realOf(tmpdir()), ...(jobTmpdir === undefined ? [] : [realOf(jobTmpdir)])])]; // tmpdir() is the TMPDIR of this process, if it has one
+  const held: [string, string, string][] = [["the mandor home", mandorHome(), "sets MANDOR_HOME elsewhere"]];
+  if (repo !== null) held.push(["the repository", repo, "moves the repository"]);
+  for (const [what, path, way] of held) {
     const real = realOf(path);
     const root = roots.find((r) => real === r || real.startsWith(r + sep));
-    if (root !== undefined) throw new Error(`refusing ${what} ${path}: it lies under ${root}, which the workers of a project set up with --shared-temp may write; tell the user, who ${way} or runs mandor project setup --update --no-shared-temp`);
+    if (root !== undefined) return { what, path, root, way };
   }
+  return null;
+}
+
+export function assertOutsideSharedTemp(repo: string, jobTmpdir?: string): void {
+  const held = sharedTempHolder(repo, jobTmpdir);
+  if (held !== null) throw new Error(`refusing ${held.what} ${held.path}: it lies under ${held.root}, which the workers of a project set up with --shared-temp may write; tell the user, who ${held.way} or runs mandor project setup --update --no-shared-temp`);
 }
 
 export function revParse(cwd: string, ref: string): string {
