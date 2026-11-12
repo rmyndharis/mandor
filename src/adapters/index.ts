@@ -6,7 +6,7 @@ import type { Adapter, ModelInfo, ToolName } from "../contracts.ts";
 import { mandorHome } from "../home.ts";
 import { clampDetail, ensureDir, readJson, writeJsonAtomic } from "../store.ts";
 import type { ModelCache } from "../modelcache.ts";
-import { cacheFile, clearRefreshFailure, noteRefreshFailure, readModelCache, refreshFailedWithin } from "../modelcache.ts";
+import { cacheFile, clearRefreshFailure, noteRefreshFailure, readModelCache, refreshFailedWithin, withZcodeBilling } from "../modelcache.ts";
 import { agyWarnings, createAgyAdapter, TESTED_AGY_VERSION } from "./agy.ts";
 import { codexWarnings, createCodexAdapter } from "./codex.ts";
 import { createZcodeAdapter, zcodeWarnings } from "./zcode.ts";
@@ -98,5 +98,5 @@ export function modelsReport(cfg: Config, refresh: boolean): { codexVersion: str
   // What the refresh stored for a tool, so a refresh reads the login shell once. One the cache holds nothing for (a tool
   // switched on since, or a cache from before the warnings were stored, or none) has them worked out here.
   const warnings = on.flatMap((t) => cache?.warnings[t] ?? toolWarnings(t, cache?.versions ?? {}, cache?.problems ?? {}));
-  return { codexVersion, fetchedAt: cache?.fetchedAt ?? null, models, warnings: [...warnings, ...problems] };
+  return { codexVersion, fetchedAt: cache?.fetchedAt ?? null, models, warnings: withZcodeBilling(cfg, [...warnings, ...problems]) };
 }

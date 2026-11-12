@@ -9,6 +9,7 @@ import { resolveBin } from "../config.ts";
 import { realOf, writeConfined } from "../git.ts";
 import type { Adapter, JobResult, JobStatus, ModelInfo, RawRun, WorkerReport } from "../contracts.ts";
 import { jobTmpDir, mandorHome, ownTempEnv, workerEnv } from "../home.ts";
+import { ZCODE_BILLING } from "../modelcache.ts";
 import { clampDetail, ensureDir, readJson, writeJsonAtomic } from "../store.ts";
 import { keepVendorStderr, lostSession } from "./vendor.ts";
 
@@ -90,13 +91,13 @@ function signedInProvider(): string {
 // Signs the worker in, in a browser, under its own HOME: a sign-in made under the user's would only work there, and
 // would replace the one their app holds. The CLI prints its sign-in address on stderr, which passes through; what it
 // prints on stdout stays out, as it describes the account.
-export function zcodeLogin(cfg: Config, provider: string): { tool: "zcode"; home: string; provider: string } {
+export function zcodeLogin(cfg: Config, provider: string): { tool: "zcode"; home: string; provider: string; warnings: string[] } {
   const bin = resolveBin("zcode", cfg);
   if (!existsSync(bin)) throw new Error(`zcode not found at ${bin}; tell the user, who installs ZCode or sets tools.zcode.bin in config.json`);
   const [command, ...args] = zcodeStart(bin);
   const r = spawnSync(command, [...args, "login", provider], { env: zcodeEnv(bin, workerEnv(null)), stdio: ["inherit", "ignore", "inherit"] });
   if (r.status !== 0) throw new Error(`zcode login failed (exit ${r.status ?? r.signal}); run mandor login zcode again, with zai or bigmodel as the provider`);
-  return { tool: "zcode", home: zcodeHome(), provider: signedInProvider() };
+  return { tool: "zcode", home: zcodeHome(), provider: signedInProvider(), warnings: [ZCODE_BILLING] };
 }
 
 // A personal provider file whose only content is the model a new session starts on.
@@ -108,7 +109,7 @@ const providerFile = (defaultModelSelection: object) => ({
 // The other way to sign the worker in: a Coding Plan API key, which lasts until it is revoked, where a browser sign-in
 // stops working after an hour. The CLI has no command to store one, but its runtime reads these three entries, plain
 // values included, and then asks for no browser sign-in. Whatever sign-in the home held is replaced.
-export function zcodeUseApiKey(family: string, key: string): { tool: "zcode"; home: string; provider: string } {
+export function zcodeUseApiKey(family: string, key: string): { tool: "zcode"; home: string; provider: string; warnings: string[] } {
   const provider = `account:${family}-individual-coding-plan`;
   const identity = `key-${createHash("sha256").update(key).digest("hex").slice(0, 24)}`;
   refuseLinks();
@@ -120,7 +121,7 @@ export function zcodeUseApiKey(family: string, key: string): { tool: "zcode"; ho
     [`account-provider:coding-plan:${provider}:account:${identity}:api-key`]: key,
   }));
   writeConfined(zcodeHome(), join(".zcode", "v2", "provider_config.json"), json(providerFile({ providerId: provider, modelId: "GLM-5.3" })));
-  return { tool: "zcode", home: zcodeHome(), provider };
+  return { tool: "zcode", home: zcodeHome(), provider, warnings: [ZCODE_BILLING] };
 }
 
 // The index of the "}" that closes the "{" at start, or -1. A brace inside a string does not count.
@@ -331,3 +332,5 @@ export function createZcodeAdapter(cfg: Config): Adapter {
 export function zcodeWarnings(version: string | null): string[] {
   return version === TESTED_ZCODE_VERSION ? [] : [`zcode ${version ?? "(version unknown)"} is not the tested version ${TESTED_ZCODE_VERSION}`];
 }
+
+export { ZCODE_BILLING };

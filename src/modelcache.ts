@@ -49,7 +49,16 @@ export function readModelCache(): ModelCache | null {
   }
 }
 
+// Nothing switches billing off for a ZCode run or detects billed usage, as it does for Codex and Antigravity: a run past the plan's
+// quota, or from the first token when the stored key is one that is billed per use, may cost money.
+export const ZCODE_BILLING = "zcode runs may be billed: mandor does not switch billing off for them or detect billed usage, and a stored API key may be one that is billed per use";
+
+// Said wherever zcode is on. It needs no tool run and no refresh, so it is added where warnings are read: a model list stored before
+// it existed, or before zcode was switched on, would otherwise let a job start with no word of it.
+export const withZcodeBilling = (cfg: Config, warnings: string[]): string[] =>
+  cfg.tools.zcode.enabled && !warnings.includes(ZCODE_BILLING) ? [...warnings, ZCODE_BILLING] : warnings;
+
 // What the enabled tools said when their models were last read, with no tool run: a tool that is off says nothing.
 export function cachedWarnings(cfg: Config, cache: ModelCache | null = readModelCache()): string[] {
-  return cache === null ? [] : WORKER_TOOLS.filter((t) => cfg.tools[t].enabled).flatMap((t) => cache.warnings[t] ?? []);
+  return withZcodeBilling(cfg, cache === null ? [] : WORKER_TOOLS.filter((t) => cfg.tools[t].enabled).flatMap((t) => cache.warnings[t] ?? []));
 }

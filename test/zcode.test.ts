@@ -8,7 +8,8 @@ import type { TestContext } from "node:test";
 import { test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { getAdapter, loadModels, modelsReport, readModelCache, refreshModels } from "../src/adapters/index.ts";
-import { createZcodeAdapter, lastJsonObject, REPORT_FORMAT, TESTED_ZCODE_VERSION, zcodeEnv, zcodeHome, zcodeUseApiKey } from "../src/adapters/zcode.ts";
+import { cachedWarnings } from "../src/modelcache.ts";
+import { createZcodeAdapter, lastJsonObject, REPORT_FORMAT, TESTED_ZCODE_VERSION, zcodeEnv, zcodeHome, zcodeUseApiKey, zcodeWarnings, ZCODE_BILLING } from "../src/adapters/zcode.ts";
 import { REPORT_SCHEMA } from "../src/brief.ts";
 import { DEFAULT_CONFIG, resolveBin } from "../src/config.ts";
 import type { Candidate, JobRecord, RawRun } from "../src/contracts.ts";
@@ -580,6 +581,44 @@ function project(t: TestContext, opts: { network?: boolean; signedIn?: boolean }
   return { home, repo, id, send, briefFile };
 }
 
+test("zcode says whenever it is on that nothing switches billing off or detects billed usage for it, and a login says so too", () => {
+  assert.deepEqual(zcodeWarnings(TESTED_ZCODE_VERSION), []);
+  assert.deepEqual(zcodeWarnings("9.9.9"), [`zcode 9.9.9 is not the tested version ${TESTED_ZCODE_VERSION}`]);
+  assert.match(ZCODE_BILLING, /not switch billing off/);
+  assert.match(ZCODE_BILLING, /billed per use/);
+  tempHome();
+  assert.deepEqual(zcodeUseApiKey("zai", "k-secret").warnings, [ZCODE_BILLING]);
+});
+
+test("the notice about billing is added where stored warnings are read, so a cache from before it existed, or from before zcode was on, never lacks it", () => {
+  const home = tempHome();
+  writeZcodeConfig(home);
+  const cfg = JSON.parse(readFileSync(join(home, "config.json"), "utf8"));
+  const stored = (warnings: Record<string, string[]>) => ({ fetchedAt: new Date().toISOString(), codexVersion: "0.166.0", versions: { codex: "0.166.0" }, problems: {}, warnings, models: [] });
+  const billing = (list: string[]) => list.filter((w) => w === ZCODE_BILLING).length;
+  assert.equal(billing(cachedWarnings(cfg, null)), 1, "no model list yet");
+  const shapes: Record<string, string[]>[] = [{}, { zcode: [] }, { codex: [], zcode: [] }];
+  for (const warnings of shapes) assert.equal(billing(cachedWarnings(cfg, stored(warnings))), 1, JSON.stringify(warnings));
+  assert.equal(billing(cachedWarnings(cfg, stored({ zcode: [ZCODE_BILLING] }))), 1, "once, where the refresh stored it");
+  const off = structuredClone(cfg);
+  off.tools.zcode.enabled = false;
+  assert.equal(billing(cachedWarnings(off, stored({ zcode: [ZCODE_BILLING] }))), 0, "a tool that is off says nothing");
+  // What `models` prints from a cache of an older shape, which it does not refresh.
+  writeFileSync(join(home, "models.json"), JSON.stringify(stored({ codex: [], zcode: [] })));
+  assert.equal(billing(modelsReport(cfg, false).warnings), 1);
+  writeFileSync(join(home, "models.json"), JSON.stringify({ fetchedAt: new Date().toISOString(), codexVersion: "0.166.0", models: [] }));
+  assert.equal(billing(modelsReport(cfg, false).warnings), 1, "a cache with no warnings field");
+});
+
+test("a dispatch says what a ZCode run may cost, also over a model list that was stored without it", (t) => {
+  const p = project(t);
+  const cfg = JSON.parse(readFileSync(join(p.home, "config.json"), "utf8"));
+  refreshModels(cfg);
+  const file = join(p.home, "models.json");
+  writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, "utf8")), warnings: { codex: [], zcode: [] } }));
+  assert.ok(p.send("hello").warnings?.includes(ZCODE_BILLING));
+});
+
 test("the catalog holds every enabled tool's models, and a tool that cannot list its own keeps the others and its last list", () => {
   const home = tempHome();
   writeZcodeConfig(home);
@@ -589,6 +628,7 @@ test("the catalog holds every enabled tool's models, and a tool that cannot list
   const first = refreshModels(cfg);
   assert.deepEqual([...new Set(first.map((m) => m.tool))], ["codex"]);
   assert.ok(modelsReport(cfg, true).warnings.includes("zcode: zcode worker is not signed in: run mandor login zcode"), JSON.stringify(modelsReport(cfg, true).warnings));
+  assert.ok(modelsReport(cfg, true).warnings.includes(ZCODE_BILLING), "a tool with a problem of its own says what it bills as well");
   zcodeSignIn();
   const both = refreshModels(cfg);
   assert.deepEqual([...new Set(both.map((m) => m.tool))], ["codex", "zcode"]);
@@ -596,7 +636,7 @@ test("the catalog holds every enabled tool's models, and a tool that cannot list
   const cache = readModelCache()!;
   assert.deepEqual(cache.versions, { codex: "0.166.0", zcode: TESTED_ZCODE_VERSION });
   assert.equal(cache.codexVersion, "0.166.0");
-  assert.ok(!modelsReport(cfg, true).warnings.some((w) => w.startsWith("zcode")), "nothing to say about a tool that works at its tested version");
+  assert.deepEqual(modelsReport(cfg, true).warnings.filter((w) => w.startsWith("zcode")), [ZCODE_BILLING], "a tool that works at its tested version says what it bills");
   // The sign-in goes away: the zcode models listed last stay, as a routed task may hold one.
   zcodeSignIn("account:no-such-plan");
   const kept = refreshModels(cfg);
@@ -685,7 +725,7 @@ test("login zcode signs the worker in under its own HOME and says which plan, an
   const cli = (...args: string[]) => spawnSync(LAUNCHER, args, { encoding: "utf8", env: { PATH: process.env.PATH!, HOME: temp("mandor-zuser-"), MANDOR_HOME: home, MANDOR_CODEX_BIN: process.env.MANDOR_CODEX_BIN!, CODEX_HOME: process.env.CODEX_HOME! } });
   const r = cli("login", "zcode");
   assert.equal(r.status, 0, r.stderr);
-  assert.deepEqual(JSON.parse(r.stdout), { tool: "zcode", home: join(home, "zcode", "home"), provider: "account:zai-individual-coding-plan" });
+  assert.deepEqual(JSON.parse(r.stdout), { tool: "zcode", home: join(home, "zcode", "home"), provider: "account:zai-individual-coding-plan", warnings: [ZCODE_BILLING] });
   const [call] = readZcodeLog();
   assert.deepEqual(call.argv, ["login", "zai"]);
   assert.equal(call.env.HOME, join(home, "zcode", "home"));
@@ -713,7 +753,7 @@ test("login zcode --api-key stores a key piped in, as the CLI reads one, without
   const r = cli(`${KEY}\n`, "login", "zcode", "--api-key");
   assert.equal(r.status, 0, r.stderr);
   const provider = "account:zai-individual-coding-plan";
-  assert.deepEqual(JSON.parse(r.stdout), { tool: "zcode", home: workerHome, provider });
+  assert.deepEqual(JSON.parse(r.stdout), { tool: "zcode", home: workerHome, provider, warnings: [ZCODE_BILLING] });
   assert.ok(!r.stdout.includes(KEY) && !r.stderr.includes(KEY));
   assert.deepEqual(readZcodeLog(), [], "the CLI is not started");
   const file = join(workerHome, ".zcode", "v2", "credentials.json");

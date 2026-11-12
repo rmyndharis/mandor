@@ -4,6 +4,7 @@ import { appendFileSync, chmodSync, closeSync, existsSync, mkdirSync, openSync, 
 import { join } from "node:path";
 import { test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
+import { ZCODE_BILLING } from "../src/adapters/zcode.ts";
 import { saveRoundFile } from "../src/brief.ts";
 import type { Candidate, JobRecord, TaskRecord, TaskStatus } from "../src/contracts.ts";
 import { foldPath } from "../src/guards.ts";
@@ -12,7 +13,7 @@ import { namesLeadCommand, sessionStartText, stopDecision } from "../src/hooks.t
 import { appendEvent, appendToolEvent, ledgerSize, now } from "../src/ledger.ts";
 import { writeJsonAtomic } from "../src/store.ts";
 import { commandAt, commandIn, toolTrace } from "../src/toolname.ts";
-import { temp, readFakeLog, tempHome, tempRepo } from "./helpers.ts";
+import { temp, readFakeLog, tempHome, tempRepo, writeZcodeConfig } from "./helpers.ts";
 
 const ROOT = join(import.meta.dirname, "..");
 const LAUNCHER = join(ROOT, "bin", "mandor");
@@ -404,6 +405,21 @@ test("the summary lists exhausted keys, and no detail, excerpt or reason", () =>
   const lines = r.stdout.trimEnd().split("\n");
   assert.ok(lines.includes("Exhausted: codex, codex:gpt-6-luna"), r.stdout);
   assert.ok(lines.includes("- a: stalled, no candidate, seq 1, fix rounds 0"), r.stdout);
+});
+
+test("the summary says what a ZCode run may cost whenever ZCode is on, whatever the stored warnings say", () => {
+  const s = project();
+  writeZcodeConfig(s.home);
+  const billing = () => hook("session-start", { cwd: s.repo }).stdout.trimEnd().split("\n").filter((l) => l === `- ${ZCODE_BILLING}`).length;
+  assert.equal(billing(), 1, "no model list yet");
+  for (const warnings of [{}, { zcode: [] }, { codex: [], zcode: [] }, { zcode: [ZCODE_BILLING] }]) {
+    writeJsonAtomic(join(s.home, "models.json"), { fetchedAt: now(), codexVersion: "0.166.0", versions: { codex: "0.166.0" }, problems: {}, models: [], warnings });
+    assert.equal(billing(), 1, JSON.stringify(warnings));
+  }
+  const config = JSON.parse(readFileSync(join(s.home, "config.json"), "utf8"));
+  config.tools.zcode.enabled = false;
+  writeJsonAtomic(join(s.home, "config.json"), config);
+  assert.equal(billing(), 0, "a tool that is off says nothing");
 });
 
 test("the summary lists what the enabled tools warned of when their models were last read, and reads nothing else for it", () => {
