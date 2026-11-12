@@ -32,8 +32,8 @@ const covers = (entry: string, path: string) => matchesGlob(path, entry.endsWith
 
 // xit( and assume...( must not start inside another word, or process.exit( and System.exit( would match. The conditional forms
 // (an assumption, JUnit's conditional annotations) are skips too: a failing test is quietly kept from running when it depends on
-// a clock, a platform or a variable.
-const SKIP = /\.skip\(|\.only\(|(?<![\w$])xit\(|@Ignore(?!\w)|@Disabled(?!\w)|@(?:Enabled|Disabled)(?:If|OnOs|OnJre|ForJreRange|InNativeImage)\w*|(?<![\w$])assume(?:True|False|That|NotNull|NoException)\(/g;
+// a clock, a platform or a variable. An annotation may be written with its package.
+const SKIP = /\.skip\(|\.only\(|(?<![\w$])xit\(|@(?:[\w$]+\.)*Ignore(?!\w)|@(?:[\w$]+\.)*Disabled(?!\w)|@(?:[\w$]+\.)*(?:Enabled|Disabled)(?:If|OnOs|OnJre|ForJreRange|InNativeImage)\w*|(?<![\w$])assum(?:e(?:True|False|That|NotNull|NoException|ThatCode)|ingThat)\(/g;
 const ASSERT = /assert|expect\(/i;
 const TODO = /\b(?:TODO|FIXME)\b/;
 

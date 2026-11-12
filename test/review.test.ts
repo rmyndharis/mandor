@@ -247,7 +247,7 @@ test("test-skipped flags added skips and ignores, and not process.exit or remove
   assert.deepEqual(details(p, "test-skipped").sort(), ["src/K.kt: @Disabled, @Ignore", "test/a.test.ts: .only(, .skip(, xit("]);
 });
 
-test("test-skipped flags a skip that depends on a condition: an assumption or a conditional JUnit annotation", (t) => {
+test("test-skipped flags a skip that depends on a condition: an assumption or a conditional JUnit annotation, also by its qualified name", (t) => {
   const f = fixture(t, { "src/run.ts": "run();\n" });
   put(f.wt, "src/ShiftTest.java", [
     "@DisabledOnOs(OS.MAC)", "void a() {}", "@EnabledIfEnvironmentVariable(named = \"CI\", matches = \".*\")", "void b() {}",
@@ -255,10 +255,16 @@ test("test-skipped flags a skip that depends on a condition: an assumption or a 
     "void h() { Assumptions.assumeTrue(LocalTime.now().isBefore(NOON)); }", "void i() { assumeFalse(late()); }", "void j() { Assume.assumeNotNull(x); }",
     "void k() { assumeThat(x, is(1)); }", "void l() { assumeNoException(e); }", "",
   ].join("\n"));
+  // The conditional run of a check, a qualified name, and the forms of an assertion library.
+  put(f.wt, "src/QualifiedTest.java", [
+    "@org.junit.jupiter.api.condition.DisabledOnOs(OS.MAC)", "void a() {}", "@org.junit.jupiter.api.Disabled(\"late\")", "void b() {}", "@org.junit.Ignore", "void c() {}",
+    "void d() { Assumptions.assumingThat(late(), () -> check()); }", "void e() { assumeThatCode(() -> run()).doesNotThrowAnyException(); }", "",
+  ].join("\n"));
   // Words that only begin like them are not skips.
   put(f.wt, "src/run.ts", "assumeTruthy();\n// @DisabledNot @EnabledNothing @DisabledOnlyOnce\nconst assumeTrueValue = 1;\nfunction assumeTrue2() {}\nreassumeTrue(1);\n");
   const p = reviewPack(f.repo, SLUG);
   assert.deepEqual(details(p, "test-skipped"), [
+    "src/QualifiedTest.java: @org.junit.Ignore, @org.junit.jupiter.api.Disabled, @org.junit.jupiter.api.condition.DisabledOnOs, assumeThatCode(, assumingThat(",
     "src/ShiftTest.java: @DisabledIf, @DisabledInNativeImage, @DisabledOnOs, @EnabledForJreRange, @EnabledIfEnvironmentVariable, @EnabledOnJre, assumeFalse(, assumeNoException(, assumeNotNull(, assumeThat(, assumeTrue(",
   ]);
 });
