@@ -34,7 +34,9 @@ export function catalogGap(tier: Tier, config: Config, models: ModelInfo[], netw
   const runs = (allowed: boolean) => candidates.some((s) => typeof settle(parseCandidate(s), { config, models, tools: {}, network: allowed }) !== "string");
   if (runs(network)) return null;
   if (!network && runs(true)) return `no candidate for tier ${tier} can run in this project, which allows no worker network: tell the user, who allows it with mandor project setup --update --worker-network`;
-  return `no candidate for tier ${tier} can run: no listed model and effort match the config; see mandor models`;
+  // A tier that lists Antigravity while it is on and unacknowledged would otherwise be blamed on the catalog alone.
+  const unacknowledged = agyUnacknowledged(config) && candidates.some((s) => parseCandidate(s).tool === "agy");
+  return `no candidate for tier ${tier} can run: no listed model and effort match the config${unacknowledged ? ", and agy, which the tiers list, is switched on but not acknowledged" : ""}; see mandor models`;
 }
 
 // What init and models say about the tier lists, whatever the tool state: each candidate of an enabled tool that the

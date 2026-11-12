@@ -219,6 +219,23 @@ test("catalogGap says that worker network is what a tier lacks when only tools t
   assert.equal(catalogGap("light", DEFAULT_CONFIG, CATALOG, false), null, "a tier with a Codex candidate needs no network");
 });
 
+test("catalogGap says that Antigravity is on but not acknowledged when a tier lists it and nothing else could run", () => {
+  const cfg = structuredClone(DEFAULT_CONFIG);
+  cfg.tools.agy.enabled = true;
+  cfg.tiers = { light: ["agy:gemini-4-argon@medium"], medium: ["agy:gemini-4-argon@medium"], heavy: ["agy:gemini-4-argon@high"] };
+  const models = [model("agy", "gemini-4-argon", ["medium", "high"])];
+  assert.equal(catalogGap("light", cfg, models, true), `${gapFor("light").replace("; see", ", and agy, which the tiers list, is switched on but not acknowledged; see")}`);
+  cfg.tools.agy.acknowledged = true;
+  assert.equal(catalogGap("light", cfg, models, true), null);
+  // The same tiers with the tool off, or tiers that do not list it, get the plain message.
+  cfg.tools.agy.enabled = false;
+  assert.equal(catalogGap("light", cfg, models, true), gapFor("light"));
+  const other = structuredClone(DEFAULT_CONFIG);
+  other.tools.agy.enabled = true;
+  other.tiers = { light: ["codex:gpt-6-luna@medium"], medium: ["codex:gpt-6.1-sol@high"], heavy: ["codex:gpt-6-astra@ultra"] };
+  assert.equal(catalogGap("light", other, RENAMED_CATALOG, true), gapFor("light"), "no tier lists agy");
+});
+
 test("catalogGap names a tier when no candidate of it or a heavier one could run, whatever the tool state", () => {
   const gap = (tier: Tier, models: ModelInfo[], config = DEFAULT_CONFIG) => catalogGap(tier, config, models, true);
   assert.equal(gap("light", CATALOG), null);
