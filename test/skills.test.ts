@@ -132,6 +132,12 @@ test("lead skill reads a change with diff, and not with git in a task worktree",
   assert.ok(read("lead").includes("run `mandor diff <slug>`, not git in the task worktree"));
 });
 
+test("lead skill tells the user that later worktrees clone an input older than the goal's once a generator input is confirmed", () => {
+  const lead = read("lead");
+  assert.ok(lead.includes("Once a task that changed a generator input is confirmed, the copy in the user's checkout is older than the goal's input"));
+  assert.ok(lead.includes("every later worktree of that goal clones it: tell the user, who rebuilds it from the goal's version of the input, and dispatch no other task of that goal before they have"));
+});
+
 test("lead skill says what an ignored-changed red flag asks", () => {
   assert.ok(read("lead").includes("Read each `ignored-changed` red flag."));
   assert.ok(read("lead").includes("or delete the path and rebuild it, before you run the proofs"));

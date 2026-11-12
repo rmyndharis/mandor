@@ -14,6 +14,7 @@ All notable changes to mandor are recorded here. The format follows [Keep a Chan
 - The README says that the hooks, tool servers and instructions a ZCode worker leaves in its project's home are loaded by that project's later jobs, and that the home keeps the input and output of every session.
 - The README says what a Codex worker loads from the user's Codex home: instructions, skills and rules, not plugins, tool servers or hooks, and that a rule which allows a command runs it outside the worker's sandbox, with any arguments after its prefix.
 - The lead's playbook covers a task that stalls on a filter or merge driver, as it covers a command that refuses one.
+- The lead's playbook and the README say that once a task that changed a generator input is confirmed, later worktrees of its goal clone the older copy that the user's checkout holds, which the user rebuilds from the goal's version first.
 - An Antigravity job is refused in a project without `--worker-network`, as a ZCode job is. Run `mandor project setup --worker-network` to allow it.
 - `init`, `models`, `project setup`, `goal start` and `dispatch` refuse a `MANDOR_HOME` inside a git working tree.
 - `status` ends each exhausted line with the reason, the paid-credit mark included, and lists the commits of a goal branch that mandor did not record.
